@@ -2,24 +2,48 @@
 
 Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解法追加到这里（保持持续更新）。**
 
-## 1. iframe 内联 onclick 不生效（CSP 阻止）
+## 1. iframe 内联脚本不生效（CSP 阻止）
 
-**症状**：App 子窗口的 iframe（srcdoc 或 app:// 页面）里 `<button onclick="...">` 点击无反应；dev 日志出现：
+**症状**：App 子窗口的 iframe 里内联 `onclick="..."` 点击无反应；srcdoc 内联 `<script>` 块也不执行。dev 日志：
 `Executing inline event handler violates the following Content Security Policy directive 'script-src 'self''`
+或 `Refused to execute inline script ... 'script-src 'self''`。
 
-**原因**：渲染进程的 CSP `script-src 'self'` 禁止内联事件处理器。
+**原因**：渲染进程 CSP `script-src 'self'` 无 `'unsafe-inline'`，**内联事件处理器与内联 `<script>` 块都会被拦截**（srcdoc 继承父文档 CSP）。旧文"用外部 `<script>` 块"的说法不成立。
 
-**修复**：用外部 `<script>` 块 + `addEventListener`，或 postMessage 模式：
+**修复**（按场景）：
+- **用户扩展静态页（推荐）**：App 卡片用 `url: 'app://extensions/<id>/todo.html'`——app:// 页面无 CSP 头，脚本正常执行（CSP 已放行 app: scheme 供 iframe 加载）
+- **srcdoc 场景**：把脚本放到同源外部文件（如 public/ 下的静态资源）用 `<script src>` 引用；或改用 `url` 形态
+- 窗口控制一律用 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`
 
-```html
-<script>
-  document.getElementById('close').addEventListener('click', () => {
-    parent.postMessage({ source: 'obox-app', action: 'close' }, '*')
-  })
-</script>
-```
+## 2. App 子窗口 iframe 加载 app:// 404 或空白
 
-## 2. Windows 下 Vite watcher EBUSY 崩溃
+**症状**：`url: 'app://extensions/<id>/todo.html'` 打不开 / 404；控制台 `Failed to load resource`。
+
+**排查**：
+- 该扩展是**用户扩展**（已安装到 `userData/extensions/<id>/`）——app://extensions 只映射 userData；内置扩展没有静态文件通道
+- `<id>` 是**安装目录名**（`<name>_<author>`，如 `todo_chenzhi`），不是 manifest.name；`index.js` 里用 `new URL('./todo.html', import.meta.url)` 推导，勿硬编码
+- 协议映射：`app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（协议注册在 `src/main/protocol.ts`）
+
+## 3. 子应用构建产物资源路径错（base 非相对）
+
+**症状**：构建出的 todo.html 里是 `<script src="/todo.js">`，iframe 里 404——绝对路径解析到 `app://extensions/todo.js`（丢目录段）。
+
+**修复**：`vite.config.ts` 设 `base: './'`，产物引用变为 `./todo.js` / `./todo.css`。
+
+## 4. iframe 里 alert/confirm/prompt 无效
+
+**原因**：iframe sandbox 无 `allow-modals`。
+**修复**：交互全部用页面内 UI（行内确认、自定义输入），不依赖浏览器弹窗。
+
+## 5. oix 安装失败
+
+**排查**（扩展管理器提示的失败信息）：
+- `manifest.json` 必须在 zip **根目录**
+- `name`/`version` 非法（正则 / semver）；`main` 指向的文件必须在包内
+- 包内含非法条目路径（`..` / 绝对路径 / 反斜杠）→ 被 zip-slip 防护拒绝
+- 安装后重启生效；重启前列表不出现
+
+## 6. Windows 下 Vite watcher EBUSY 崩溃
 
 **症状**：`npm run dev` 崩溃，日志：
 `Error: EBUSY: resource busy or locked, watch '...\.NavBar.vue.<pid>.<uuid>.tmpdir\...'`
@@ -32,7 +56,7 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -Recurse -Force
 ```
 
-## 3. 扩展收集到但未激活（激活 0）
+## 7. 扩展收集到但未激活（激活 0）
 
 **症状**：日志 `[host] 启动完成: 1 个扩展（1 启用 / 0 禁用），激活 0`。
 
@@ -43,19 +67,19 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 - 扩展管理器详情页看 `activationError`（激活失败原因）
 - dev 日志看 `[host] activate <id> failed <error>`
 
-## 4. 命令面板命令不出现
+## 8. 命令面板命令不出现
 
 - `palette: false` 的命令被过滤（设计如此，内部命令用）
 - 命令未通过校验（缺 `command`/`title`）→ 详情页看校验信息
 - 命令 id 重复 → 宿主 `console.warn('[registry] duplicate command id')`，保留第一个
 
-## 5. 导航项点击内容栏空白
+## 9. 导航项点击内容栏空白
 
 - `view` 字段引用的组件未在入口具名导出 → 宿主 warning `导航项 X 声明的视图组件 Y 未在扩展入口导出`
 - 组件导出名与 `view` 值不一致（大小写敏感）
-- 扩展未激活（见 #3）
+- 扩展未激活（见 #7）
 
-## 6. 注册了未声明命令的 warning
+## 10. 注册了未声明命令的 warning
 
 **症状**：`[host] <id> 注册了未声明的命令 <cmd>（manifest contributes.commands 未包含）`
 
@@ -63,7 +87,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **修复**：把命令加进 manifest 的 `commands` 数组（声明式模型——命令必须先声明，再绑定实现）。
 
-## 7. 依赖环
+## 11. 依赖环
 
 **症状**：`[host] 启动完成: ... 依赖环 a,b`（host 日志标注）。
 
@@ -71,22 +95,22 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **修复**：打破环（移除其中一个依赖），环内扩展会被跳过激活。
 
-## 8. App 子窗口标题序号不对
+## 12. App 子窗口标题序号不对
 
 `multiOpen: true` 时标题应为 `name 2`、`name 3`…。若序号重复，说明主进程 `appWindows` 跟踪残留——重启应用（跟踪随主进程重置）。
 
-## 9. 扩展管理器显示"清单无效"
+## 13. 扩展管理器显示"清单无效"
 
 - `name`/`version`/`main` 缺失或格式错（校验规则见 `references/manifest-reference.md`）
 - 详情页"校验信息"列出具体错误；修复后重启应用重新扫描
 
-## 10. HMR 后重复注册/状态残留
+## 14. HMR 后重复注册/状态残留
 
 **原因**：热重载时扩展模块重新激活，旧注册未清理。
 
 **修复**：确保插件函数返回 cleanup（dispose 全部注册），或所有注册的 Disposable 有效。必要时候选重启应用（dev 下 F5/重开窗口）。
 
-## 11. 用户扩展加载失败
+## 15. 用户扩展加载失败
 
 **症状**：`[loader] 用户扩展 <id> manifest 读取失败或缺失`。
 

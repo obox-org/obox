@@ -5,15 +5,15 @@
 ## 文件位置
 
 - **内置扩展**：`src/renderer/src/extensions/<id>/manifest.json`（随应用打包，只读不可卸载）
-- **用户扩展**：`userData/extensions/<id>/manifest.json`（经 `app://extensions/<id>/manifest.json` 加载，可卸载）
+- **用户扩展**：`userData/extensions/<name>_<author>/manifest.json`（经 `app://extensions/<id>/manifest.json` 加载，可卸载；经 .oix 安装，目录名 = `<name>_<清洗后 author>`，清洗后为空则退化为纯 name）
 
 ## 字段
 
 | 字段 | 必填 | 类型 | 说明 |
 |---|---|---|---|
-| `name` | ✅ | string | 扩展 id。`^[a-z0-9][a-z0-9._-]*$`，全局唯一。建议短前缀（如 `ext-manager`、`app`） |
+| `name` | ✅ | string | 扩展 id。`^[a-z0-9][a-z0-9._-]*$`，全局唯一。建议短前缀（如 `ext-manager`、`app`、`todo`） |
 | `version` | ✅ | string | semver（`1.0.0`）。非法版本=校验错误，扩展不加载 |
-| `main` | ✅ | string | 入口文件相对路径（如 `./index.ts`）。必填 |
+| `main` | ✅ | string | 入口文件相对路径。**用户扩展须为纯 JS（.js ESM）**——经 app:// 动态 import，无构建转换；内置扩展可用 `.ts`（Vite 转换） |
 | `displayName` | ❌ | string | 扩展管理器展示名（默认回退 id） |
 | `author` | ❌ | string | 作者 |
 | `description` | ❌ | string | 简介 |

@@ -154,9 +154,93 @@ export default function myHello(api: ExtensionActivationApi): () => void {
 
 ### 3. 子窗口内容形态
 
-- **URL 优先**：`url: 'app://extensions/<id>/page.html'`（内置静态页）或 `https://...`
-- **HTML 兜底**：无 url 时 `html` 字段用 iframe `srcdoc` 渲染
+- **URL 优先**：`url: 'app://extensions/<id>/page.html'`（用户扩展静态页，CSP 已放行 app:）或 `https://...`
+- **HTML 兜底**：无 url 时 `html` 字段用 iframe `srcdoc` 渲染（注意：srcdoc 内联 `<script>` 会被 `script-src 'self'` 拦截，见 troubleshooting）
 - **postMessage 窗口控制**：`{source:'obox-app', action:'close'|'minimize'|'maximize'}` ——首版仅窗口控制，其他能力后续版本加
+
+## 教程：开发用户扩展并打包 .oix
+
+用户扩展（非内置）以 .oix（zip）分发，与 obox 仓库只有扩展 API 依赖关系——建议建独立项目目录 `extensions/<id>/`（自带 package.json / tsconfig / 构建，不进 obox 打包）。
+
+### 1. 项目结构（参考 `extensions/todo/`）
+
+```
+extensions/todo/
+├── package.json      # 独立依赖（vue、vite、@vitejs/plugin-vue、adm-zip）
+├── tsconfig.json     # 子应用 TS 源码（vue-tsc typecheck）
+├── vite.config.ts    # 子应用构建（base: './'，iife 经典脚本）
+├── manifest.json     # name/version/displayName/author/main
+├── index.js          # 入口：纯 ESM JavaScript（用户扩展无构建转换）
+├── app/              # Vue 子应用源码（可选，App 富界面用）
+├── dist/             # 子应用构建产物（todo.html/todo.js/todo.css）
+├── out/              # .oix 打包产物
+└── scripts/pack.mjs  # 打包脚本（adm-zip）
+```
+
+### 2. manifest 要点
+
+- `name`：扩展 id（如 `todo`）；`main`：入口**须为 .js**（用户扩展经 app:// 动态 import，无 Vite 转换，TS 不可直接用）
+- 安装目录 = `userData/extensions/<name>_<清洗后 author>/`（如 `todo_chenzhi`），目录名即宿主看到的扩展 id；`app://extensions/<id>/` 访问其文件
+- 卸载钩子、contributes 等与内置扩展一致
+
+### 3. 安装与验证
+
+- `npm run release`（typecheck → build → pack）产出 `out/<name>-<version>.oix`
+- obox 扩展管理器 → 工具栏「安装扩展」选 .oix，或直接把 .oix 拖进扩展管理器视图
+- 安装成功提示重启生效（用户扩展在启动时扫描）；重启后扩展管理器出现该扩展，详情 Source=用户
+
+### 4. 安全与校验（宿主侧已实现）
+
+- 校验 manifest（name 正则 / version semver / main 存在且入口文件在包内）
+- zip-slip 防护：拒绝绝对路径、`..`、反斜杠、重复条目
+- 同名覆盖安装（升级语义）；`.obox-meta.json` 记录安装时间戳（Last Updated 展示）
+
+## 教程：App 富界面——内嵌 Vue 子应用
+
+App 子窗口内容是 iframe。要做"左侧边栏 + 内容栏"级别的富界面，不需要改宿主：把界面写成 Vue 子应用，编译为静态资源，用 `url` 加载（见 `extensions/todo/` 实例）。
+
+### 1. 构建管线
+
+```ts
+// vite.config.ts 要点
+export default defineConfig({
+  root: resolve(__dirname, 'app'),
+  base: './',                       // 必须相对路径：产物从 app://extensions/<id>/ 任意子路径加载
+  plugins: [vue()],
+  build: {
+    outDir: resolve(__dirname, 'dist'),
+    rollupOptions: {
+      input: resolve(__dirname, 'app/todo.html'),
+      output: { format: 'iife', inlineDynamicImports: true, entryFileNames: 'todo.js', assetFileNames: 'todo.[ext]' }
+    }
+  }
+})
+```
+
+### 2. 卡片注册
+
+```js
+// index.js
+export default function todoExt(api) {
+  const base = new URL('.', import.meta.url).href   // 推导安装目录，不硬编码目录名
+  const card = api.app.register({
+    id: 'todo.main',
+    name: '待办',
+    icon: '<svg .../>',
+    url: new URL('./todo.html', base).href,          // app://extensions/<id>/todo.html
+    multiOpen: false,
+    width: 1024,
+    height: 700
+  })
+  return () => card.dispose()
+}
+```
+
+### 3. iframe 内约束
+
+- `app://` 页面无 CSP 头，可执行脚本（sandbox allow-scripts + allow-same-origin 保持真实源）；但**无 allow-modals——禁 alert/confirm/prompt**，交互一律用页面内 UI
+- 数据持久化用 `localStorage`（按 app:// 源持久化，跨窗口/重启保留）；写入失败会降级内存态（store 已 try/catch）
+- 相对路径资源（`./todo.js` / `./todo.css`）同源加载；构建必须 `base: './'`（绝对 `/todo.js` 会解析到 `app://extensions/todo.js`，错）
 
 ## 调试技巧
 

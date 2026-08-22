@@ -117,6 +117,7 @@ const d = api.app.register({
 - 扩展停用时宿主自动清理其注册的全部卡片
 - 子窗口标题 = `name`（多开时 `name 2`、`name 3`…）
 - 子窗口内容通信：iframe 内 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')` 控制子窗口（**不要用内联 onclick，会被 CSP 阻止**）
+- **url 加载用户扩展静态页**：CSP 已放行 `app:` scheme，`url: 'app://extensions/<id>/todo.html'` 可由 iframe 同源加载（页面可执行脚本、可用 localStorage）；子窗口 iframe 无 allow-modals，禁 alert/confirm/prompt
 
 ## 宿主生命周期语义
 

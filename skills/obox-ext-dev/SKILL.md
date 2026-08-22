@@ -18,7 +18,8 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 - **扩展（Extension）**：为 Obox 贡献能力的可插拔单元。清单（manifest）声明贡献点，入口导出 Cordis 插件函数 + 具名导出视图组件。详见 `references/manifest-reference.md`。
 - **贡献点（Contribution Point）**：扩展在 manifest 中声明的能力注册点——导航项、状态栏项、命令，由宿主解析注册（声明式，不是命令式 `ctx.register*`）。
 - **扩展 API**：宿主在激活时注入的 `ExtensionActivationApi`，扩展在插件函数里通过它注册命令实现、更新状态栏、设徽标、读写 Memento、发事件、调窗口能力。详见 `references/api-reference.md`。
-- **App 注册**：扩展可调用 `api.app.register(...)` 把插件卡片注册进"应用"扩展，点击弹出独立子窗口（iframe 渲染 URL/HTML + postMessage 窗口控制桥）。详见 `references/guides.md`。
+- **App 注册**：扩展可调用 `api.app.register(...)` 把插件卡片注册进"应用"扩展，点击弹出独立子窗口（iframe 渲染 URL/HTML + postMessage 窗口控制桥）。**CSP 已放行 `app:` scheme**：用户扩展可用 `url: 'app://extensions/<id>/todo.html'` 由 iframe 同源加载静态页，子窗口内可执行脚本、用 localStorage（按 app:// 源持久化）；无 allow-modals，禁 alert/confirm/prompt。详见 `references/guides.md`。
+- **oix 分发与安装**：用户扩展（非内置）以 **.oix**（zip，根目录含 manifest.json + 入口 + 静态资源）分发。扩展管理器工具栏「安装扩展」按钮或**拖拽 .oix 到视图**安装：校验 manifest → 防路径穿越解压到 `userData/extensions/<name>_<author>/` → 同名覆盖 → 重启生效。
 
 ## 标准流程
 
@@ -36,8 +37,8 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 - **命令必须声明**：`api.registerCommand(id, handler)` 的命令 id 必须已在该扩展 manifest `contributes.commands` 里声明，否则宿主打 warning。
 - **视图必须导出**：导航项 `view` 字段引用的组件必须在入口**具名导出**（如 `export const MyView`），否则宿主打 warning 且内容栏空白。
 - **Disposable 形状**：所有注册 API（`registerCommand`、`on`、`app.register`）返回 `{ dispose(): void }`；插件函数返回值（cleanup 函数）会被宿主收集，扩展停用时统一释放。不返回/不 dispose 会在热重载时泄漏。
-- **内置扩展只读**：`src/renderer/src/extensions/` 下是内置扩展（随应用打包，不可卸载）；用户扩展放 `userData/extensions/`（经 `app://extensions/<id>/` 加载），可卸载。开发期建议先用内置扩展目录。
-- **子窗口内容**：`html` 用于 srcdoc 渲染，`url` 优先（app:// 或 https）。**iframe 内联 `onclick` 会被 CSP 阻止**——用外部 `<script>` 或 postMessage 模式（`parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`）。
+- **内置扩展只读**：`src/renderer/src/extensions/` 下是内置扩展（随应用打包，不可卸载）；用户扩展放 `userData/extensions/<name>_<author>/`（经 `app://extensions/<id>/` 加载），可卸载，经 .oix 安装（扩展管理器按钮/拖拽）。开发用户扩展建议建独立项目 `extensions/<id>/`（自带 package.json/tsconfig/构建，仅依赖扩展 API），**入口 main 须为纯 ESM JavaScript**（用户扩展无 Vite 转换）。
+- **子窗口内容**：`html` 用于 srcdoc 渲染，`url` 优先（app:// 或 https）。用户扩展富界面建议用 `url: app://extensions/<id>/<page>.html` 加载自建静态资源（Vue 编译产物）。**iframe 内联 `onclick` 会被 CSP 阻止**——用外部 `<script>` 或事件绑定；`app://` 页面本身无 CSP 头可执行脚本，但 srcdoc 页面内联脚本同样被 `script-src 'self'` 拦截。窗口控制用 postMessage（`parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`）。
 - **依赖与环**：`extensionDependencies` 声明依赖；宿主按拓扑序激活，检测到环会跳过并标记。缺失依赖不阻塞激活。
 
 ## 持续更新要求（重要）
@@ -47,8 +48,9 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 - 修改/新增扩展 API（`src/renderer/src/core/types.ts` 的 `ExtensionActivationApi`、`AppRegistration`、贡献点类型）
 - 修改贡献点 schema 或 manifest 校验规则（`core/manifest.ts`）
 - 修改宿主生命周期（`core/host.ts` 的激活/停用/依赖排序）
-- 修改主进程能力服务或 IPC（`src/main/*`：窗口控制、App 子窗口、app:// 协议）
+- 修改主进程能力服务或 IPC（`src/main/*`：窗口控制、App 子窗口、app:// 协议、**.oix 安装**）
 - 新增/移除内置扩展目录约定
+- 修改用户扩展分发/安装机制（oix 格式、安装目录命名、CSP 放行）
 - 修复了新的常见坑（追加到 `references/troubleshooting.md`）
 
 修改这些文件时，先更新对应 reference，再更新本文件。子文档分工：

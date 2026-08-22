@@ -15,7 +15,8 @@ src/
 │   ├── window.ts    # 无边框窗口 + 窗口控制 IPC（最小化/最大化/关闭/状态推送）
 │   ├── appWindow.ts # App 子窗口管理（单开聚焦/多开序号/主机关闭全关）
 │   ├── capabilities.ts # 能力服务：应用信息、用户扩展扫描/卸载/卸载钩子
-│   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载）
+│   ├── oix.ts       # .oix 扩展包安装（校验 + 防路径穿越解压 + 安装 IPC）
+│   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源）
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
 ├── shared/          # 三端共享类型（IPC 契约）
 └── renderer/        # Vue 渲染进程（扩展宿主所在地）
@@ -26,6 +27,7 @@ src/
         ├── components/    # TitleBar / NavBar / ContentArea / StatusBar / CommandPalette
         ├── core/          # 扩展系统核心（见下）
         └── extensions/    # 内置扩展目录（每个扩展 = manifest.json + index.ts + 视图组件）
+extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix 分发；如 todo/）
 ```
 
 ### 扩展系统核心（`renderer/src/core/`）
@@ -42,8 +44,13 @@ src/
 
 ### 内置扩展（`renderer/src/extensions/`）
 
-- `ext-manager/`：扩展管理器——Grid 展示已安装扩展（名称/版本/作者/简介），详情页（Identifier/Source/Last Updated/校验信息），禁用/卸载（重启生效 + 弹确认）
+- `ext-manager/`：扩展管理器——Grid 展示已安装扩展（名称/版本/作者/简介），详情页（Identifier/Source/Last Updated/校验信息），**安装（.oix 按钮/拖拽）**、禁用/卸载（重启生效 + 弹确认）
 - `app/`：应用（App）——其他扩展经 `api.app.register` 注册插件卡片，Grid 展示（icon/名称/版本/作者/简介），点击弹出独立子窗口（URL 或 HTML srcdoc + iframe + postMessage 窗口控制桥）
+
+### 用户扩展（`extensions/`）
+
+- 独立项目，仅依赖扩展 API；以 **.oix**（zip）分发，扩展管理器安装（重启生效）
+- `todo/`：待办扩展（作者 chenzhi）——App 卡片打开独立子窗口，内含 Vue 子应用（左侧边栏：我的一天/全部待办/日历/标签 CRUD + 内容栏：快速添加/勾选/行内编辑/优先级），数据 localStorage 持久化（app:// 源）
 
 ## 常用命令
 
@@ -55,6 +62,7 @@ src/
 | `npm run build` | typecheck + electron-vite 构建到 `out/` |
 | `npm run build:win` | 打包 Windows 安装包（electron-builder） |
 | `npm run format` | Prettier 格式化 |
+| `npm run build:todo` / `pack:todo` / `dev:todo` / `release:todo` | 待办用户扩展：构建子应用 / 打包 .oix / 子应用 watch / typecheck+build+pack（在 `extensions/todo/` 内执行） |
 | `node skills/obox-ext-dev/scripts/create-extension.mjs <id>` | 生成新内置扩展骨架 |
 | `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all` | 校验全部内置扩展 manifest |
 
@@ -63,7 +71,7 @@ src/
 1. **读本文件**：了解项目概览与架构（上文）
 2. **读约定**：`AGENTS.md`（开发约定 + 强制提交流程）、`CONTEXT.md`（术语表）
 3. **运行**：`yarn dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
-4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交
+4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装（重启生效）
 5. **改架构**：改动 `core/`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `skills/obox-ext-dev/` 文档（见 AGENTS.md 约定）和本文件
 
 ## 文档导航
@@ -74,7 +82,7 @@ src/
 | [CONTEXT.md](CONTEXT.md) | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等） |
 | [AGENTS.md](AGENTS.md) | 开发者约定：obox-ext-dev 文档同步要求 + 强制提交流程（五步）+ 质量门槛 |
 | [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md) | 扩展开发完整指南（含 references/ 与 scripts/） |
-| [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动） |
+| [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动/oix 分发与安装） |
 
 ## 技术栈
 
