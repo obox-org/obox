@@ -1,0 +1,49 @@
+{
+  "name": "ext-manager",
+  "version": "1.0.0",
+  "displayName": "扩展管理器",
+  "author": "Obox",
+  "description": "管理已安装的扩展：查看详情、禁用、卸载",
+  "main": "./index.ts",
+  "contributes": {
+    "navItems": [
+      {
+        "id": "ext-manager.main",
+        "title": "扩展",
+        "icon": "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5'><path d='M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z'/></svg>",
+        "group": "bottom",
+        "view": "ExtensionManagerView"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ext-manager.refresh",
+        "title": "刷新扩展列表",
+        "category": "扩展",
+        "palette": true
+      },
+      {
+        "command": "ext-manager.disable",
+        "title": "禁用扩展",
+        "category": "扩展",
+        "palette": false
+      },
+      {
+        "command": "ext-manager.enable",
+        "title": "启用扩展",
+        "category": "扩展",
+        "palette": false
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "ext-manager.count",
+        "name": "已安装扩展数",
+        "text": "",
+        "alignment": "right",
+        "priority": 10,
+        "command": "ext-manager.refresh"
+      }
+    ]
+  }
+}

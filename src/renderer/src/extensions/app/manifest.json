@@ -1,0 +1,19 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "displayName": "应用",
+  "author": "Obox",
+  "description": "应用中心：展示扩展注册的插件卡片，点击弹出独立窗口渲染内容",
+  "main": "./index.ts",
+  "contributes": {
+    "navItems": [
+      {
+        "id": "app.main",
+        "title": "应用",
+        "icon": "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5'><rect x='3' y='3' width='7' height='7' rx='1'/><rect x='14' y='3' width='7' height='7' rx='1'/><rect x='3' y='14' width='7' height='7' rx='1'/><rect x='14' y='14' width='7' height='7' rx='1'/></svg>",
+        "group": "top",
+        "view": "AppView"
+      }
+    ]
+  }
+}
