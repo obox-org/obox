@@ -24,3 +24,33 @@
 - 扩展 API 类型定义是单包共享类型，修改时同步 `tsconfig` 无感；扩展开发经相对路径导入类型
 - 质量门槛：`npm run typecheck` + `npm run lint` 必须通过（`npm run build` 含两者）
 - `vendor/vscode` 是 VS Code 源码参考目录（只读参考，不修改）；eslint/prettier 已忽略该目录
+
+## 提交约定（强制）
+
+**每完成一项修改后必须自动提交并 push 到远程**。不得在修改完成后停留在未提交状态，也不得等到会话结束才统一提交。AI 代理须自动执行以下固定流程：
+
+### 提交流程（五步）
+
+1. **查看改动**：`git status` + `git diff`（看工作区与暂存区改动）
+2. **判断文件是否该提交**：
+   - 该提交：源码、配置、文档、skill、脚本等本次修改涉及的文件
+   - 不该提交：构建产物（`out/`/`dist/`）、依赖（`node_modules/`）、临时文件、缓存（`.eslintcache`）、参考源码（`vendor/`）
+   - 若出现不该提交且未被忽略的文件 → **先加入 `.gitignore`（项目根）再提交**；`.gitignore` 位置固定为项目根（仓库级），不建个人级忽略
+3. **暂存**：`git add` 相关文件（明确列出，避免误加；确认无误可用 `git add -A`）
+4. **自动写 commit 信息**：分析本次改动内容，用 **Conventional Commits + 中文** 自动生成：
+   - 类型：`feat`（新功能）/ `fix`（修复）/ `docs`（文档）/ `refactor`（重构）/ `chore`（杂项：配置/依赖/脚本）/ `style`（格式）/ `perf`（性能）/ `test`（测试）
+   - 格式：`<type>: <中文摘要>`；改动较大时加正文（`git commit -m` 多段）
+   - 摘要须具体描述改动（如 `feat: 新增 App 应用扩展，支持插件卡片注册与子窗口`），不写笼统的 "update files"
+5. **提交并推送**：`git commit` → `git push`（推送到 origin 当前分支）
+
+### 提交前质量门槛
+
+- 改动涉及 `src/` 代码时：先跑 `npm run typecheck`（必须通过），尽量跑 `npm run lint`（0 errors）
+- 纯文档/配置/skill 改动：跳过检查直接按流程提交
+- typecheck 失败时：先修复再提交，不得带着错误提交
+
+### 收尾自检
+
+- `git status` 应为 clean（无未提交改动）
+- 远程与本地同步（`git status -sb` 无 ahead/behind）
+- 若本约定导致误提交（如误加文件），用 `git reset` 撤销并修正后重新提交
