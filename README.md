@@ -1,34 +1,83 @@
-# obox
+# Obox
 
-An Electron application with Vue and TypeScript
+基于 Electron + Vue + TypeScript 的桌面程序宿主。以布局框架为骨架，通过**基于 Cordis 的扩展系统**（仿照 VS Code 扩展模型）向应用贡献功能。
 
-## Recommended IDE Setup
+- 布局：无边框自定义标题栏 + 图标导航栏 + 内容栏（keep-alive）+ 状态栏
+- 扩展：声明式贡献点（导航项/状态栏项/命令），两阶段启动，依赖拓扑排序，清单校验
+- 内置扩展：**扩展管理器**（Grid 展示/详情/禁用/卸载）、**应用**（插件卡片注册 + 独立子窗口 iframe 渲染）
 
-- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar)
+## 核心架构
 
-## Project Setup
-
-### Install
-
-```bash
-$ yarn
+```
+src/
+├── main/            # Electron 主进程
+│   ├── index.ts     # 入口：窗口创建、协议、IPC 注册
+│   ├── window.ts    # 无边框窗口 + 窗口控制 IPC（最小化/最大化/关闭/状态推送）
+│   ├── appWindow.ts # App 子窗口管理（单开聚焦/多开序号/主机关闭全关）
+│   ├── capabilities.ts # 能力服务：应用信息、用户扩展扫描/卸载/卸载钩子
+│   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载）
+├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
+├── shared/          # 三端共享类型（IPC 契约）
+└── renderer/        # Vue 渲染进程（扩展宿主所在地）
+    └── src/
+        ├── main.ts        # 入口：启动扩展宿主 → 按 URL 参数渲染主布局或 AppWindow
+        ├── App.vue        # 主布局（标题栏/导航栏/内容栏/状态栏 + 命令面板）
+        ├── AppWindow.vue  # App 子窗口布局（TitleBar + iframe 内容 + postMessage 窗口控制桥）
+        ├── components/    # TitleBar / NavBar / ContentArea / StatusBar / CommandPalette
+        ├── core/          # 扩展系统核心（见下）
+        └── extensions/    # 内置扩展目录（每个扩展 = manifest.json + index.ts + 视图组件）
 ```
 
-### Development
+### 扩展系统核心（`renderer/src/core/`）
 
-```bash
-$ yarn dev
-```
+| 文件 | 职责 |
+|---|---|
+| `types.ts` | 扩展 API 类型：`ExtensionActivationApi`、`AppRegistration`、贡献点类型、Memento/Disposable |
+| `host.ts` | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、禁用/卸载重启生效 |
+| `manifest.ts` | 清单校验（name/version/main 必填、semver、依赖检测）+ 错误收集 |
+| `registry.ts` | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive） |
+| `loader.ts` | 内置扩展 Vite 静态收集 + 用户扩展 app:// 运行时加载 |
+| `state.ts` | 状态持久化（userData JSON）：禁用列表（缺省即启用）、上次导航项、Memento |
+| `appStore.ts` | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理） |
 
-### Build
+### 内置扩展（`renderer/src/extensions/`）
 
-```bash
-# For windows
-$ yarn build:win
+- `ext-manager/`：扩展管理器——Grid 展示已安装扩展（名称/版本/作者/简介），详情页（Identifier/Source/Last Updated/校验信息），禁用/卸载（重启生效 + 弹确认）
+- `app/`：应用（App）——其他扩展经 `api.app.register` 注册插件卡片，Grid 展示（icon/名称/版本/作者/简介），点击弹出独立子窗口（URL 或 HTML srcdoc + iframe + postMessage 窗口控制桥）
 
-# For macOS
-$ yarn build:mac
+## 常用命令
 
-# For Linux
-$ yarn build:linux
-```
+| 命令 | 说明 |
+|---|---|
+| `yarn dev` | 开发模式（HMR，Electron 窗口自动打开） |
+| `npm run typecheck` | 类型检查（node 主进程 + web 渲染进程） |
+| `npm run lint` | ESLint 检查（0 errors 为门槛） |
+| `npm run build` | typecheck + electron-vite 构建到 `out/` |
+| `npm run build:win` | 打包 Windows 安装包（electron-builder） |
+| `npm run format` | Prettier 格式化 |
+| `node skills/obox-ext-dev/scripts/create-extension.mjs <id>` | 生成新内置扩展骨架 |
+| `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all` | 校验全部内置扩展 manifest |
+
+## 快速上手（新会话必读）
+
+1. **读本文件**：了解项目概览与架构（上文）
+2. **读约定**：`AGENTS.md`（开发约定 + 强制提交流程）、`CONTEXT.md`（术语表）
+3. **运行**：`yarn dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
+4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交
+5. **改架构**：改动 `core/`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `skills/obox-ext-dev/` 文档（见 AGENTS.md 约定）和本文件
+
+## 文档导航
+
+| 文档 | 内容 |
+|---|---|
+| [README.md](README.md) | 本文件：项目概览 / 快速上手（导航入口，不重复细节） |
+| [CONTEXT.md](CONTEXT.md) | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等） |
+| [AGENTS.md](AGENTS.md) | 开发者约定：obox-ext-dev 文档同步要求 + 强制提交流程（五步）+ 质量门槛 |
+| [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md) | 扩展开发完整指南（含 references/ 与 scripts/） |
+| [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动） |
+
+## 技术栈
+
+- **Electron** 39 + **Vue** 3.5 + **TypeScript** 5.9（electron-vite 5 构建）
+- **@cordisjs/core** 3.18（扩展宿主插件框架，运行在渲染进程）
+- 无 UI 组件库：手写 CSS 暗色主题（VS Code 风格）
