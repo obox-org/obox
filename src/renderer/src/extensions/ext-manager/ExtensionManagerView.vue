@@ -16,6 +16,8 @@ const confirmUninstall = ref<ExtensionInfo | null>(null)
 const busyId = ref<string | null>(null)
 const notice = ref('')
 const refreshTick = ref(0)
+const installBusy = ref(false)
+const dragActive = ref(false)
 
 const extensions = computed(() => host.listExtensions())
 
@@ -76,6 +78,73 @@ async function doUninstall(): Promise<void> {
   }
 }
 
+/** 安装 .oix 包：成功后提示重启生效 */
+async function installFromPath(filePath: string): Promise<boolean> {
+  installBusy.value = true
+  try {
+    const result = await window.api.installUserExtensionFromPath(filePath)
+    if (result) {
+      showNotice(
+        `「${result.displayName ?? result.name}」v${result.version} 安装成功${result.replaced ? '（已覆盖旧版）' : ''}，重启后生效`
+      )
+      refreshTick.value++
+      return true
+    }
+    return false
+  } catch (err) {
+    showNotice(`安装失败: ${err instanceof Error ? err.message : String(err)}`)
+    return false
+  } finally {
+    installBusy.value = false
+  }
+}
+
+/** 工具栏按钮：文件对话框选 .oix 安装 */
+async function installViaDialog(): Promise<void> {
+  installBusy.value = true
+  try {
+    const result = await window.api.installUserExtensionViaDialog()
+    if (result) {
+      showNotice(
+        `「${result.displayName ?? result.name}」v${result.version} 安装成功${result.replaced ? '（已覆盖旧版）' : ''}，重启后生效`
+      )
+      refreshTick.value++
+    }
+  } catch (err) {
+    showNotice(`安装失败: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    installBusy.value = false
+  }
+}
+
+/** 拖拽安装：接受 .oix 文件，经 webUtils 取路径后走同一安装流程 */
+function onDragOver(e: DragEvent): void {
+  e.preventDefault()
+  dragActive.value = true
+}
+
+function onDragLeave(e: DragEvent): void {
+  // 离开子元素时不算离开容器
+  if (!(e.currentTarget as HTMLElement | null)?.contains(e.relatedTarget as Node | null)) {
+    dragActive.value = false
+  }
+}
+
+async function onDrop(e: DragEvent): Promise<void> {
+  e.preventDefault()
+  dragActive.value = false
+  const files = Array.from(e.dataTransfer?.files ?? [])
+  const oixFiles = files.filter((f) => f.name.toLowerCase().endsWith('.oix'))
+  if (oixFiles.length === 0) {
+    showNotice('请拖入 .oix 扩展包文件')
+    return
+  }
+  for (const file of oixFiles) {
+    const path = window.api.getPathForFile(file)
+    if (path) await installFromPath(path)
+  }
+}
+
 function onEvent(...args: unknown[]): void {
   const name = args[0] as string
   const payload = args[1]
@@ -103,8 +172,17 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
 </script>
 
 <template>
-  <div class="ext-manager">
+  <div
+    class="ext-manager"
+    :class="{ 'drag-active': dragActive }"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <div class="toolbar">
+      <button class="btn install" :disabled="installBusy" @click="installViaDialog">
+        {{ installBusy ? '安装中…' : '安装扩展' }}
+      </button>
       <input v-model="query" class="search" placeholder="搜索扩展（名称/作者）…" />
       <select v-model="sortKey" class="sort">
         <option value="name">按名称</option>
@@ -113,6 +191,7 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
       <span class="count">{{ filtered.length }} 个扩展</span>
       <span v-if="notice" class="notice">{{ notice }}</span>
     </div>
+    <div v-if="dragActive" class="drop-hint">松开以安装 .oix 扩展包</div>
 
     <!-- Grid 网格 -->
     <div v-if="!selected" class="grid">
@@ -225,6 +304,7 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
 
 <style scoped>
 .ext-manager {
+  position: relative;
   padding: 16px;
   height: 100%;
   box-sizing: border-box;
@@ -263,6 +343,30 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
   color: #4ec9b0;
   font-size: 12px;
   margin-left: auto;
+}
+.ext-manager.drag-active {
+  outline: 2px dashed #007acc;
+  outline-offset: -6px;
+}
+.drop-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 90, 160, 0.25);
+  color: #75beff;
+  font-size: 15px;
+  pointer-events: none;
+  z-index: 10;
+}
+.btn.install {
+  background: #0e639c;
+  border-color: #1177bb;
+  color: #ffffff;
+}
+.btn.install:hover {
+  background: #1177bb;
 }
 .grid {
   flex: 1;

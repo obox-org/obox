@@ -4,6 +4,7 @@ import { createWindow, registerWindowIpc } from './window'
 import { registerCapabilityIpc } from './capabilities'
 import { registerExtensionProtocol } from './protocol'
 import { registerAppWindowIpc, closeAllAppWindowsOnMainClose } from './appWindow'
+import { registerOixIpc } from './oix'
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.obox.app')
@@ -11,10 +12,11 @@ app.whenReady().then(() => {
   // 注册 app:// 自定义协议：供渲染进程加载用户扩展入口（app://extensions/<id>/...）
   registerExtensionProtocol()
 
-  // 窗口控制 + 能力服务 + App 子窗口 IPC
+  // 窗口控制 + 能力服务 + App 子窗口 IPC + .oix 安装
   registerWindowIpc()
   registerCapabilityIpc()
   registerAppWindowIpc()
+  registerOixIpc()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

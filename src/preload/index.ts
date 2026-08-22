@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { MainApi, MainEvents, WindowAction } from '../shared/types'
 
@@ -10,6 +10,10 @@ const api: MainApi = {
   listUserExtensions: () => ipcRenderer.invoke('extensions:list-user'),
   uninstallUserExtension: (id) => ipcRenderer.invoke('extensions:uninstall', id),
   runUninstallHook: (id) => ipcRenderer.invoke('extensions:run-uninstall-hook', id),
+  installUserExtensionViaDialog: () => ipcRenderer.invoke('extensions:install-oix-dialog'),
+  installUserExtensionFromPath: (filePath) => ipcRenderer.invoke('extensions:install-oix-path', filePath),
+  // 拖拽 .oix 安装：取 File 的真实磁盘路径（Electron 官方拖拽模式）
+  getPathForFile: (file) => webUtils.getPathForFile(file as File),
   capture: (outPath) => ipcRenderer.invoke('window:capture', outPath),
   eval: (script) => ipcRenderer.invoke('window:eval', script),
   openAppWindow: (req) => ipcRenderer.invoke('app:open-window', req)

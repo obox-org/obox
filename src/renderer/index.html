@@ -4,9 +4,10 @@
     <meta charset="UTF-8" />
     <title>Electron</title>
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <!-- app: 为用户扩展协议：manifest 拉取（connect）、入口 import（script）、App 子窗口 iframe（frame）、图标（img） -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      content="default-src 'self' app:; script-src 'self' app:; style-src 'self' 'unsafe-inline'; img-src 'self' data: app:"
     />
   </head>
 

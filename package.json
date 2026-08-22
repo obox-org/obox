@@ -14,6 +14,10 @@
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",
+    "build:todo": "npm --prefix extensions/todo run build",
+    "dev:todo": "npm --prefix extensions/todo run dev",
+    "pack:todo": "npm --prefix extensions/todo run pack",
+    "release:todo": "npm --prefix extensions/todo run release",
     "postinstall": "electron-builder install-app-deps",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "npm run build && electron-builder --win",
@@ -24,6 +28,7 @@
     "@cordisjs/core": "^3.18.1",
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "adm-zip": "^0.6.0",
     "electron-updater": "^6.3.9"
   },
   "devDependencies": {

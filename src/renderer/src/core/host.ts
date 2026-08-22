@@ -22,6 +22,8 @@ export interface ExtensionEntry {
   load: () => Promise<ExtensionModule>
   /** 来源：内置（随应用打包，只读）/ 用户（userData，可卸载） */
   source: 'builtin' | 'user'
+  /** 安装时间戳（用户扩展；.obox-meta.json 提供） */
+  installedTimestamp?: number
 }
 
 /** 宿主启动配置 */
@@ -218,7 +220,9 @@ class ExtensionHost {
 
     for (const entry of entries) {
       const enabled = !stateStore.isDisabled(entry.id)
-      const info = makeExtensionInfo(entry.id, entry.manifest, entry.source, enabled)
+      const info = makeExtensionInfo(entry.id, entry.manifest, entry.source, enabled, {
+        installedTimestamp: entry.installedTimestamp
+      })
       all.push(info)
       if (enabled && info.isValid) this.loaders.set(entry.id, entry.load)
     }

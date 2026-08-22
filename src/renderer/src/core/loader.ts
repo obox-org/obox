@@ -73,6 +73,7 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
       id: entry.id,
       manifest,
       source: 'user',
+      installedTimestamp: await fetchInstalledTimestamp(entry.id),
       load: () =>
         import(
           /* @vite-ignore */ `app://extensions/${encodeURIComponent(entry.id)}/${manifest.main}`
@@ -80,6 +81,18 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
     })
   }
   return result
+}
+
+/** 读取 .oix 安装时写入的 .obox-meta.json（Last Updated 展示；缺失返回 undefined） */
+async function fetchInstalledTimestamp(id: string): Promise<number | undefined> {
+  try {
+    const res = await fetch(`app://extensions/${encodeURIComponent(id)}/.obox-meta.json`)
+    if (!res.ok) return undefined
+    const meta = (await res.json()) as { installedTimestamp?: number }
+    return typeof meta.installedTimestamp === 'number' ? meta.installedTimestamp : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** 供扩展管理器使用的完整信息（含用户扩展的安装时间等由宿主管理） */

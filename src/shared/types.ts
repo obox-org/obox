@@ -27,6 +27,22 @@ export interface UserExtensionEntry {
   path: string
 }
 
+/** .oix 扩展包安装结果 */
+export interface InstallOixResult {
+  /** 安装目录名（= <name>_<清洗后 author>，即扩展 id） */
+  id: string
+  /** manifest.name */
+  name: string
+  /** manifest.displayName */
+  displayName?: string
+  /** manifest.version */
+  version: string
+  /** manifest.author */
+  author?: string
+  /** 是否覆盖了已存在的同名扩展 */
+  replaced: boolean
+}
+
 /** 渲染进程 → 主进程 的调用（invoke） */
 export interface MainApi {
   /** 窗口控制 */
@@ -40,6 +56,12 @@ export interface MainApi {
   uninstallUserExtension(id: string): Promise<void>
   /** 运行用户扩展的卸载钩子（若有），返回是否成功 */
   runUninstallHook(id: string): Promise<boolean>
+  /** 文件对话框选择 .oix 并安装；取消返回 null */
+  installUserExtensionViaDialog(): Promise<InstallOixResult | null>
+  /** 按路径安装 .oix（拖拽场景，路径来自 getPathForFile） */
+  installUserExtensionFromPath(filePath: string): Promise<InstallOixResult>
+  /** 拖拽文件取真实磁盘路径（Electron webUtils；渲染进程传入 File） */
+  getPathForFile(file: unknown): string
   /** 开发辅助：截图窗口内容到磁盘，返回保存路径 */
   capture(outPath: string): Promise<string>
   /** 开发辅助：在渲染进程执行 JS 并返回结果 */
