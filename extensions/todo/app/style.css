@@ -1,0 +1,60 @@
+/* 全局暗色主题：与 obox 宿主一致（#1e1e1e 底、#252526 面板、#007acc 主色） */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #1e1e1e;
+  color: #cccccc;
+  font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #3c3c3c;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #505050;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input,
+textarea,
+select {
+  background: #3c3c3c;
+  border: 1px solid #454545;
+  color: #e8e8e8;
+  padding: 5px 8px;
+  font-size: 13px;
+  outline: none;
+  font-family: inherit;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: #007acc;
+}
+
+button {
+  font-family: inherit;
+}
+
+input[type='date']::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+}
