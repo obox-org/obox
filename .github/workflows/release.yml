@@ -84,8 +84,8 @@ jobs:
           if (Test-Path $latestYml) { $assets += $latestYml }
           gh release delete $tag --yes --cleanup-tag 2>$null
           gh release create $tag $assets `
-            --title "Obox $tag" `
-            --notes "Obox $tag Windows 安装包"
+            --title "obox $tag" `
+            --notes "obox $tag Windows 安装包"
 
       # 上传构建日志（可选，便于排查）
       - name: Upload build artifacts on failure
