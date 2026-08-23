@@ -400,22 +400,22 @@ const sourceLabel = (s: string): string =>
 .search {
   flex: 1;
   max-width: 320px;
-  background: #3c3c3c;
-  border: 1px solid #454545;
-  color: #cccccc;
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border, #454545);
+  color: var(--fg, #cccccc);
   padding: 4px 8px;
   font-size: 13px;
   outline: none;
 }
 .sort {
-  background: #3c3c3c;
-  border: 1px solid #454545;
-  color: #cccccc;
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border, #454545);
+  color: var(--fg, #cccccc);
   font-size: 13px;
   padding: 4px;
 }
 .count {
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
   font-size: 12px;
 }
 .notice {
@@ -424,7 +424,7 @@ const sourceLabel = (s: string): string =>
   margin-left: auto;
 }
 .ext-manager.drag-active {
-  outline: 2px dashed #007acc;
+  outline: 2px dashed var(--accent, #007acc);
   outline-offset: -6px;
 }
 .drop-hint {
@@ -459,13 +459,13 @@ const sourceLabel = (s: string): string =>
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #9d9d9d;
+  color: var(--fg-dim, #9d9d9d);
   font-size: 12px;
   cursor: pointer;
   user-select: none;
 }
 .toggle-builtin input {
-  accent-color: #007acc;
+  accent-color: var(--accent, #007acc);
 }
 .grid {
   flex: 1;
@@ -476,15 +476,15 @@ const sourceLabel = (s: string): string =>
   align-content: start;
 }
 .card {
-  background: #252526;
-  border: 1px solid #3c3c3c;
+  background: var(--bg-panel, #252526);
+  border: 1px solid var(--border, #3c3c3c);
   border-radius: 4px;
   padding: 12px;
   cursor: pointer;
   transition: border-color 0.15s ease-out;
 }
 .card:hover {
-  border-color: #007acc;
+  border-color: var(--accent, #007acc);
 }
 .card.disabled {
   opacity: 0.5;
@@ -500,20 +500,20 @@ const sourceLabel = (s: string): string =>
 .card-name {
   font-size: 14px;
   font-weight: 600;
-  color: #e8e8e8;
+  color: var(--fg-bright, #e8e8e8);
 }
 .card-version {
   font-size: 11px;
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
 }
 .card-author {
   font-size: 12px;
-  color: #9d9d9d;
+  color: var(--fg-dim, #9d9d9d);
   margin-top: 4px;
 }
 .card-desc {
   font-size: 12px;
-  color: #cccccc;
+  color: var(--fg, #cccccc);
   margin-top: 6px;
   line-height: 1.5;
   display: -webkit-box;
@@ -527,7 +527,7 @@ const sourceLabel = (s: string): string =>
   margin-top: 6px;
 }
 .empty {
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
   font-size: 13px;
   padding: 24px;
   text-align: center;
@@ -544,7 +544,7 @@ const sourceLabel = (s: string): string =>
 }
 .badge.disabled {
   background: #5a5a5a;
-  color: #cccccc;
+  color: var(--fg, #cccccc);
 }
 .detail {
   flex: 1;
@@ -553,7 +553,7 @@ const sourceLabel = (s: string): string =>
 .back {
   background: transparent;
   border: none;
-  color: #007acc;
+  color: var(--accent, #007acc);
   cursor: pointer;
   font-size: 13px;
   padding: 0 0 8px;
@@ -566,10 +566,10 @@ const sourceLabel = (s: string): string =>
 .detail-header h2 {
   margin: 0;
   font-size: 20px;
-  color: #e8e8e8;
+  color: var(--fg-bright, #e8e8e8);
 }
 .detail-version {
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
   font-size: 13px;
 }
 .detail-fields {
@@ -580,11 +580,11 @@ const sourceLabel = (s: string): string =>
   font-size: 13px;
 }
 .detail-fields dt {
-  color: #9d9d9d;
+  color: var(--fg-dim, #9d9d9d);
 }
 .detail-fields dd {
   margin: 0;
-  color: #cccccc;
+  color: var(--fg, #cccccc);
 }
 .state-error {
   color: #f48771;
@@ -597,7 +597,7 @@ const sourceLabel = (s: string): string =>
 }
 .validations h3 {
   font-size: 13px;
-  color: #9d9d9d;
+  color: var(--fg-dim, #9d9d9d);
   margin: 0 0 8px;
 }
 .validations ul {
@@ -620,16 +620,16 @@ const sourceLabel = (s: string): string =>
   margin-top: 16px;
 }
 .btn {
-  background: #3c3c3c;
-  border: 1px solid #454545;
-  color: #cccccc;
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border, #454545);
+  color: var(--fg, #cccccc);
   padding: 6px 16px;
   font-size: 13px;
   cursor: pointer;
   border-radius: 2px;
 }
 .btn:hover {
-  background: #454545;
+  background: var(--hover-bg, #454545);
 }
 .btn.danger {
   background: #5a1d1d;
@@ -653,19 +653,19 @@ const sourceLabel = (s: string): string =>
   justify-content: center;
 }
 .confirm-box {
-  background: #252526;
-  border: 1px solid #454545;
+  background: var(--bg-panel, #252526);
+  border: 1px solid var(--border, #454545);
   padding: 20px;
   width: 380px;
   border-radius: 4px;
 }
 .confirm-box h3 {
   margin: 0 0 12px;
-  color: #e8e8e8;
+  color: var(--fg-bright, #e8e8e8);
   font-size: 15px;
 }
 .confirm-box p {
-  color: #cccccc;
+  color: var(--fg, #cccccc);
   font-size: 13px;
   line-height: 1.6;
   margin: 0 0 16px;
