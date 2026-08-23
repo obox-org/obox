@@ -47,14 +47,26 @@ jobs:
       - name: Build
         run: npm run build
 
-      # electron-builder 发布到 GitHub Releases：
-      # - publish 配置在 electron-builder.yml（provider: github，token 用 GITHUB_TOKEN 自动注入）
-      # - --publish always 在 tag 触发时创建/更新 release 并上传产物
-      # - --win nsis 仅编译 Windows 安装包（产物 obox-<version>-setup.exe）
-      - name: Build and publish release
+      # 仅编译 Windows 安装包（不 publish，产物 release/obox-<version>-setup.exe）
+      - name: Build installer
+        run: npx electron-builder --win nsis
+
+      # 创建 GitHub Release 并只上传安装包：
+      # - 源码归档（zip/tar.gz）由 GitHub 自动生成，无需手动上传
+      # - 只上传 obox-<version>-setup.exe，其他产物（win-unpacked/latest.yml/blockmap）不发布
+      - name: Create GitHub Release and upload installer
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis --publish always
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $exe = Get-ChildItem release/obox-*.setup.exe | Select-Object -First 1
+          if (-not $exe) { Write-Error "setup.exe not found"; exit 1 }
+          # release 已存在则删除重建（幂等，处理 CI 重跑/失败残留）
+          gh release delete $tag --yes --cleanup-tag 2>$null
+          gh release create $tag $exe.FullName `
+            --title "Obox $tag" `
+            --notes "Obox $tag Windows 安装包"
 
       # 上传构建日志（可选，便于排查）
       - name: Upload build artifacts on failure
