@@ -162,6 +162,8 @@ export default function myHello(api: ExtensionActivationApi): () => void {
 
 用户扩展（非内置）以 .oix（zip）分发，与 obox 仓库只有扩展 API 依赖关系——建议建独立项目目录 `extensions/<id>/`（自带 package.json / tsconfig / 构建，不进 obox 打包）。
 
+**源码托管**：每个用户扩展在 **`github.com/obox-org/<扩展id>` 独立仓库**维护（如 [obox-org/todo](https://github.com/obox-org/todo)）。obox 仓库不持有扩展源码（`extensions/` 已 gitignore，本地保留副本供开发/打包）；扩展代码的提交/推送发生在自己的仓库，不在 obox 仓库。
+
 ### 1. 项目结构（参考 `extensions/todo/`）
 
 ```

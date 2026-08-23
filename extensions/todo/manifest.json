@@ -1,8 +1,0 @@
-{
-  "name": "todo",
-  "version": "1.0.0",
-  "displayName": "待办",
-  "author": "chenzhi",
-  "description": "待办事项：我的一天 / 全部待办 / 日历 / 标签",
-  "main": "./index.js"
-}

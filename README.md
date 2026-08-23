@@ -62,6 +62,7 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 ### 用户扩展（`extensions/`）
 
 - 独立项目，仅依赖扩展 API；以 **.oix**（zip）分发，扩展管理器安装（**热生效**）
+- **源码独立仓库托管**：每个扩展在 `github.com/obox-org/<扩展id>` 独立仓库维护（如 [obox-org/todo](https://github.com/obox-org/todo)），obox 仓库不持有扩展源码（`extensions/` 已 gitignore，本地保留副本供开发/打包）
 - `todo/`：待办扩展（作者 chenzhi）——App 卡片打开独立子窗口，内含 Vue 子应用（左侧边栏：我的一天/全部待办/日历/标签 CRUD + 内容栏：快速添加/勾选/行内编辑/优先级），数据 localStorage 持久化（app:// 源）
 
 ## 常用命令

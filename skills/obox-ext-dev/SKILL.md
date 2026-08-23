@@ -19,7 +19,7 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 - **贡献点（Contribution Point）**：扩展在 manifest 中声明的能力注册点——导航项、状态栏项、命令，由宿主解析注册（声明式，不是命令式 `ctx.register*`）。
 - **扩展 API**：宿主在激活时注入的 `ExtensionActivationApi`，扩展在插件函数里通过它注册命令实现、更新状态栏、设徽标、读写 Memento、发事件、调窗口能力。详见 `references/api-reference.md`。
 - **App 注册**：扩展可调用 `api.app.register(...)` 把插件卡片注册进"应用"扩展，点击弹出独立子窗口（iframe 渲染 URL/HTML + postMessage 窗口控制桥）。**CSP 已放行 `app:` scheme**：用户扩展可用 `url: 'app://extensions/<id>/todo.html'` 由 iframe 同源加载静态页，子窗口内可执行脚本、用 localStorage（按 app:// 源持久化）；无 allow-modals，禁 alert/confirm/prompt。详见 `references/guides.md`。
-- **oix 分发与安装**：用户扩展（非内置）以 **.oix**（zip，根目录含 manifest.json + 入口 + 静态资源）分发。扩展管理器工具栏「安装扩展」按钮或**拖拽 .oix 到视图**安装：校验 manifest → 防路径穿越解压到 `userData/extensions/<name>_<author>/` → 同名覆盖 → **热生效**（宿主立即扫描、注册贡献点、激活，列表即时出现且立即可用，无需重启）。
+- **oix 分发与安装**：用户扩展（非内置）以 **.oix**（zip，根目录含 manifest.json + 入口 + 静态资源）分发，源码在 **`obox-org/<扩展id>` 独立仓库**托管（obox 不持有，`extensions/` gitignore 本地保留）。扩展管理器工具栏「安装扩展」按钮或**拖拽 .oix 到视图**安装：校验 manifest → 防路径穿越解压到 `userData/extensions/<name>_<author>/` → 同名覆盖 → **热生效**（宿主立即扫描、注册贡献点、激活，列表即时出现且立即可用，无需重启）。
 
 ## 标准流程
 

@@ -5,3 +5,6 @@ out
 .eslintcache
 *.log*
 vendor
+.gitoken
+# 用户扩展独立仓库托管（obox-org/<id>），本地保留但不纳入 obox 仓库
+extensions/
