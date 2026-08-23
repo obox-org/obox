@@ -87,15 +87,15 @@ function isSvgIcon(icon: string): boolean {
 .search {
   flex: 1;
   max-width: 320px;
-  background: #3c3c3c;
-  border: 1px solid #454545;
-  color: #cccccc;
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border, #454545);
+  color: var(--fg, #cccccc);
   padding: 4px 8px;
   font-size: 13px;
   outline: none;
 }
 .count {
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
   font-size: 12px;
 }
 .grid {
@@ -107,15 +107,15 @@ function isSvgIcon(icon: string): boolean {
   align-content: start;
 }
 .card {
-  background: #252526;
-  border: 1px solid #3c3c3c;
+  background: var(--bg-panel, #252526);
+  border: 1px solid var(--border, #3c3c3c);
   border-radius: 4px;
   padding: 14px;
   cursor: pointer;
   transition: border-color 0.15s ease-out;
 }
 .card:hover {
-  border-color: #007acc;
+  border-color: var(--accent, #007acc);
 }
 .card-icon {
   width: 40px;
@@ -124,7 +124,7 @@ function isSvgIcon(icon: string): boolean {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #cccccc;
+  color: var(--fg, #cccccc);
 }
 .card-icon img {
   max-width: 40px;
@@ -145,20 +145,20 @@ function isSvgIcon(icon: string): boolean {
 .card-name {
   font-size: 14px;
   font-weight: 600;
-  color: #e8e8e8;
+  color: var(--fg-bright, #e8e8e8);
 }
 .card-version {
   font-size: 11px;
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
 }
 .card-author {
   font-size: 12px;
-  color: #9d9d9d;
+  color: var(--fg-dim, #9d9d9d);
   margin-top: 4px;
 }
 .card-desc {
   font-size: 12px;
-  color: #cccccc;
+  color: var(--fg, #cccccc);
   margin-top: 6px;
   line-height: 1.5;
   display: -webkit-box;
@@ -173,7 +173,7 @@ function isSvgIcon(icon: string): boolean {
 }
 .empty {
   grid-column: 1 / -1;
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
   font-size: 13px;
   padding: 48px 24px;
   text-align: center;

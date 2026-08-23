@@ -393,7 +393,7 @@ kbd.capturing {
   margin-right: 6px;
 }
 .btn:hover {
-  background: #454545;
+  background: var(--hover-bg, #454545);
 }
 .btn.ghost {
   background: transparent;
