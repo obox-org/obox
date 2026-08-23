@@ -2,6 +2,8 @@ appId: com.electron.app
 productName: obox
 directories:
   buildResources: build
+  # 产物输出到项目内 release/ 目录
+  output: release
 files:
   - '!**/.vscode/*'
   - '!src/*'
@@ -40,7 +42,9 @@ appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  # token 由 CI 的 GITHUB_TOKEN 注入（release workflow 已配置）；本地发布可用 GH_TOKEN 环境变量
+  owner: obox-org
+  repo: obox
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/

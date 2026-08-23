@@ -34,7 +34,8 @@ export function createWindow(): BrowserWindow {
     frame: false,
     autoHideMenuBar: true,
     backgroundColor: '#1e1e1e',
-    ...(process.platform === 'linux' ? { icon: join(__dirname, '../../resources/icon.png') } : {}),
+    // 应用图标：Windows/Linux 任务栏 + dev 模式窗口图标（打包后 exe 用 build/icon.ico）
+    icon: join(__dirname, '../../resources/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

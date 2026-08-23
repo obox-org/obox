@@ -75,9 +75,22 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 | `npm run build` | typecheck + electron-vite 构建到 `out/` |
 | `npm run build:win` | 打包 Windows 安装包（electron-builder） |
 | `npm run format` | Prettier 格式化 |
-| `npm run build:todo` / `pack:todo` / `dev:todo` / `release:todo` | 待办用户扩展：构建子应用 / 打包 .oix / 子应用 watch / typecheck+build+pack（在 `extensions/todo/` 内执行） |
 | `node skills/obox-ext-dev/scripts/create-extension.mjs <id>` | 生成新内置扩展骨架 |
 | `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all` | 校验全部内置扩展 manifest |
+
+## 发布（GitHub CI + Releases）
+
+打 tag 自动触发 CI 编译并生成 GitHub Release（仅 Windows）：
+
+```bash
+# 1. 确认 package.json version 与 tag 一致（如 1.0.0 ↔ v1.0.0）
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+- 工作流：[.github/workflows/release.yml](.github/workflows/release.yml)（`on.push.tags: v*`）
+- 流程：checkout tag → 装依赖 → 校验 tag 版本与 package.json 一致 → typecheck → `electron-builder --win nsis --publish always`（发布到 GitHub Releases，产物 `obox-<version>-setup.exe` + `latest.yml` 自动更新元数据）
+- publish 配置：electron-builder.yml `provider: github`（token 由 CI `GITHUB_TOKEN` 注入）
 
 ## 快速上手（新会话必读）
 

@@ -5,6 +5,8 @@ import type { WindowState } from '../../../shared/types'
 
 const props = defineProps<{
   title?: string
+  /** 左侧图标：SVG 字符串（多彩/单色均可）或 undefined（不显示） */
+  icon?: string
 }>()
 
 const { t } = useI18n()
@@ -43,6 +45,7 @@ onUnmounted(() => offState?.())
 <template>
   <header class="titlebar" :class="{ inactive: !state.isFocused, fullscreen: state.isFullScreen }">
     <div class="titlebar-drag" />
+    <span v-if="props.icon" class="titlebar-icon" v-html="props.icon" />
     <div class="titlebar-title">{{ props.title ?? t('app.title') }}</div>
     <div class="titlebar-controls">
       <button
@@ -125,10 +128,22 @@ onUnmounted(() => offState?.())
 .titlebar.inactive > *:not(.titlebar-drag) {
   opacity: 0.6;
 }
+.titlebar-icon {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  height: 100%;
+}
+.titlebar-icon :deep(svg) {
+  width: 16px;
+  height: 16px;
+}
 .titlebar-title {
   position: relative;
   z-index: 1;
-  padding-left: 12px;
+  padding-left: 8px;
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;

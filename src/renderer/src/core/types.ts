@@ -210,6 +210,8 @@ export interface AppRegistration {
   description?: string
   /** 图标：SVG 字符串（data URI）或图片 URL */
   icon: string
+  /** 子窗口任务栏图标：app:// 图标 URL（如 app://extensions/<id>/icon.png），主进程转磁盘路径设置 */
+  iconUrl?: string
   /** 子窗口内容 URL（优先）；与 html 二选一或都提供（url 优先） */
   url?: string
   /** 子窗口内容 HTML（url 缺失时用 srcdoc 渲染） */

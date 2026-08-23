@@ -1,0 +1,64 @@
+# Obox Release 工作流
+# 本地打 tag（v<version>，如 v1.0.0）并 push 后自动触发：
+#   git tag v1.0.0 && git push origin v1.0.0
+# 流程：checkout tag → 装依赖 → typecheck → electron-builder 编译 Windows 安装包 → 发布到 GitHub Releases。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # 创建 release 与上传产物需要
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # 校验 tag 版本与 package.json version 一致（v1.0.0 ↔ 1.0.0）
+      - name: Verify tag version matches package.json
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $pkgVersion = (Get-Content package.json | ConvertFrom-Json).version
+          if ($tag -ne $pkgVersion) {
+            Write-Error "Tag version ($tag) does not match package.json version ($pkgVersion)"
+            exit 1
+          }
+          Write-Output "Tag version OK: $tag"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # electron-builder 发布到 GitHub Releases：
+      # - publish 配置在 electron-builder.yml（provider: github，token 用 GITHUB_TOKEN 自动注入）
+      # - --publish always 在 tag 触发时创建/更新 release 并上传产物
+      # - --win nsis 仅编译 Windows 安装包（产物 obox-<version>-setup.exe）
+      - name: Build and publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --publish always
+
+      # 上传构建日志（可选，便于排查）
+      - name: Upload build artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            out/**/*.log
+            dist/**/*.yml
+          if-no-files-found: ignore

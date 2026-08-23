@@ -25,6 +25,9 @@ const title = computed(() => {
   return sequence > 1 ? `${name} ${sequence}` : name
 })
 
+/** 子窗口标题栏图标：卡片注册的 icon（SVG 字符串，单色随主题） */
+const windowIcon = computed(() => registration.value?.icon)
+
 /** 主题相关：themeKey（驱动 iframe 重渲染的响应式 key）+ themeStyleHtml（注入的 CSS） */
 const themeKey = computed(() => {
   void themeStore.themes
@@ -80,7 +83,7 @@ onUnmounted(() => {
 
 <template>
   <div class="app-window">
-    <TitleBar :title="title" />
+    <TitleBar :title="title" :icon="windowIcon" />
     <div class="app-window-content">
       <iframe
         v-if="registration"

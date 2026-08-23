@@ -9,6 +9,7 @@ import { registry } from './core/registry'
 import { stateStore } from './core/state'
 import { host } from './core/host'
 import { keybindingStore } from './core/keybindings'
+import oboxIcon from './assets/icons/obox.svg?raw'
 
 const activeNavId = ref<string | null>(null)
 const paletteOpen = ref(false)
@@ -56,7 +57,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
 
 <template>
   <div class="app-shell">
-    <TitleBar />
+    <TitleBar :icon="oboxIcon" />
     <div class="app-body">
       <NavBar :active-nav-id="activeNavId" @select="selectNav" />
       <ContentArea :active-nav-id="activeNavId" />

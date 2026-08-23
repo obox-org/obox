@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
+import { getUserExtensionsDir } from './capabilities'
 
 /** 打开子窗口的请求（渲染进程 App 视图发起） */
 export interface OpenAppWindowRequest {
@@ -14,6 +15,8 @@ export interface OpenAppWindowRequest {
   width?: number
   /** 子窗口高（默认 640） */
   height?: number
+  /** 子窗口图标：app:// URL（如 app://extensions/<id>/icon.png），主进程转磁盘路径设任务栏图标 */
+  iconUrl?: string
 }
 
 /** 已打开的子窗口跟踪：appId → [BrowserWindow] */
@@ -24,6 +27,19 @@ function urlForChild(query: string): string {
     return `${process.env['ELECTRON_RENDERER_URL']}?${query}`
   }
   return `file://${join(__dirname, '../renderer/index.html').replace(/\\/g, '/')}?${query}`
+}
+
+/** 把 app://extensions/<id>/<rest> 解析为磁盘路径（userData/extensions/<id>/<rest>） */
+function appUrlToPath(appUrl: string): string | null {
+  try {
+    const url = new URL(appUrl)
+    if (url.protocol !== 'app:' || url.hostname !== 'extensions') return null
+    const rest = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
+    if (!rest || rest.includes('..')) return null
+    return join(getUserExtensionsDir(), rest)
+  } catch {
+    return null
+  }
 }
 
 function openChildWindow(req: OpenAppWindowRequest): BrowserWindow {
@@ -45,7 +61,7 @@ function openChildWindow(req: OpenAppWindowRequest): BrowserWindow {
   // 多开序号：当前数量 + 1
   const sequence = list.filter((w) => !w.isDestroyed()).length + 1
 
-  const win = new BrowserWindow({
+  const winOptions: Electron.BrowserWindowConstructorOptions = {
     width,
     height,
     minWidth: 400,
@@ -61,7 +77,13 @@ function openChildWindow(req: OpenAppWindowRequest): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false
     }
-  })
+  }
+  // 任务栏图标：若卡片提供 app:// 图标 URL，转磁盘路径设置；否则用应用默认图标
+  if (req.iconUrl) {
+    const iconPath = appUrlToPath(req.iconUrl)
+    if (iconPath) winOptions.icon = iconPath
+  }
+  const win = new BrowserWindow(winOptions)
 
   // 子窗口参数：obox-window=app + appId + sequence
   const query = new URLSearchParams({

@@ -73,6 +73,7 @@ export interface MainApi {
     multiOpen?: boolean
     width?: number
     height?: number
+    iconUrl?: string
   }): Promise<{ appId: string; sequence: number }>
 }
 

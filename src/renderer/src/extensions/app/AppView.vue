@@ -31,12 +31,14 @@ async function openApp(id: string): Promise<void> {
     title: item.name,
     multiOpen: item.multiOpen,
     width: item.width,
-    height: item.height
+    height: item.height,
+    iconUrl: item.iconUrl
   })
 }
 
 function isSvgIcon(icon: string): boolean {
-  return icon.trimStart().startsWith('<svg')
+  // 兼容带 XML 声明前缀的 SVG（如 <?xml ...?><svg ...>）
+  return /<svg[\s>]/.test(icon.trimStart())
 }
 </script>
 
