@@ -64,12 +64,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Output "after build, output dir contents:"
           Get-ChildItem $outDir -ErrorAction SilentlyContinue | Select-Object Name, Length
-          # 2) 定位安装包（通配版本号）
-          $exe = Get-ChildItem -Path $outDir -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $exe) {
-            Get-ChildItem $outDir -ErrorAction SilentlyContinue | Select-Object Name
-            Write-Error "setup.exe not found in $outDir"; exit 1
+          # 2) 定位安装包：electron-builder 固定命名 obox-<version>-setup.exe（version=tag 去 v）。
+          #    runner 上 Get-ChildItem 偶发返回空结果（即使目录非空），Test-Path 完整路径最可靠
+          $version = $tag -replace '^v', ''
+          $exePath = Join-Path $outDir "obox-$version-setup.exe"
+          Write-Output "checking: $exePath exists=$(Test-Path $exePath)"
+          if (-not (Test-Path $exePath)) {
+            Write-Error "setup.exe not found: $exePath"; exit 1
           }
+          $exe = Get-Item $exePath
           Write-Output "uploading: $($exe.FullName)"
           # 3) 发布：上传安装包 + latest.yml（release 已存在则删除重建，幂等）
           $assets = @($exe.FullName)
