@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent } from 'vue'
 import type { Component } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   activeNavId: string | null
@@ -32,7 +35,7 @@ const activeView = computed<Component | null>(() => {
       <component :is="activeView" v-if="activeView" :key="activeNavId" />
     </KeepAlive>
     <div v-if="!activeView" class="content-empty">
-      <p>选择一个导航项开始</p>
+      <p>{{ t('content.empty') }}</p>
     </div>
   </main>
 </template>

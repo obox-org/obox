@@ -8,6 +8,7 @@ import CommandPalette from './components/CommandPalette.vue'
 import { registry } from './core/registry'
 import { stateStore } from './core/state'
 import { host } from './core/host'
+import { keybindingStore } from './core/keybindings'
 
 const activeNavId = ref<string | null>(null)
 const paletteOpen = ref(false)
@@ -34,8 +35,10 @@ function selectNav(id: string): void {
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
-  // Ctrl+Shift+P 打开命令面板
-  if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+  // 快捷键系统：匹配内置/自定义快捷键（如 Ctrl+Shift+P 命令面板）
+  const command = keybindingStore.matchKeydown(e)
+  if (!command) return
+  if (command === 'app.showCommands') {
     e.preventDefault()
     paletteOpen.value = !paletteOpen.value
   }
@@ -69,7 +72,7 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
-  background: #1e1e1e;
+  background: var(--bg, #1e1e1e);
 }
 .app-body {
   flex: 1;

@@ -4,7 +4,10 @@
  * 点击卡片经 IPC 打开独立子窗口。
  */
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { appStore } from '../../core/appStore'
+
+const { t } = useI18n()
 
 const query = ref('')
 
@@ -40,8 +43,8 @@ function isSvgIcon(icon: string): boolean {
 <template>
   <div class="app-view">
     <div class="toolbar">
-      <input v-model="query" class="search" placeholder="搜索应用（名称/作者/简介）…" />
-      <span class="count">{{ items.length }} 个应用</span>
+      <input v-model="query" class="search" :placeholder="t('appExt.searchPlaceholder')" />
+      <span class="count">{{ items.length }} {{ t('appExt.count') }}</span>
     </div>
 
     <div class="grid">
@@ -54,13 +57,13 @@ function isSvgIcon(icon: string): boolean {
           <span class="card-name">{{ item.name }}</span>
           <span class="card-version">{{ item.version }}</span>
         </div>
-        <div class="card-author">{{ item.author ?? '未知作者' }}</div>
-        <div class="card-desc">{{ item.description ?? '暂无简介' }}</div>
-        <div class="card-hint">点击打开独立窗口</div>
+        <div class="card-author">{{ item.author ?? t('extManager.unknownAuthor') }}</div>
+        <div class="card-desc">{{ item.description ?? t('extManager.noDescription') }}</div>
+        <div class="card-hint">{{ t('appExt.openHint') }}</div>
       </div>
       <div v-if="items.length === 0" class="empty">
-        <p>暂无已注册的应用</p>
-        <p class="empty-hint">扩展可通过 api.app.register 注册插件卡片</p>
+        <p>{{ t('appExt.empty') }}</p>
+        <p class="empty-hint">{{ t('appExt.emptyHint') }}</p>
       </div>
     </div>
   </div>

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { WindowState } from '../../../shared/types'
 
 const props = defineProps<{
   title?: string
 }>()
+
+const { t } = useI18n()
 
 const state = ref<WindowState>({ isMaximized: false, isFullScreen: false, isFocused: true })
 
@@ -40,17 +43,22 @@ onUnmounted(() => offState?.())
 <template>
   <header class="titlebar" :class="{ inactive: !state.isFocused, fullscreen: state.isFullScreen }">
     <div class="titlebar-drag" />
-    <div class="titlebar-title">{{ props.title ?? 'Obox' }}</div>
+    <div class="titlebar-title">{{ props.title ?? t('app.title') }}</div>
     <div class="titlebar-controls">
-      <button class="window-icon" title="最小化" aria-label="最小化" @click="minimize">
+      <button
+        class="window-icon"
+        :title="t('titlebar.minimize')"
+        :aria-label="t('titlebar.minimize')"
+        @click="minimize"
+      >
         <svg width="10" height="10" viewBox="0 0 10 10">
           <line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" stroke-width="1" />
         </svg>
       </button>
       <button
         class="window-icon"
-        :title="state.isMaximized ? '还原' : '最大化'"
-        :aria-label="state.isMaximized ? '还原' : '最大化'"
+        :title="state.isMaximized ? t('titlebar.restore') : t('titlebar.maximize')"
+        :aria-label="state.isMaximized ? t('titlebar.restore') : t('titlebar.maximize')"
         @click="toggleMaximize"
       >
         <svg v-if="!state.isMaximized" width="10" height="10" viewBox="0 0 10 10">
@@ -82,7 +90,12 @@ onUnmounted(() => offState?.())
           />
         </svg>
       </button>
-      <button class="window-icon close" title="关闭" aria-label="关闭" @click="close">
+      <button
+        class="window-icon close"
+        :title="t('common.close')"
+        :aria-label="t('common.close')"
+        @click="close"
+      >
         <svg width="10" height="10" viewBox="0 0 10 10">
           <path d="M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5" stroke="currentColor" stroke-width="1.1" />
         </svg>
@@ -97,8 +110,8 @@ onUnmounted(() => offState?.())
   height: 32px;
   display: flex;
   align-items: center;
-  background: #323233;
-  color: #cccccc;
+  background: var(--bg-titlebar, #323233);
+  color: var(--fg, #cccccc);
   user-select: none;
   flex-shrink: 0;
   z-index: 100;
@@ -138,12 +151,12 @@ onUnmounted(() => offState?.())
   justify-content: center;
   border: none;
   background: transparent;
-  color: #cccccc;
+  color: var(--fg, #cccccc);
   cursor: default;
   outline: none;
 }
 .window-icon:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--hover-bg, rgba(255, 255, 255, 0.1));
 }
 .window-icon.close:hover {
   background: rgba(232, 17, 35, 0.9);

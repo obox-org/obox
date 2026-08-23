@@ -34,22 +34,34 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 | 文件 | 职责 |
 |---|---|
-| `types.ts` | 扩展 API 类型：`ExtensionActivationApi`、`AppRegistration`、贡献点类型、Memento/Disposable |
-| `host.ts` | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、禁用/卸载重启生效 |
+| `types.ts` | 扩展 API 类型：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable |
+| `host.ts` | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效 |
 | `manifest.ts` | 清单校验（name/version/main 必填、semver、依赖检测）+ 错误收集 |
 | `registry.ts` | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive） |
 | `loader.ts` | 内置扩展 Vite 静态收集 + 用户扩展 app:// 运行时加载 |
-| `state.ts` | 状态持久化（userData JSON）：禁用列表（缺省即启用）、上次导航项、Memento |
+| `state.ts` | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）** |
 | `appStore.ts` | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理） |
+| `theme.ts` | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题 |
+| `keybindings.ts` | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化 |
+| `extensionSettings.ts` | 扩展设置页注册表（api.settings.register / manifest 声明） |
+| `extensionI18n.ts` | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间） |
+
+### i18n（`renderer/src/i18n/`）
+
+- vue-i18n 11 实例 + 中英语言包（`locales/zh.ts` / `en.ts`）
+- 切换立即生效 + 持久化；语言下拉显示各语言本地化名称（中文 → "中文"、English → "English"）
+- 覆盖宿主布局框架 + 内置扩展全部文案；扩展经 `api.i18n` 使用自己的语言包
 
 ### 内置扩展（`renderer/src/extensions/`）
 
-- `ext-manager/`：扩展管理器——Grid 展示已安装扩展（名称/版本/作者/简介），详情页（Identifier/Source/Last Updated/校验信息），**安装（.oix 按钮/拖拽）**、禁用/卸载（重启生效 + 弹确认）
-- `app/`：应用（App）——其他扩展经 `api.app.register` 注册插件卡片，Grid 展示（icon/名称/版本/作者/简介），点击弹出独立子窗口（URL 或 HTML srcdoc + iframe + postMessage 窗口控制桥）
+- `ext-manager/`：扩展管理器——Grid 展示已安装扩展，详情页（Identifier/Source/Last Updated/校验信息），安装（.oix 按钮/拖拽，**热生效**）、禁用/卸载（未激活热移除，已激活弹"立即重启"）、默认隐藏内置扩展（"显示内置"开关）
+- `app/`：应用（App）——其他扩展经 `api.app.register` 注册插件卡片，Grid 展示，点击弹出独立子窗口（URL 或 HTML srcdoc + iframe + postMessage 窗口控制桥，**srcdoc 自动注入主题变量**）
+- `settings/`：设置——左侧树（外观/语言/快捷键/扩展）+ 右侧配置表单；主题下拉（主题扩展贡献）、语言下拉、快捷键修改、扩展设置项
+- `theme-dark/`、`theme-light/`：主题扩展（contributes.themes 声明 CSS 变量组），设置"外观"选择
 
 ### 用户扩展（`extensions/`）
 
-- 独立项目，仅依赖扩展 API；以 **.oix**（zip）分发，扩展管理器安装（重启生效）
+- 独立项目，仅依赖扩展 API；以 **.oix**（zip）分发，扩展管理器安装（**热生效**）
 - `todo/`：待办扩展（作者 chenzhi）——App 卡片打开独立子窗口，内含 Vue 子应用（左侧边栏：我的一天/全部待办/日历/标签 CRUD + 内容栏：快速添加/勾选/行内编辑/优先级），数据 localStorage 持久化（app:// 源）
 
 ## 常用命令

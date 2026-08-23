@@ -8,6 +8,15 @@ import { registry } from './registry'
 import { makeExtensionInfo, topoSort } from './manifest'
 import { stateStore } from './state'
 import { appStore } from './appStore'
+import { themeStore } from './theme'
+import { extensionSettingsStore } from './extensionSettings'
+import {
+  registerExtensionMessages,
+  clearExtensionMessages,
+  translateExtension
+} from './extensionI18n'
+import { keybindingStore } from './keybindings'
+import { i18n } from '../i18n'
 import type {
   ExtensionActivationApi,
   ExtensionInfo,
@@ -88,6 +97,19 @@ class ExtensionHost {
           message: `命令缺少 command/title: ${JSON.stringify(cmd)}`
         })
     }
+    // 主题贡献点：主题扩展声明 CSS 变量组
+    for (const theme of c.themes ?? []) {
+      if (theme.id && theme.label && theme.tokens) themeStore.register(ext.id, theme)
+      else
+        ext.validations.push({
+          severity: 'warning',
+          message: `主题缺少 id/label/tokens: ${JSON.stringify(theme)}`
+        })
+    }
+    // 扩展语言包（manifest 声明）
+    if (c.i18n) registerExtensionMessages(ext.id, c.i18n)
+    // 扩展设置 schema（manifest 声明，对齐 VS Code configuration 简化版）
+    if (c.settings) extensionSettingsStore.register(ext.id, c.settings)
     // 校验视图引用：导航项声明的 view 必须在扩展模块具名导出中存在
     for (const nav of c.navItems ?? []) {
       if (nav.view && !(nav.view in module)) {
@@ -220,12 +242,43 @@ class ExtensionHost {
       },
       app: {
         register: (registration) => appStore.register(ext.id, registration)
+      },
+      i18n: {
+        t: (key, params) => translateExtension(ext.id, key, params),
+        get locale(): string {
+          return i18n.global.locale.value
+        },
+        onLocaleChanged: (callback) => {
+          // 复用 settings 变更通知（语言切换触发 emitSettingsChanged）
+          const listener = (): void => callback(i18n.global.locale.value as string)
+          const dispose = stateStore.onSettingsChanged(listener)
+          disposables.push(dispose)
+          return { dispose }
+        },
+        registerMessages: (messages) => {
+          registerExtensionMessages(ext.id, messages)
+        }
+      },
+      settings: {
+        register: (page) => {
+          extensionSettingsStore.register(ext.id, page)
+          return { dispose: () => extensionSettingsStore.deactivateExtension(ext.id) }
+        },
+        get: <T = unknown>(key: string, defaultValue?: T): T | undefined =>
+          stateStore.getSetting<T>(key, defaultValue),
+        set: (key, value) => stateStore.setSetting(key, value)
       }
     }
   }
 
   /** 扫描并启动（主流程）：返回完整扩展列表 */
   async start(options: HostOptions): Promise<ExtensionInfo[]> {
+    // 注册内置快捷键（命令面板 Ctrl+Shift+P）
+    keybindingStore.register({
+      command: 'app.showCommands',
+      labelKey: 'palette.showCommands',
+      defaultKey: 'Ctrl+Shift+P'
+    })
     // ---- 1. 汇总扩展（内置 + 用户），跳过禁用项 ----
     const all: ExtensionInfo[] = []
     const entries: ExtensionEntry[] = [...options.builtins, ...options.userExtensions]
@@ -290,6 +343,9 @@ class ExtensionHost {
         cyclic.length ? cyclic.map((c) => c.id).join(',') : '无'
       }`
     )
+
+    // 应用持久化主题（主题扩展已注册贡献）
+    themeStore.applyCurrent()
 
     return all
   }
@@ -356,10 +412,12 @@ class ExtensionHost {
       }
       this.cleanups.delete(id)
     }
-    // 注册表贡献项 + 视图组件 + App 卡片
+    // 注册表贡献项 + 视图组件 + App 卡片 + 设置页 + 语言包
     registry.deactivateExtension(id)
     registry.removeViewComponents(id)
     appStore.deactivateExtension(id)
+    extensionSettingsStore.deactivateExtension(id)
+    clearExtensionMessages(id)
     this.activated.delete(id)
     this.loaders.delete(id)
     this.extensions.delete(id)

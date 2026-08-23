@@ -1,0 +1,29 @@
+{
+  "name": "theme-dark",
+  "version": "1.0.0",
+  "displayName": "Dark 主题",
+  "author": "Obox",
+  "description": "深色主题（默认）",
+  "main": "./index.ts",
+  "contributes": {
+    "themes": [
+      {
+        "id": "theme-dark.dark",
+        "label": "深色",
+        "tokens": {
+          "--bg": "#1e1e1e",
+          "--bg-panel": "#252526",
+          "--bg-sidebar": "#333333",
+          "--bg-titlebar": "#323233",
+          "--bg-input": "#3c3c3c",
+          "--border": "#3c3c3c",
+          "--fg": "#cccccc",
+          "--fg-dim": "#6e6e6e",
+          "--fg-bright": "#ffffff",
+          "--accent": "#007acc",
+          "--hover-bg": "rgba(255, 255, 255, 0.1)"
+        }
+      }
+    ]
+  }
+}

@@ -5,6 +5,7 @@ import App from './App.vue'
 import AppWindow from './AppWindow.vue'
 import { host } from './core/host'
 import { collectBuiltinExtensions, collectUserExtensions } from './core/loader'
+import { i18n } from './i18n'
 
 // 启动扩展宿主（两阶段），完成后由根组件消费注册表
 void (async () => {
@@ -19,8 +20,8 @@ void (async () => {
   const isAppWindow = params.get('obox-window') === 'app'
 
   if (isAppWindow) {
-    createApp(AppWindow).mount('#app')
+    createApp(AppWindow).use(i18n).mount('#app')
   } else {
-    createApp(App).mount('#app')
+    createApp(App).use(i18n).mount('#app')
   }
 })()

@@ -119,6 +119,46 @@ const d = api.app.register({
 - 子窗口内容通信：iframe 内 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')` 控制子窗口（**不要用内联 onclick，会被 CSP 阻止**）
 - **url 加载用户扩展静态页**：CSP 已放行 `app:` scheme，`url: 'app://extensions/<id>/todo.html'` 可由 iframe 同源加载（页面可执行脚本、可用 localStorage）；子窗口 iframe 无 allow-modals，禁 alert/confirm/prompt
 
+### i18n（扩展多语言）
+
+扩展语言包与宿主语言包独立命名空间，互不冲突：
+
+```ts
+// 运行时注册语言包（或 manifest contributes.i18n 声明）
+api.i18n.registerMessages({
+  zh: { hello: '你好' },
+  en: { hello: 'Hello' }
+})
+// 按当前语言取文案（缺省返回 key）
+const text = api.i18n.t('hello', { name: 'Obox' })  // 支持 {param} 插值
+// 当前语言代码
+const locale = api.i18n.locale // 'zh' | 'en'
+// 语言切换监听（返回 Disposable），扩展据此刷新自身 UI
+api.i18n.onLocaleChanged((locale) => { /* 重新渲染 */ })
+```
+
+### settings（扩展设置项）
+
+扩展设置页显示在"设置"左侧树的"扩展"节点下（按扩展名展开）：
+
+```ts
+// 运行时注册设置页（或 manifest contributes.settings 声明）
+const page = api.settings.register({
+  id: 'my-ext.settings',
+  title: '我的扩展设置',
+  fields: [
+    { key: 'my-ext.interval', label: '刷新间隔', type: 'number', default: 30 },
+    { key: 'my-ext.mode', label: '模式', type: 'select', options: [{ value: 'a', label: 'A' }], default: 'a' }
+  ]
+})
+// 读写设置值（统一设置存储，key 建议含扩展前缀；set 立即持久化并通知）
+const v = api.settings.get('my-ext.interval', 30)
+api.settings.set('my-ext.interval', 60)
+page.dispose() // 注销设置页
+```
+
+设置字段类型：`text` / `number` / `boolean` / `select`（见 `SettingField` 类型）。
+
 ## 宿主生命周期语义
 
 - **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表

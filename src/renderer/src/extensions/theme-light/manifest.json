@@ -1,0 +1,29 @@
+{
+  "name": "theme-light",
+  "version": "1.0.0",
+  "displayName": "Light 主题",
+  "author": "Obox",
+  "description": "浅色主题",
+  "main": "./index.ts",
+  "contributes": {
+    "themes": [
+      {
+        "id": "theme-light.light",
+        "label": "浅色",
+        "tokens": {
+          "--bg": "#f3f3f3",
+          "--bg-panel": "#ffffff",
+          "--bg-sidebar": "#ececec",
+          "--bg-titlebar": "#dddddd",
+          "--bg-input": "#ffffff",
+          "--border": "#d4d4d4",
+          "--fg": "#333333",
+          "--fg-dim": "#6e6e6e",
+          "--fg-bright": "#1e1e1e",
+          "--accent": "#007acc",
+          "--hover-bg": "rgba(0, 0, 0, 0.06)"
+        }
+      }
+    ]
+  }
+}

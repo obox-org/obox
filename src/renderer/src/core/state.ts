@@ -3,6 +3,7 @@
  * - disabledExtensions: 禁用列表（缺省即启用模型）
  * - lastActiveNavId: 上次激活的导航项 id（重启恢复）
  * - memento: 每扩展命名空间的 Memento 存储（workspaceState/globalState 共用一处，分命名空间）
+ * - settings: 统一设置存储（主题/快捷键/扩展设置等，key-value）
  *
  * 通过 window.api 无法直接读写 userData 文件（能力面未开放通用 fs），
  * 因此状态经 localStorage 持久化——Electron 渲染进程 localStorage 落在 userData 下。
@@ -13,6 +14,7 @@ interface PersistedState {
   disabledExtensions: string[]
   lastActiveNavId: string | null
   memento: Record<string, Record<string, unknown>>
+  settings: Record<string, unknown>
 }
 
 const state: PersistedState = load()
@@ -20,15 +22,18 @@ const state: PersistedState = load()
 function load(): PersistedState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { disabledExtensions: [], lastActiveNavId: null, memento: {} }
+    if (!raw) {
+      return { disabledExtensions: [], lastActiveNavId: null, memento: {}, settings: {} }
+    }
     const parsed = JSON.parse(raw) as Partial<PersistedState>
     return {
       disabledExtensions: Array.isArray(parsed.disabledExtensions) ? parsed.disabledExtensions : [],
       lastActiveNavId: typeof parsed.lastActiveNavId === 'string' ? parsed.lastActiveNavId : null,
-      memento: parsed.memento && typeof parsed.memento === 'object' ? parsed.memento : {}
+      memento: parsed.memento && typeof parsed.memento === 'object' ? parsed.memento : {},
+      settings: parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {}
     }
   } catch {
-    return { disabledExtensions: [], lastActiveNavId: null, memento: {} }
+    return { disabledExtensions: [], lastActiveNavId: null, memento: {}, settings: {} }
   }
 }
 
@@ -39,6 +44,10 @@ function save(): void {
     console.error('[state] persist failed', err)
   }
 }
+
+/** 设置变更订阅（主题/语言/快捷键等变更时通知，供 UI 刷新） */
+type SettingsListener = () => void
+const settingsListeners = new Set<SettingsListener>()
 
 export const stateStore = {
   get disabledExtensions(): string[] {
@@ -62,6 +71,26 @@ export const stateStore = {
   setLastActiveNavId(id: string): void {
     state.lastActiveNavId = id
     save()
+  },
+  /** 统一设置存储：读取设置值 */
+  getSetting<T>(key: string, defaultValue?: T): T | undefined {
+    return key in state.settings ? (state.settings[key] as T) : defaultValue
+  },
+  /** 统一设置存储：写入设置值（undefined 删除），并通知订阅者 */
+  setSetting(key: string, value: unknown): void {
+    if (value === undefined) delete state.settings[key]
+    else state.settings[key] = value
+    save()
+    settingsListeners.forEach((l) => l())
+  },
+  /** 订阅设置变更，返回退订函数 */
+  onSettingsChanged(listener: SettingsListener): () => void {
+    settingsListeners.add(listener)
+    return () => settingsListeners.delete(listener)
+  },
+  /** 触发设置变更通知（语言切换等场景） */
+  emitSettingsChanged(): void {
+    settingsListeners.forEach((l) => l())
   },
   /** Memento：按扩展 id 命名空间读写 */
   memento(extensionId: string): {

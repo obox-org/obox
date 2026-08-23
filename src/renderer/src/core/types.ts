@@ -57,11 +57,55 @@ export interface CommandContribution {
   when?: string
 }
 
+/** 主题贡献点（manifest 声明）：主题扩展声明一组 CSS 变量 token */
+export interface ThemeContribution {
+  /** 主题 id（全局唯一，建议 `<扩展名>.<主题名>`，如 `theme-dark.dark`） */
+  id: string
+  /** 显示名（如 "深色"/"Dark"） */
+  label: string
+  /** CSS 变量 token 组：`--bg` → 值 */
+  tokens: Record<string, string>
+}
+
+/** 设置字段类型（扩展设置页字段） */
+export type SettingFieldType = 'text' | 'number' | 'boolean' | 'select'
+
+/** 设置字段定义（api.settings.register 或 manifest 声明） */
+export interface SettingField {
+  /** 字段 key（设置存储中的键，建议含扩展前缀） */
+  key: string
+  /** 字段显示名 */
+  label: string
+  /** 字段类型 */
+  type: SettingFieldType
+  /** 默认值 */
+  default?: unknown
+  /** select 类型的选项 [{ value, label }] */
+  options?: Array<{ value: string; label: string }>
+  /** 字段描述（可选） */
+  description?: string
+}
+
+/** 设置页贡献（api.settings.register） */
+export interface SettingsPage {
+  /** 设置页 id（建议含扩展前缀） */
+  id: string
+  /** 设置页标题（设置左侧树"扩展"节点下显示） */
+  title: string
+  /** 字段列表 */
+  fields: SettingField[]
+}
+
 /** manifest 的贡献点声明 */
 export interface ContributionManifest {
   navItems?: NavItemContribution[]
   statusBarItems?: StatusBarItemContribution[]
   commands?: CommandContribution[]
+  themes?: ThemeContribution[]
+  /** 扩展语言包：{ localeCode: { key: text } } */
+  i18n?: Record<string, Record<string, string>>
+  /** 扩展设置 schema（对齐 VS Code contributes.configuration 简化版） */
+  settings?: SettingsPage
 }
 
 /** 扩展 manifest（package.json 的 obox 扩展声明） */
@@ -214,6 +258,26 @@ export interface ExtensionActivationApi {
   app: {
     /** 注册一张插件卡片，返回注销函数；扩展停用时宿主自动清理 */
     register(registration: AppRegistration): Disposable
+  }
+  /** 扩展多语言能力（扩展语言包与宿主语言包独立命名空间） */
+  i18n: {
+    /** 按当前语言查扩展自己的语言包（key 缺省返回 key 本身） */
+    t(key: string, params?: Record<string, unknown>): string
+    /** 当前语言代码（'zh' | 'en'） */
+    readonly locale: string
+    /** 语言切换监听（返回注销函数） */
+    onLocaleChanged(callback: (locale: string) => void): Disposable
+    /** 运行时注册扩展语言包（或 manifest contributes.i18n 声明） */
+    registerMessages(messages: Record<string, Record<string, string>>): void
+  }
+  /** 扩展设置页注册（非内置扩展的设置项，显示在设置"扩展"节点） */
+  settings: {
+    /** 注册一个设置页（返回注销函数）；或 manifest contributes.settings 声明 */
+    register(page: SettingsPage): Disposable
+    /** 读取扩展设置值（与宿主统一设置存储，key 建议含扩展前缀） */
+    get<T = unknown>(key: string, defaultValue?: T): T | undefined
+    /** 写入扩展设置值（立即持久化并通知） */
+    set(key: string, value: unknown): void
   }
 }
 

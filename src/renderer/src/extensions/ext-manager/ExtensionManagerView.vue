@@ -4,8 +4,11 @@
  * 点击查看详情（含 Installation 区块），支持禁用/卸载、搜索、排序、来源标注。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ExtensionInfo } from '../../core/types'
 import { host } from '../../core/host'
+
+const { t } = useI18n()
 
 type SortKey = 'name' | 'installed'
 
@@ -67,12 +70,12 @@ async function toggleEnabled(ext: ExtensionInfo): Promise<void> {
   try {
     const { hot, needsRestart } = host.setEnabled(ext.id, !ext.enabled)
     refreshTick.value++
-    const name = ext.manifest.displayName ?? ext.id
+    const action = ext.enabled ? t('extManager.actions.disable') : t('extManager.actions.enable')
     if (hot) {
-      showNotice(`「${name}」已${ext.enabled ? '启用' : '禁用'}（立即生效）`)
+      showNotice(t('extManager.notices.toggledHot', { action }))
     } else if (needsRestart) {
-      showNotice(`「${name}」已${ext.enabled ? '启用' : '禁用'}，点击“立即重启”生效`)
-      restartPrompt.value = `「${name}」已${ext.enabled ? '启用' : '禁用'}，重启后生效`
+      showNotice(t('extManager.notices.toggledRestart', { action }))
+      restartPrompt.value = t('extManager.notices.toggledRestart', { action })
     }
   } finally {
     busyId.value = null
@@ -87,15 +90,18 @@ async function doUninstall(): Promise<void> {
     const { hot, needsRestart } = await host.uninstall(ext.id)
     selected.value = null
     refreshTick.value++
-    const name = ext.manifest.displayName ?? ext.id
     if (hot) {
-      showNotice(`「${name}」已卸载（立即生效）`)
+      showNotice(t('extManager.notices.uninstalledHot'))
     } else if (needsRestart) {
-      showNotice(`「${name}」已卸载，点击“立即重启”生效`)
-      restartPrompt.value = `「${name}」已卸载，重启后生效`
+      showNotice(t('extManager.notices.uninstalledRestart'))
+      restartPrompt.value = t('extManager.notices.uninstalledRestart')
     }
   } catch (err) {
-    showNotice(`卸载失败: ${err instanceof Error ? err.message : String(err)}`)
+    showNotice(
+      t('extManager.notices.installFailed', {
+        msg: err instanceof Error ? err.message : String(err)
+      })
+    )
   } finally {
     confirmUninstall.value = null
     busyId.value = null
@@ -113,7 +119,11 @@ async function installFromPath(filePath: string): Promise<boolean> {
     }
     return false
   } catch (err) {
-    showNotice(`安装失败: ${err instanceof Error ? err.message : String(err)}`)
+    showNotice(
+      t('extManager.notices.installFailed', {
+        msg: err instanceof Error ? err.message : String(err)
+      })
+    )
     return false
   } finally {
     installBusy.value = false
@@ -131,7 +141,7 @@ async function hotInstall(result: {
   const entry = await buildUserExtensionEntry(result.id)
   if (!entry) {
     showNotice(
-      `「${result.displayName ?? result.name}」v${result.version} 安装成功，但 manifest 无效，未能加载`
+      `「${result.displayName ?? result.name}」v${result.version} ${t('extManager.invalidManifest')}`
     )
     refreshTick.value++
     return
@@ -140,10 +150,10 @@ async function hotInstall(result: {
   refreshTick.value++
   const name = info.manifest.displayName ?? info.id
   if (info.isActive) {
-    showNotice(`「${name}」v${info.manifest.version} 安装成功并已激活（立即生效）`)
+    showNotice(t('extManager.notices.installed', { name, version: info.manifest.version }))
   } else {
     showNotice(
-      `「${name}」安装成功，但${info.activationError ? `激活失败: ${info.activationError}` : '清单无效'}（详情见卡片）`
+      `「${name}」${info.activationError ? t('extManager.states.activationFailed') + ': ' + info.activationError : t('extManager.invalidManifest')}`
     )
   }
 }
@@ -157,7 +167,11 @@ async function installViaDialog(): Promise<void> {
       await hotInstall(result)
     }
   } catch (err) {
-    showNotice(`安装失败: ${err instanceof Error ? err.message : String(err)}`)
+    showNotice(
+      t('extManager.notices.installFailed', {
+        msg: err instanceof Error ? err.message : String(err)
+      })
+    )
   } finally {
     installBusy.value = false
   }
@@ -182,7 +196,7 @@ async function onDrop(e: DragEvent): Promise<void> {
   const files = Array.from(e.dataTransfer?.files ?? [])
   const oixFiles = files.filter((f) => f.name.toLowerCase().endsWith('.oix'))
   if (oixFiles.length === 0) {
-    showNotice('请拖入 .oix 扩展包文件')
+    showNotice(t('extManager.notices.dragOnlyOix'))
     return
   }
   for (const file of oixFiles) {
@@ -214,7 +228,8 @@ onMounted(() => {
 
 onUnmounted(() => offEvents?.())
 
-const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户')
+const sourceLabel = (s: string): string =>
+  s === 'builtin' ? t('common.builtin') : t('common.user')
 </script>
 
 <template>
@@ -227,22 +242,24 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
   >
     <div class="toolbar">
       <button class="btn install" :disabled="installBusy" @click="installViaDialog">
-        {{ installBusy ? '安装中…' : '安装扩展' }}
+        {{ installBusy ? t('extManager.installing') : t('extManager.installBtn') }}
       </button>
-      <button v-if="restartPrompt" class="btn restart" @click="reloadWindow">立即重启</button>
+      <button v-if="restartPrompt" class="btn restart" @click="reloadWindow">
+        {{ t('common.restart') }}
+      </button>
       <label class="toggle-builtin">
         <input v-model="showBuiltin" type="checkbox" />
-        显示内置
+        {{ t('extManager.showBuiltin') }}
       </label>
-      <input v-model="query" class="search" placeholder="搜索扩展（名称/作者）…" />
+      <input v-model="query" class="search" :placeholder="t('extManager.searchPlaceholder')" />
       <select v-model="sortKey" class="sort">
-        <option value="name">按名称</option>
-        <option value="installed">按安装时间</option>
+        <option value="name">{{ t('extManager.sortName') }}</option>
+        <option value="installed">{{ t('extManager.sortInstalled') }}</option>
       </select>
-      <span class="count">{{ filtered.length }} 个扩展</span>
+      <span class="count">{{ filtered.length }} {{ t('extManager.count') }}</span>
       <span v-if="notice" class="notice">{{ notice }}</span>
     </div>
-    <div v-if="dragActive" class="drop-hint">松开以安装 .oix 扩展包</div>
+    <div v-if="dragActive" class="drop-hint">{{ t('extManager.dropHint') }}</div>
 
     <!-- Grid 网格 -->
     <div v-if="!selected" class="grid">
@@ -256,36 +273,40 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
         <div class="card-header">
           <span class="card-name">{{ ext.manifest.displayName ?? ext.id }}</span>
           <span class="card-version">{{ ext.manifest.version }}</span>
-          <span v-if="ext.source === 'builtin'" class="badge builtin">内置</span>
-          <span v-if="!ext.enabled" class="badge disabled">已禁用</span>
+          <span v-if="ext.source === 'builtin'" class="badge builtin">
+            {{ t('common.builtin') }}
+          </span>
+          <span v-if="!ext.enabled" class="badge disabled">{{ t('common.disabled') }}</span>
         </div>
-        <div class="card-author">{{ ext.manifest.author ?? '未知作者' }}</div>
-        <div class="card-desc">{{ ext.manifest.description ?? '暂无简介' }}</div>
+        <div class="card-author">{{ ext.manifest.author ?? t('extManager.unknownAuthor') }}</div>
+        <div class="card-desc">{{ ext.manifest.description ?? t('extManager.noDescription') }}</div>
         <div v-if="!ext.isValid" class="card-error">
-          清单无效（{{ ext.validations.length }} 条错误）
+          {{ t('extManager.invalidManifest') }}（{{ ext.validations.length }}）
         </div>
       </div>
-      <div v-if="filtered.length === 0" class="empty">没有匹配的扩展</div>
+      <div v-if="filtered.length === 0" class="empty">{{ t('common.empty') }}</div>
     </div>
 
     <!-- 详情 -->
     <div v-else class="detail">
-      <button class="back" @click="selected = null">← 返回列表</button>
+      <button class="back" @click="selected = null">{{ t('extManager.back') }}</button>
       <div class="detail-header">
         <h2>{{ selected.manifest.displayName ?? selected.id }}</h2>
         <span class="detail-version">{{ selected.manifest.version }}</span>
-        <span v-if="selected.source === 'builtin'" class="badge builtin">Built-in</span>
+        <span v-if="selected.source === 'builtin'" class="badge builtin">
+          {{ t('common.builtin') }}
+        </span>
       </div>
       <dl class="detail-fields">
-        <dt>作者</dt>
-        <dd>{{ selected.manifest.author ?? '未知' }}</dd>
-        <dt>简介</dt>
-        <dd>{{ selected.manifest.description ?? '暂无' }}</dd>
-        <dt>Identifier</dt>
+        <dt>{{ t('extManager.fields.author') }}</dt>
+        <dd>{{ selected.manifest.author ?? t('extManager.unknownAuthor') }}</dd>
+        <dt>{{ t('extManager.fields.description') }}</dt>
+        <dd>{{ selected.manifest.description ?? t('extManager.noDescription') }}</dd>
+        <dt>{{ t('extManager.fields.identifier') }}</dt>
         <dd>{{ selected.id }}</dd>
-        <dt>Source</dt>
+        <dt>{{ t('extManager.fields.source') }}</dt>
         <dd>{{ sourceLabel(selected.source) }}</dd>
-        <dt>Last Updated</dt>
+        <dt>{{ t('extManager.fields.lastUpdated') }}</dt>
         <dd>
           {{
             selected.installedTimestamp
@@ -293,23 +314,27 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
               : '—'
           }}
         </dd>
-        <dt>依赖</dt>
-        <dd>{{ selected.manifest.extensionDependencies?.join(', ') ?? '无' }}</dd>
-        <dt>状态</dt>
+        <dt>{{ t('extManager.fields.dependencies') }}</dt>
+        <dd>{{ selected.manifest.extensionDependencies?.join(', ') ?? '—' }}</dd>
+        <dt>{{ t('extManager.fields.status') }}</dt>
         <dd>
           <span v-if="selected.activationError" class="state-error"
-            >激活失败: {{ selected.activationError }}</span
+            >{{ t('extManager.states.activationFailed') }}: {{ selected.activationError }}</span
           >
-          <span v-else-if="!selected.isValid" class="state-error">清单无效</span>
-          <span v-else-if="selected.requiresRestart" class="state-warn">变更待重启生效</span>
-          <span v-else-if="selected.isActive">运行中</span>
-          <span v-else-if="!selected.enabled">已禁用</span>
-          <span v-else>已启用</span>
+          <span v-else-if="!selected.isValid" class="state-error">{{
+            t('extManager.states.invalidManifest')
+          }}</span>
+          <span v-else-if="selected.requiresRestart" class="state-warn">{{
+            t('extManager.states.pendingRestart')
+          }}</span>
+          <span v-else-if="selected.isActive">{{ t('extManager.states.running') }}</span>
+          <span v-else-if="!selected.enabled">{{ t('extManager.states.disabled') }}</span>
+          <span v-else>{{ t('extManager.states.enabled') }}</span>
         </dd>
       </dl>
 
       <div v-if="selected.validations.length" class="validations">
-        <h3>校验信息</h3>
+        <h3>{{ t('extManager.validations') }}</h3>
         <ul>
           <li v-for="(v, i) in selected.validations" :key="i" :class="v.severity">
             {{ v.message }}
@@ -319,7 +344,7 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
 
       <div class="detail-actions">
         <button class="btn" :disabled="busyId === selected.id" @click="toggleEnabled(selected)">
-          {{ selected.enabled ? '禁用' : '启用' }}
+          {{ selected.enabled ? t('extManager.actions.disable') : t('extManager.actions.enable') }}
         </button>
         <button
           v-if="selected.source !== 'builtin'"
@@ -327,7 +352,7 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
           :disabled="busyId === selected.id"
           @click="confirmUninstall = selected"
         >
-          卸载
+          {{ t('extManager.actions.uninstall') }}
         </button>
       </div>
     </div>
@@ -336,15 +361,18 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
     <Teleport to="body">
       <div v-if="confirmUninstall" class="confirm-overlay" @click.self="confirmUninstall = null">
         <div class="confirm-box">
-          <h3>确认卸载</h3>
+          <h3>{{ t('extManager.uninstallConfirm.title') }}</h3>
           <p>
-            确定要卸载「{{ confirmUninstall.manifest.displayName ?? confirmUninstall.id }}」吗？
-            将删除其目录，重启后生效，此操作不可恢复。
+            {{
+              t('extManager.uninstallConfirm.body', {
+                name: confirmUninstall.manifest.displayName ?? confirmUninstall.id
+              })
+            }}
           </p>
           <div class="confirm-actions">
-            <button class="btn" @click="confirmUninstall = null">取消</button>
+            <button class="btn" @click="confirmUninstall = null">{{ t('common.cancel') }}</button>
             <button class="btn danger" :disabled="busyId !== null" @click="doUninstall">
-              确认卸载
+              {{ t('extManager.uninstallConfirm.uninstall') }}
             </button>
           </div>
         </div>

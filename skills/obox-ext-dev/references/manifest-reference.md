@@ -89,6 +89,67 @@
 
 > 命令实现（handler）不在 manifest 里，由扩展激活时 `api.registerCommand(id, handler)` 绑定。
 
+### themes（主题贡献点）
+
+主题扩展声明一组 CSS 变量 token，设置"外观"节点可选择套用：
+
+```json
+{
+  "contributes": {
+    "themes": [
+      {
+        "id": "my-theme.dark",
+        "label": "深色",
+        "tokens": { "--bg": "#1e1e1e", "--fg": "#cccccc", "--accent": "#007acc" }
+      }
+    ]
+  }
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `id` | ✅ | 全局唯一，建议 `<扩展名>.<主题名>` |
+| `label` | ✅ | 显示名（设置下拉框展示） |
+| `tokens` | ✅ | CSS 变量组（`--xxx` → 值），套到 `:root` |
+
+宿主已内置 `theme-dark`（深色）与 `theme-light`（浅色）主题扩展。标准 token：`--bg` / `--bg-panel` / `--bg-sidebar` / `--bg-titlebar` / `--bg-input` / `--border` / `--fg` / `--fg-dim` / `--fg-bright` / `--accent` / `--hover-bg`。子窗口 iframe（srcdoc）自动注入当前主题 token，扩展页面用 `var(--bg)` 等即可跟随主题。
+
+### i18n（扩展语言包，manifest 声明）
+
+```json
+{
+  "contributes": {
+    "i18n": {
+      "zh": { "hello": "你好" },
+      "en": { "hello": "Hello" }
+    }
+  }
+}
+```
+
+与运行时 `api.i18n.registerMessages` 等价；`api.i18n.t(key)` 按当前语言取文案。
+
+### settings（扩展设置 schema，manifest 声明）
+
+对齐 VS Code contributes.configuration 简化版；与运行时 `api.settings.register` 等价：
+
+```json
+{
+  "contributes": {
+    "settings": {
+      "id": "my-ext.settings",
+      "title": "我的扩展设置",
+      "fields": [
+        { "key": "my-ext.interval", "label": "刷新间隔", "type": "number", "default": 30 }
+      ]
+    }
+  }
+}
+```
+
+设置"扩展"节点按扩展名展示其设置页。
+
 ## 校验规则（`core/manifest.ts`）
 
 - `name` 必填且匹配 `^[a-z0-9][a-z0-9._-]*$` → 否则 **error**，不加载

@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   open: boolean
@@ -74,7 +77,7 @@ function onKeydown(e: KeyboardEvent): void {
             ref="inputRef"
             v-model="query"
             class="palette-input"
-            placeholder="输入命令…"
+            placeholder="{{ t('palette.placeholder') }}"
             @keydown="onKeydown"
           />
         </div>
@@ -91,7 +94,7 @@ function onKeydown(e: KeyboardEvent): void {
             <span>{{ item.title }}</span>
             <span class="palette-id">{{ item.command }}</span>
           </li>
-          <li v-if="items.length === 0" class="palette-empty">无匹配命令</li>
+          <li v-if="items.length === 0" class="palette-empty">{{ t('palette.empty') }}</li>
         </ul>
       </div>
     </div>
