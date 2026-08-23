@@ -97,7 +97,7 @@ git push origin v1.0.0
 1. **读本文件**：了解项目概览与架构（上文）
 2. **读约定**：`AGENTS.md`（开发约定 + 强制提交流程）、`CONTEXT.md`（术语表）
 3. **运行**：`yarn dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
-4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装（重启生效）
+4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装（重启生效）
 5. **改架构**：改动 `core/`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `skills/obox-ext-dev/` 文档（见 AGENTS.md 约定）和本文件
 
 ## 文档导航
