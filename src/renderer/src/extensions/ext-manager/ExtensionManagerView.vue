@@ -23,9 +23,16 @@ const restartPrompt = ref('')
 
 const extensions = computed(() => host.listExtensions())
 
+/** 是否显示内置扩展（默认隐藏，对齐 VS Code：扩展列表默认排除 built-in） */
+const showBuiltin = ref(false)
+
 const filtered = computed(() => {
   const q = query.value.trim().toLowerCase()
   let list = extensions.value
+  // 默认只显示用户扩展；开启"显示内置"后包含内置扩展
+  if (!showBuiltin.value) {
+    list = list.filter((e) => e.source !== 'builtin')
+  }
   if (q) {
     list = list.filter(
       (e) =>
@@ -223,6 +230,10 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
         {{ installBusy ? '安装中…' : '安装扩展' }}
       </button>
       <button v-if="restartPrompt" class="btn restart" @click="reloadWindow">立即重启</button>
+      <label class="toggle-builtin">
+        <input v-model="showBuiltin" type="checkbox" />
+        显示内置
+      </label>
       <input v-model="query" class="search" placeholder="搜索扩展（名称/作者）…" />
       <select v-model="sortKey" class="sort">
         <option value="name">按名称</option>
@@ -415,6 +426,18 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
 }
 .btn.restart:hover {
   background: #7a4d00;
+}
+.toggle-builtin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #9d9d9d;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-builtin input {
+  accent-color: #007acc;
 }
 .grid {
   flex: 1;
