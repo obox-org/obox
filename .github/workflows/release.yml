@@ -64,9 +64,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Output "after build, output dir contents:"
           Get-ChildItem $outDir -ErrorAction SilentlyContinue | Select-Object Name, Length
-          # 2) 定位安装包
-          $exe = Get-ChildItem -Path $outDir -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $exe) { Write-Error "setup.exe not found in $outDir"; exit 1 }
+          # 2) 定位安装包：直接 Test-Path 完整文件路径（最可靠）
+          $exePath = Join-Path $outDir "obox-1.0.0-setup.exe"
+          Write-Output "checking: $exePath exists=$(Test-Path $exePath)"
+          if (Test-Path $exePath) {
+            $exe = Get-Item $exePath
+          } else {
+            $exe = Get-ChildItem -Path $outDir -ErrorAction SilentlyContinue | Select-Object -First 20
+            Write-Output "outDir listing: $($exe.Name -join ', ')"
+            Write-Error "setup.exe not found in $outDir"; exit 1
+          }
           Write-Output "uploading: $($exe.FullName)"
           # 3) 发布（release 已存在则删除重建，幂等）
           gh release delete $tag --yes --cleanup-tag 2>$null
