@@ -6,4 +6,4 @@ VS Code 源码（abstractExtensionService.ts:392-405 `canRemoveExtension`）明�
 
 我们的语义：状态变更（禁用/启用/卸载）写入 userData JSON；重启后扫描时按状态过滤，被禁用的扩展不加载、被卸载的扩展目录已删除。UI 上状态变更后提示"重启后生效"。未激活扩展的变更可立即生效（扫描前尚未加载）。
 
-Status: accepted
+Status: superseded by ADR-0005

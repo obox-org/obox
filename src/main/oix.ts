@@ -39,7 +39,10 @@ function readRootManifest(zip: AdmZip): Record<string, unknown> | null {
  * 校验 zip 条目路径并解析为目标目录下的安全绝对路径。
  * 拒绝：空路径、绝对路径（/ 开头或盘符）、反斜杠、.. 段、目标目录外的路径。
  */
-function resolveEntry(target: string, entryName: string): { filePath: string; isDir: boolean } | null {
+function resolveEntry(
+  target: string,
+  entryName: string
+): { filePath: string; isDir: boolean } | null {
   if (!entryName || entryName.includes('\\')) return null
   if (entryName.startsWith('/') || /^[a-zA-Z]:/.test(entryName)) return null
   const isDir = entryName.endsWith('/')
@@ -126,14 +129,19 @@ export function registerOixIpc(): void {
       filters: [{ name: 'Obox 扩展包', extensions: ['oix'] }],
       properties: ['openFile']
     }
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
     return installOixFromPath(result.filePaths[0])
   })
 
   // 按路径安装（拖拽场景：渲染进程经 webUtils.getPathForFile 取得真实路径）
-  ipcMain.handle('extensions:install-oix-path', async (_e, filePath: unknown): Promise<InstallOixResult> => {
-    if (typeof filePath !== 'string' || !filePath.trim()) throw new Error('无效的安装路径')
-    return installOixFromPath(filePath)
-  })
+  ipcMain.handle(
+    'extensions:install-oix-path',
+    async (_e, filePath: unknown): Promise<InstallOixResult> => {
+      if (typeof filePath !== 'string' || !filePath.trim()) throw new Error('无效的安装路径')
+      return installOixFromPath(filePath)
+    }
+  )
 }

@@ -117,6 +117,15 @@ class Registry {
     this.viewComponents.set(viewId, markRaw(component))
   }
 
+  /** 移除某扩展注册的视图组件（热移除/停用时调用） */
+  removeViewComponents(extensionId: string): void {
+    const viewIds = new Set<string>()
+    for (const nav of this.navItems) {
+      if (nav.extensionId === extensionId && nav.view) viewIds.add(nav.view)
+    }
+    for (const viewId of viewIds) this.viewComponents.delete(viewId)
+  }
+
   // ---- 查询（UI 消费） ----
 
   getNavItems(group: 'top' | 'bottom'): RegisteredNavItem[] {

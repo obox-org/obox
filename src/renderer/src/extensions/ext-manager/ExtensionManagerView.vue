@@ -18,6 +18,8 @@ const notice = ref('')
 const refreshTick = ref(0)
 const installBusy = ref(false)
 const dragActive = ref(false)
+/** 需要重启才能生效的操作提示（禁用/卸载已激活扩展时出现） */
+const restartPrompt = ref('')
 
 const extensions = computed(() => host.listExtensions())
 
@@ -45,18 +47,26 @@ const filtered = computed(() => {
 
 function showNotice(msg: string): void {
   notice.value = msg
-  setTimeout(() => (notice.value = ''), 3000)
+  setTimeout(() => (notice.value = ''), 5000)
+}
+
+/** 立即重启渲染进程（VS Code Reload Window 语义） */
+function reloadWindow(): void {
+  window.location.reload()
 }
 
 async function toggleEnabled(ext: ExtensionInfo): Promise<void> {
   busyId.value = ext.id
   try {
-    host.setEnabled(ext.id, !ext.enabled)
-    // 触发列表刷新 + 事件通知（宿主视图不销毁，直接更新）
+    const { hot, needsRestart } = host.setEnabled(ext.id, !ext.enabled)
     refreshTick.value++
-    showNotice(
-      `「${ext.manifest.displayName ?? ext.id}」已${ext.enabled ? '启用' : '禁用'}，重启后生效`
-    )
+    const name = ext.manifest.displayName ?? ext.id
+    if (hot) {
+      showNotice(`「${name}」已${ext.enabled ? '启用' : '禁用'}（立即生效）`)
+    } else if (needsRestart) {
+      showNotice(`「${name}」已${ext.enabled ? '启用' : '禁用'}，点击“立即重启”生效`)
+      restartPrompt.value = `「${name}」已${ext.enabled ? '启用' : '禁用'}，重启后生效`
+    }
   } finally {
     busyId.value = null
   }
@@ -67,9 +77,16 @@ async function doUninstall(): Promise<void> {
   const ext = confirmUninstall.value
   busyId.value = ext.id
   try {
-    await host.uninstall(ext.id)
+    const { hot, needsRestart } = await host.uninstall(ext.id)
     selected.value = null
-    showNotice(`「${ext.manifest.displayName ?? ext.id}」已卸载，重启后生效`)
+    refreshTick.value++
+    const name = ext.manifest.displayName ?? ext.id
+    if (hot) {
+      showNotice(`「${name}」已卸载（立即生效）`)
+    } else if (needsRestart) {
+      showNotice(`「${name}」已卸载，点击“立即重启”生效`)
+      restartPrompt.value = `「${name}」已卸载，重启后生效`
+    }
   } catch (err) {
     showNotice(`卸载失败: ${err instanceof Error ? err.message : String(err)}`)
   } finally {
@@ -78,16 +95,13 @@ async function doUninstall(): Promise<void> {
   }
 }
 
-/** 安装 .oix 包：成功后提示重启生效 */
+/** 安装 .oix 包：成功后热加载（立即显示 + 立即激活，无需重启） */
 async function installFromPath(filePath: string): Promise<boolean> {
   installBusy.value = true
   try {
     const result = await window.api.installUserExtensionFromPath(filePath)
     if (result) {
-      showNotice(
-        `「${result.displayName ?? result.name}」v${result.version} 安装成功${result.replaced ? '（已覆盖旧版）' : ''}，重启后生效`
-      )
-      refreshTick.value++
+      await hotInstall(result)
       return true
     }
     return false
@@ -99,16 +113,41 @@ async function installFromPath(filePath: string): Promise<boolean> {
   }
 }
 
+/** 安装成功后的热加载：构造条目 → 宿主增量加载 → 即时显示 */
+async function hotInstall(result: {
+  id: string
+  name: string
+  displayName?: string
+  version: string
+}): Promise<void> {
+  const { buildUserExtensionEntry } = await import('../../core/loader')
+  const entry = await buildUserExtensionEntry(result.id)
+  if (!entry) {
+    showNotice(
+      `「${result.displayName ?? result.name}」v${result.version} 安装成功，但 manifest 无效，未能加载`
+    )
+    refreshTick.value++
+    return
+  }
+  const info = await host.loadUserExtension(entry)
+  refreshTick.value++
+  const name = info.manifest.displayName ?? info.id
+  if (info.isActive) {
+    showNotice(`「${name}」v${info.manifest.version} 安装成功并已激活（立即生效）`)
+  } else {
+    showNotice(
+      `「${name}」安装成功，但${info.activationError ? `激活失败: ${info.activationError}` : '清单无效'}（详情见卡片）`
+    )
+  }
+}
+
 /** 工具栏按钮：文件对话框选 .oix 安装 */
 async function installViaDialog(): Promise<void> {
   installBusy.value = true
   try {
     const result = await window.api.installUserExtensionViaDialog()
     if (result) {
-      showNotice(
-        `「${result.displayName ?? result.name}」v${result.version} 安装成功${result.replaced ? '（已覆盖旧版）' : ''}，重启后生效`
-      )
-      refreshTick.value++
+      await hotInstall(result)
     }
   } catch (err) {
     showNotice(`安装失败: ${err instanceof Error ? err.message : String(err)}`)
@@ -183,6 +222,7 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
       <button class="btn install" :disabled="installBusy" @click="installViaDialog">
         {{ installBusy ? '安装中…' : '安装扩展' }}
       </button>
+      <button v-if="restartPrompt" class="btn restart" @click="reloadWindow">立即重启</button>
       <input v-model="query" class="search" placeholder="搜索扩展（名称/作者）…" />
       <select v-model="sortKey" class="sort">
         <option value="name">按名称</option>
@@ -367,6 +407,14 @@ const sourceLabel = (s: string): string => (s === 'builtin' ? '内置' : '用户
 }
 .btn.install:hover {
   background: #1177bb;
+}
+.btn.restart {
+  background: #613d00;
+  border-color: #8a5400;
+  color: #ffcc66;
+}
+.btn.restart:hover {
+  background: #7a4d00;
 }
 .grid {
   flex: 1;

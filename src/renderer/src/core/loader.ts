@@ -95,5 +95,25 @@ async function fetchInstalledTimestamp(id: string): Promise<number | undefined> 
   }
 }
 
+/**
+ * 热安装用：按目录名构造单个用户扩展条目（安装 .oix 后立即加载）。
+ * 返回 null 表示该扩展不在 userData/extensions（或 manifest 无效）。
+ */
+export async function buildUserExtensionEntry(id: string): Promise<ExtensionEntry | null> {
+  const entries = await window.api.listUserExtensions()
+  if (!entries.some((e) => e.id === id)) return null
+  const manifest = await fetchUserManifest(id)
+  if (!manifest) return null
+  if (validateManifest(manifest).some((v) => v.severity === 'error')) return null
+  return {
+    id,
+    manifest,
+    source: 'user',
+    installedTimestamp: await fetchInstalledTimestamp(id),
+    load: () =>
+      import(/* @vite-ignore */ `app://extensions/${encodeURIComponent(id)}/${manifest.main}`)
+  }
+}
+
 /** 供扩展管理器使用的完整信息（含用户扩展的安装时间等由宿主管理） */
 export type { ExtensionInfo }

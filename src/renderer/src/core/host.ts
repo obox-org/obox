@@ -36,6 +36,7 @@ class ExtensionHost {
   private root: Context
   private extensions = new Map<string, ExtensionInfo>()
   private loaders = new Map<string, () => Promise<ExtensionModule>>()
+  private cleanups = new Map<string, () => void>()
   private activated = new Set<string>()
   private barrierWaiters: Array<() => void> = []
 
@@ -122,6 +123,17 @@ class ExtensionHost {
       if (typeof result === 'function') disposables.push(result)
       ext.isActive = true
       this.activated.add(ext.id)
+      // 保存统一清理函数（热移除/停用时调用）
+      this.cleanups.set(ext.id, () => {
+        for (const d of disposables) {
+          try {
+            d()
+          } catch (err) {
+            console.warn(`[host] cleanup ${ext.id} error`, err)
+          }
+        }
+        disposables.length = 0
+      })
     } catch (err) {
       ext.activationError = err instanceof Error ? err.message : String(err)
       ext.isActive = false
@@ -273,26 +285,120 @@ class ExtensionHost {
 
     return all
   }
-
-  /** 扩展管理：禁用/启用（重启后生效，记录状态） */
-  setEnabled(id: string, enabled: boolean): void {
-    stateStore.setDisabled(id, !enabled)
-    const ext = this.extensions.get(id)
-    if (ext) {
-      ext.enabled = enabled
-      ext.requiresRestart = true
+  /** 热安装：安装 .oix 后增量加载单个用户扩展（立即显示 + 立即激活，无需重启） */
+  async loadUserExtension(entry: ExtensionEntry): Promise<ExtensionInfo> {
+    const id = entry.id
+    // 已存在（覆盖安装场景）：先清理旧实例再加载
+    if (this.extensions.has(id)) {
+      this.removeExtension(id)
     }
+
+    const enabled = !stateStore.isDisabled(id)
+    const info = makeExtensionInfo(id, entry.manifest, 'user', enabled, {
+      installedTimestamp: entry.installedTimestamp
+    })
+    this.extensions.set(id, info)
+
+    if (!enabled) {
+      console.log(`[host] 热安装 ${id}：已禁用，仅展示不激活`)
+      return info
+    }
+    if (!info.isValid) {
+      console.log(`[host] 热安装 ${id}：清单无效，仅展示标红`)
+      return info
+    }
+
+    // 注册贡献点
+    try {
+      const module = await entry.load()
+      this.registerContributions(info, module)
+    } catch (err) {
+      info.validations.push({
+        severity: 'error',
+        message: `入口加载失败: ${err instanceof Error ? err.message : String(err)}`
+      })
+      return info
+    }
+
+    // 激活
+    try {
+      const module = await entry.load()
+      await this.activateExtension(info, module)
+    } catch (err) {
+      info.activationError = err instanceof Error ? err.message : String(err)
+    }
+
+    console.log(
+      `[host] 热安装完成: ${id} ${info.isActive ? '已激活' : '激活失败'}（贡献项已注册，立即可用）`
+    )
+    return info
   }
 
-  /** 卸载用户扩展（删目录由主进程执行；内置扩展不可卸载） */
-  async uninstall(id: string): Promise<void> {
+  /** 热移除：从宿主完全移除扩展（清理贡献项/视图/App 卡片/清理函数）。返回是否成功 */
+  removeExtension(id: string): boolean {
+    const ext = this.extensions.get(id)
+    if (!ext) return false
+    // 执行扩展注册的清理函数（命令 handler 清空、事件移除、App 卡片移除等）
+    const cleanup = this.cleanups.get(id)
+    if (cleanup) {
+      try {
+        cleanup()
+      } catch (err) {
+        console.warn(`[host] cleanup ${id} error`, err)
+      }
+      this.cleanups.delete(id)
+    }
+    // 注册表贡献项 + 视图组件 + App 卡片
+    registry.deactivateExtension(id)
+    registry.removeViewComponents(id)
+    appStore.deactivateExtension(id)
+    this.activated.delete(id)
+    this.loaders.delete(id)
+    this.extensions.delete(id)
+    console.log(`[host] 热移除: ${id}`)
+    return true
+  }
+
+  /** 判断扩展能否热移除（未激活 = 可立即热生效；已激活 = 需重启） */
+  canHotRemove(id: string): boolean {
+    return !this.activated.has(id)
+  }
+
+  /** 扩展管理：禁用/启用。未激活扩展立即热停用；已激活扩展标记需重启（UI 弹重启按钮） */
+  setEnabled(id: string, enabled: boolean): { hot: boolean; needsRestart: boolean } {
+    stateStore.setDisabled(id, !enabled)
+    const ext = this.extensions.get(id)
+    if (!ext) return { hot: false, needsRestart: false }
+    ext.enabled = enabled
+    if (enabled) {
+      // 启用：当前设计不支持热启用已卸载的扩展，标记需重启
+      ext.requiresRestart = true
+      return { hot: false, needsRestart: true }
+    }
+    if (this.canHotRemove(id)) {
+      // 未激活：立即热移除
+      this.removeExtension(id)
+      return { hot: true, needsRestart: false }
+    }
+    // 已激活：标记需重启
+    ext.requiresRestart = true
+    return { hot: false, needsRestart: true }
+  }
+
+  /** 卸载用户扩展（删目录由主进程执行；内置扩展不可卸载）。未激活立即热移除；已激活标记需重启 */
+  async uninstall(id: string): Promise<{ hot: boolean; needsRestart: boolean }> {
     const ext = this.extensions.get(id)
     if (!ext) throw new Error(`extension not found: ${id}`)
     if (ext.source === 'builtin') throw new Error('内置扩展不可卸载')
     await window.api.uninstallUserExtension(id)
     stateStore.setDisabled(id, false)
+    if (this.canHotRemove(id)) {
+      this.removeExtension(id)
+      return { hot: true, needsRestart: false }
+    }
     ext.enabled = false
     ext.requiresRestart = true
+    return { hot: false, needsRestart: true }
   }
 }
 

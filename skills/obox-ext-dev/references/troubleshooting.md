@@ -41,7 +41,7 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 - `manifest.json` 必须在 zip **根目录**
 - `name`/`version` 非法（正则 / semver）；`main` 指向的文件必须在包内
 - 包内含非法条目路径（`..` / 绝对路径 / 反斜杠）→ 被 zip-slip 防护拒绝
-- 安装后重启生效；重启前列表不出现
+- 安装成功但列表标红：manifest 校验失败或入口加载/激活失败（看详情页校验信息与 `activationError`）
 
 ## 6. Windows 下 Vite watcher EBUSY 崩溃
 

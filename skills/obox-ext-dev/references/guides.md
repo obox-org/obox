@@ -187,7 +187,7 @@ extensions/todo/
 
 - `npm run release`（typecheck → build → pack）产出 `out/<name>-<version>.oix`
 - obox 扩展管理器 → 工具栏「安装扩展」选 .oix，或直接把 .oix 拖进扩展管理器视图
-- 安装成功提示重启生效（用户扩展在启动时扫描）；重启后扩展管理器出现该扩展，详情 Source=用户
+- 安装成功**立即热生效**：列表即时出现、贡献项立即可用（无需重启）；若 manifest 无效或激活失败，扩展出现在列表但标红（详情见校验信息）
 
 ### 4. 安全与校验（宿主侧已实现）
 
