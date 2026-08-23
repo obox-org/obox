@@ -47,32 +47,29 @@ jobs:
       - name: Build
         run: npm run build
 
-      # 仅编译 Windows 安装包（--publish never：发布由 gh release 负责，避免 electron-builder 尝试发布）
-      - name: Build installer
-        run: npx electron-builder --win nsis --publish never
-
-      # 创建 GitHub Release 并只上传安装包：
-      # - 源码归档（zip/tar.gz）由 GitHub 自动生成，无需手动上传
-      # - 只上传 obox-<version>-setup.exe，其他产物（win-unpacked/latest.yml/blockmap）不发布
-      - name: Create GitHub Release and upload installer
+      # 编译 Windows 安装包并发布（同一步骤内构建+发布，避免跨步骤产物不可见）
+      # - electron-builder 只编译（--publish never，发布由 gh release 负责）
+      # - 只上传 obox-<version>-setup.exe；源码归档由 GitHub 自动生成；其他产物不发布
+      - name: Build and create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          # 用绝对路径定位产物（避免 step 间相对路径差异）
+          # 1) 编译安装包（产物在 release/obox-<version>-setup.exe）
+          npx electron-builder --win nsis --publish never
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # 2) 定位安装包
           $releaseDir = Join-Path $env:GITHUB_WORKSPACE "release"
-          Write-Output "release dir: $releaseDir"
           Write-Output "release dir contents:"
           Get-ChildItem $releaseDir -ErrorAction SilentlyContinue | Select-Object Name, Length
           $exe = Get-ChildItem -Path $releaseDir -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) {
-            # 兜底：全工作区搜索 setup.exe
             $exe = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if (-not $exe) { Write-Error "setup.exe not found"; exit 1 }
           Write-Output "uploading: $($exe.FullName)"
-          # release 已存在则删除重建（幂等，处理 CI 重跑/失败残留）
+          # 3) 发布（release 已存在则删除重建，幂等）
           gh release delete $tag --yes --cleanup-tag 2>$null
           gh release create $tag $exe.FullName `
             --title "Obox $tag" `
