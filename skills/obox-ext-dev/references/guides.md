@@ -197,6 +197,30 @@ extensions/todo/
 - zip-slip 防护：拒绝绝对路径、`..`、反斜杠、重复条目
 - 同名覆盖安装（升级语义）；`.obox-meta.json` 记录安装时间戳（Last Updated 展示）
 
+## 教程：更新提供者扩展（参考 `extensions/obox-updater/`）
+
+obox 没有内置默认更新源——更新由**用户扩展**提供（声明 `contributes.updater` 后成为"更新提供者扩展"，在**设置-更新**中只能选一个生效，选中后才可调用 `api.update.*`）。参考实例：`extensions/obox-updater/`（独立仓库 [obox-org/obox-updater](https://github.com/obox-org/obox-updater)）。
+
+### 1. 结构与要点
+
+```
+extensions/obox-updater/
+├── manifest.json     # contributes.updater.feedUrl + 命令 + 状态栏项
+├── index.js          # 入口：纯 ESM，检查/下载/订阅更新事件
+├── icon.svg
+└── scripts/pack.mjs  # .oix 打包（无子应用构建，pack 即 release）
+```
+
+- `feedUrl` 指向 electron-updater generic provider 目录（`latest.yml` + 安装包所在处）；GitHub Release 场景用 `https://github.com/<owner>/<repo>/releases/latest/download/`（release 资源 `latest.yml` + `setup.exe` 发布后可直接下载）
+- 入口里调用 `api.update.check(feedUrl)` / `download()` / `install()`；`api.update.onEvent` 订阅进度/完成事件更新状态栏文本
+- 未在设置-更新选中的扩展调用 `check/download/install` 会抛错；入口应捕获并提示"未选择为更新提供者"
+
+### 2. 与宿主配合的约束
+
+- 更新执行（下载/校验/安装）由宿主 electron-updater 完成，扩展只提供更新源与触发时机
+- 代理配置（设置-网络）由宿主自动应用到更新下载；`api.proxy.get()` 可读取供扩展自查
+- 发布新版本流程：在 obox 仓库打 tag 触发 release 工作流（`.github/workflows/release.yml`）→ 产物（`setup.exe` + `latest.yml`）上传为 GitHub Release 资源 → 本扩展检查更新即命中新版本
+
 ## 教程：App 富界面——内嵌 Vue 子应用
 
 App 子窗口内容是 iframe。要做"左侧边栏 + 内容栏"级别的富界面，不需要改宿主：把界面写成 Vue 子应用，编译为静态资源，用 `url` 加载（见 `extensions/todo/` 实例）。
