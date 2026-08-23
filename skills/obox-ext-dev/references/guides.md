@@ -221,6 +221,16 @@ extensions/obox-updater/
 - 代理配置（设置-网络）由宿主自动应用到更新下载；`api.proxy.get()` 可读取供扩展自查
 - 发布新版本流程：在 obox 仓库打 tag 触发 release 工作流（`.github/workflows/release.yml`）→ 产物（`setup.exe` + `latest.yml`）上传为 GitHub Release 资源 → 本扩展检查更新即命中新版本
 
+### 3. 单元测试（node:test + mock api）
+
+用户扩展入口只与注入的 `api` 对象交互，不依赖 Electron/网络，可直接用 Node 内置测试器做零依赖单测（参考 `extensions/obox-updater/test/update.test.js`）：
+
+- 构造 mock `api`：`statusBar.setText` 捕获状态栏文本、`registerCommand` 捕获命令处理器、`update.onEvent` 捕获事件监听器、`update.check/download` 注入各分支返回值/抛错
+- 激活扩展后直接调用捕获的命令处理器，断言各分支状态栏文案（检查失败/已是最新/发现新版+下载成功/下载失败/未选中提供者抛错/其他异常）
+- 通过捕获的事件监听器逐一触发 `download-progress`/`update-downloaded`/`update-available`/`error`，断言进度与文案
+- 断言 `check` 调用参数与 `manifest.contributes.updater.feedUrl` 一致（硬编码 URL 一致性）
+- 脚本：`"test": "node --test"`（自动发现 `test/*.test.js`）；真实更新源冒烟检查另用 `scripts/check-feed.mjs`（`npm run check:feed`，需已发布 release）
+
 ## 教程：App 富界面——内嵌 Vue 子应用
 
 App 子窗口内容是 iframe。要做"左侧边栏 + 内容栏"级别的富界面，不需要改宿主：把界面写成 Vue 子应用，编译为静态资源，用 `url` 加载（见 `extensions/todo/` 实例）。
