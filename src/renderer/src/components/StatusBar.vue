@@ -57,8 +57,8 @@ async function onItemClick(command?: string): Promise<void> {
   height: 22px;
   display: flex;
   align-items: center;
-  background: #007acc;
-  color: #ffffff;
+  background: var(--statusbar-bg, #007acc);
+  color: var(--statusbar-fg, #ffffff);
   font-size: 12px;
   user-select: none;
   flex-shrink: 0;

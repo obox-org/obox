@@ -21,7 +21,11 @@
           "--fg-dim": "#6e6e6e",
           "--fg-bright": "#ffffff",
           "--accent": "#007acc",
-          "--hover-bg": "rgba(255, 255, 255, 0.1)"
+          "--hover-bg": "rgba(255, 255, 255, 0.1)",
+          "--selection-bg": "#094771",
+          "--nav-icon": "#858585",
+          "--statusbar-bg": "#007acc",
+          "--statusbar-fg": "#ffffff"
         }
       }
     ]

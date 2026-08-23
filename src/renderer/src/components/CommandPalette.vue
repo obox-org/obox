@@ -114,8 +114,8 @@ function onKeydown(e: KeyboardEvent): void {
 .palette {
   width: 560px;
   max-height: 60vh;
-  background: #252526;
-  border: 1px solid #454545;
+  background: var(--bg-panel, #252526);
+  border: 1px solid var(--border, #454545);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
@@ -124,10 +124,10 @@ function onKeydown(e: KeyboardEvent): void {
   display: flex;
   align-items: center;
   padding: 8px 12px;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--border, #3c3c3c);
 }
 .palette-prefix {
-  color: #cccccc;
+  color: var(--fg, #cccccc);
   margin-right: 8px;
   font-size: 16px;
   font-weight: bold;
@@ -137,7 +137,7 @@ function onKeydown(e: KeyboardEvent): void {
   background: transparent;
   border: none;
   outline: none;
-  color: #ffffff;
+  color: var(--fg-bright, #ffffff);
   font-size: 14px;
 }
 .palette-list {
@@ -152,12 +152,12 @@ function onKeydown(e: KeyboardEvent): void {
   align-items: center;
   padding: 6px 12px;
   font-size: 13px;
-  color: #cccccc;
+  color: var(--fg, #cccccc);
   cursor: pointer;
 }
 .palette-item.selected {
-  background: #094771;
-  color: #ffffff;
+  background: var(--selection-bg, #094771);
+  color: var(--fg-bright, #ffffff);
 }
 .palette-category {
   opacity: 0.7;
@@ -170,7 +170,7 @@ function onKeydown(e: KeyboardEvent): void {
 }
 .palette-empty {
   padding: 12px;
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
   font-size: 13px;
 }
 </style>

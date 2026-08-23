@@ -44,15 +44,15 @@ const activeView = computed<Component | null>(() => {
 .content-area {
   flex: 1;
   overflow: auto;
-  background: #1e1e1e;
-  color: #cccccc;
+  background: var(--bg, #1e1e1e);
+  color: var(--fg, #cccccc);
 }
 .content-empty {
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #6e6e6e;
+  color: var(--fg-dim, #6e6e6e);
   font-size: 14px;
 }
 </style>

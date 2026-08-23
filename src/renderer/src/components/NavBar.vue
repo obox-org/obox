@@ -139,8 +139,8 @@ function onClick(id: string): void {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  background: #333333;
-  border-right: 1px solid #252526;
+  background: var(--bg-sidebar, #333333);
+  border-right: 1px solid var(--border, #252526);
   user-select: none;
 }
 .navbar-group {
@@ -160,15 +160,15 @@ function onClick(id: string): void {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: #858585;
+  color: var(--nav-icon, #858585);
   outline: none;
 }
 .nav-item:hover {
-  color: #cccccc;
-  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg, #cccccc);
+  background: var(--hover-bg, rgba(255, 255, 255, 0.04));
 }
 .nav-item.active {
-  color: #ffffff;
+  color: var(--fg-bright, #ffffff);
 }
 .nav-item.active::before {
   content: '';
@@ -177,7 +177,7 @@ function onClick(id: string): void {
   top: 0;
   bottom: 0;
   width: 2px;
-  background: #ffffff;
+  background: var(--accent, #ffffff);
 }
 .nav-icon {
   display: flex;
@@ -196,8 +196,8 @@ function onClick(id: string): void {
   height: 16px;
   padding: 0 4px;
   border-radius: 20px;
-  background: #007acc;
-  color: #ffffff;
+  background: var(--accent, #007acc);
+  color: var(--fg-bright, #ffffff);
   font-size: 9px;
   line-height: 16px;
   text-align: center;
@@ -212,7 +212,7 @@ function onClick(id: string): void {
   left: 0;
   right: 0;
   height: 2px;
-  background: #007acc;
+  background: var(--accent, #007acc);
   top: 0;
 }
 </style>
