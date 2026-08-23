@@ -117,3 +117,18 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **原因**：`userData/extensions/<id>/` 下没有 manifest.json，或 manifest 校验失败（含 error 直接跳过）。
 
 **修复**：确认目录结构与 manifest 合法；用户扩展入口按 `manifest.main` 经 `app://extensions/<id>/<main>` 加载。
+
+## 16. App 应用里出现重复/残留卡片
+
+**症状**：App 视图里同一插件出现多张卡片，或卸载扩展后卡片仍在。
+
+**原因**（历史 bug，已修复）：`appStore` 的 index Map 未从 localStorage 持久化重建，导致同 id 重复注册不更新而 push 新条目；已卸载扩展的卡片（孤儿）在持久化中残留。
+
+**修复（宿主侧已实现）**：
+- `appStore` 构造函数从持久化重建 index，同 id 重复注册只更新不新建
+- `loadPersisted` 去重（同 id 只保留一条）
+- 宿主启动时清理孤儿卡片：`appStore.items` 中 `extensionId` 不在当前扩展列表的卡片被删除
+- 卸载/停用路径调用 `appStore.deactivateExtension(id)` 清理全部匹配卡片
+
+**扩展侧注意事项**：`api.app.register` 的 `id` 必须是稳定的唯一值（如 `todo.main`）；热重载/覆盖安装时宿主保证不产生重复卡片。
+

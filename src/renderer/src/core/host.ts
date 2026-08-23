@@ -241,6 +241,14 @@ class ExtensionHost {
 
     for (const ext of all) this.extensions.set(ext.id, ext)
 
+    // 清理孤儿 App 卡片：持久化里属于"已不存在的扩展"的卡片（如已卸载扩展的残留）
+    const liveIds = new Set(all.map((e) => e.id))
+    const orphans = appStore.items.filter((i) => !liveIds.has(i.extensionId))
+    for (const orphan of orphans) {
+      console.log(`[host] 清理孤儿 App 卡片: ${orphan.id}（扩展 ${orphan.extensionId} 已不在）`)
+      appStore.deactivateExtension(orphan.extensionId)
+    }
+
     // ---- 2. 阶段一：注册贡献点（仅有效且启用的扩展）----
     for (const ext of all) {
       if (!ext.enabled || !ext.isValid) continue
