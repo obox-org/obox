@@ -47,9 +47,9 @@ jobs:
       - name: Build
         run: npm run build
 
-      # 仅编译 Windows 安装包（不 publish，产物 release/obox-<version>-setup.exe）
+      # 仅编译 Windows 安装包（--publish never：发布由 gh release 负责，避免 electron-builder 尝试发布）
       - name: Build installer
-        run: npx electron-builder --win nsis
+        run: npx electron-builder --win nsis --publish never
 
       # 创建 GitHub Release 并只上传安装包：
       # - 源码归档（zip/tar.gz）由 GitHub 自动生成，无需手动上传

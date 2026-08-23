@@ -41,10 +41,6 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
-publish:
-  provider: github
-  # token 由 CI 的 GITHUB_TOKEN 注入（release workflow 已配置）；本地发布可用 GH_TOKEN 环境变量
-  owner: obox-org
-  repo: obox
+# 发布由 CI 的 gh release 负责（只上传安装包），electron-builder 不配置 publish，避免其尝试发布
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/
