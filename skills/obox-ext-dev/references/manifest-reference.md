@@ -39,7 +39,8 @@
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `id` | ✅ | 唯一，建议含扩展前缀 |
-| `title` | ✅ | 显示名（hover tooltip） |
+| `title` | ✅ | 显示名（hover tooltip / 状态栏当前视图名） |
+| `titleKey` | ❌ | 语言包 key（可选）：存在时 tooltip/状态栏用 `t(titleKey)` 本地化（随语言切换），否则用 title 原文 |
 | `icon` | ✅ | SVG 字符串（当前宿主渲染方式） |
 | `group` | ❌ | `top`（可排序业务导航，默认）/ `bottom`（固定全局区） |
 | `view` | ❌ | 内容栏视图组件 id——必须是扩展入口**具名导出**的组件名 |

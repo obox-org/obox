@@ -10,6 +10,7 @@
       {
         "id": "ext-manager.main",
         "title": "扩展",
+        "titleKey": "navbar.extensions",
         "icon": "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5'><path d='M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z'/></svg>",
         "group": "bottom",
         "view": "ExtensionManagerView"

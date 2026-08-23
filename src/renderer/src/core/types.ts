@@ -14,6 +14,8 @@ export interface NavItemContribution {
   id: string
   /** 显示名称（hover tooltip 显示） */
   title: string
+  /** 语言包 key（可选）：存在时 tooltip/状态栏用 t(titleKey) 本地化，否则用 title 原文 */
+  titleKey?: string
   /** 图标：SVG 字符串（data: 或 path 均可），或组件 id（宿主内置图标名） */
   icon: string
   /** 分组：top（可排序）/ bottom（固定全局区） */

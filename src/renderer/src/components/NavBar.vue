@@ -1,11 +1,19 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
 import { stateStore } from '../core/state'
+
+const { t } = useI18n()
 
 defineProps<{
   activeNavId: string | null
 }>()
+
+/** 导航项显示名：titleKey 存在时本地化，否则用 manifest title 原文 */
+function navTitle(item: { title: string; titleKey?: string }): string {
+  return item.titleKey ? t(item.titleKey) : item.title
+}
 
 const emit = defineEmits<{
   (e: 'select', id: string): void
@@ -93,7 +101,7 @@ function onClick(id: string): void {
           over: dragOverId === item.id
         }"
         draggable="true"
-        :title="item.title"
+        :title="navTitle(item)"
         @dragstart="onDragStart(item.id, $event)"
         @dragover="onDragOver(item.id, $event)"
         @drop="onDrop(item.id)"
@@ -112,7 +120,7 @@ function onClick(id: string): void {
         :key="item.id"
         class="nav-item"
         :class="{ active: activeNavId === item.id }"
-        :title="item.title"
+        :title="navTitle(item)"
         @click="onClick(item.id)"
       >
         <span class="nav-icon" v-html="item.icon" />

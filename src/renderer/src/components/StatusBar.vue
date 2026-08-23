@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   activeNavId: string | null
@@ -11,7 +14,8 @@ const rightItems = computed(() => registry.getVisibleStatusBarItems('right'))
 
 const activeTitle = computed(() => {
   const item = registry.navItems.find((i) => i.id === props.activeNavId)
-  return item?.title ?? ''
+  if (!item) return ''
+  return item.titleKey ? t(item.titleKey) : item.title
 })
 
 async function onItemClick(command?: string): Promise<void> {
