@@ -60,13 +60,15 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          # 调试：列出 release 目录内容
+          # 用绝对路径定位产物（避免 step 间相对路径差异）
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE "release"
+          Write-Output "release dir: $releaseDir"
           Write-Output "release dir contents:"
-          Get-ChildItem release -ErrorAction SilentlyContinue | Select-Object Name, Length
-          $exe = Get-ChildItem -Path release -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          Get-ChildItem $releaseDir -ErrorAction SilentlyContinue | Select-Object Name, Length
+          $exe = Get-ChildItem -Path $releaseDir -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) {
             # 兜底：全工作区搜索 setup.exe
-            $exe = Get-ChildItem -Path . -Recurse -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $exe = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           }
           if (-not $exe) { Write-Error "setup.exe not found"; exit 1 }
           Write-Output "uploading: $($exe.FullName)"
