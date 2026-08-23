@@ -57,6 +57,7 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 
 - `references/manifest-reference.md`：manifest 字段、贡献点 schema、校验规则
 - `references/api-reference.md`：`ExtensionActivationApi` 全量方法签名与语义
+- `references/themes-settings.md`：主题 token 全量参考、主题扩展编写、设置系统（外观/语言/快捷键/扩展设置）
 - `references/guides.md`：从零写扩展教程、注册到 App、调试技巧
 - `references/troubleshooting.md`：常见错误与修复
 

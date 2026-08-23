@@ -167,8 +167,8 @@ function isSvgIcon(icon: string): boolean {
   overflow: hidden;
 }
 .card-hint {
-  font-size: 11px;
-  color: #4a6b8a;
+  font-size: var(--font-size-sm, 11px);
+  color: var(--fg-link, #4a6b8a);
   margin-top: 8px;
 }
 .empty {

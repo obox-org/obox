@@ -419,7 +419,7 @@ const sourceLabel = (s: string): string =>
   font-size: 12px;
 }
 .notice {
-  color: #4ec9b0;
+  color: var(--fg-success, #4ec9b0);
   font-size: 12px;
   margin-left: auto;
 }
@@ -434,7 +434,7 @@ const sourceLabel = (s: string): string =>
   align-items: center;
   justify-content: center;
   background: rgba(0, 90, 160, 0.25);
-  color: #75beff;
+  color: var(--fg-link, #75beff);
   font-size: 15px;
   pointer-events: none;
   z-index: 10;
@@ -490,7 +490,7 @@ const sourceLabel = (s: string): string =>
   opacity: 0.5;
 }
 .card.invalid {
-  border-color: #a1260d;
+  border-color: var(--fg-error, #a1260d);
 }
 .card-header {
   display: flex;
@@ -522,7 +522,7 @@ const sourceLabel = (s: string): string =>
   overflow: hidden;
 }
 .card-error {
-  color: #f48771;
+  color: var(--fg-error, #f48771);
   font-size: 11px;
   margin-top: 6px;
 }
@@ -587,10 +587,10 @@ const sourceLabel = (s: string): string =>
   color: var(--fg, #cccccc);
 }
 .state-error {
-  color: #f48771;
+  color: var(--fg-error, #f48771);
 }
 .state-warn {
-  color: #cca700;
+  color: var(--fg-warning, #cca700);
 }
 .validations {
   margin: 16px 0;
@@ -606,13 +606,13 @@ const sourceLabel = (s: string): string =>
   font-size: 12px;
 }
 .validations .error {
-  color: #f48771;
+  color: var(--fg-error, #f48771);
 }
 .validations .warning {
-  color: #cca700;
+  color: var(--fg-warning, #cca700);
 }
 .validations .info {
-  color: #75beff;
+  color: var(--fg-link, #75beff);
 }
 .detail-actions {
   display: flex;
@@ -634,7 +634,7 @@ const sourceLabel = (s: string): string =>
 .btn.danger {
   background: #5a1d1d;
   border-color: #7a2a2a;
-  color: #f48771;
+  color: var(--fg-error, #f48771);
 }
 .btn.danger:hover {
   background: #6e2424;

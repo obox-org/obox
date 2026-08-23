@@ -1,14 +1,31 @@
-/* Obox 全局基础样式：暗色主题（VS Code 风格） */
+/* Obox 全局基础样式：主题变量默认值（运行时由主题扩展覆盖到 :root） */
 :root {
   --bg: #1e1e1e;
   --bg-panel: #252526;
   --bg-sidebar: #333333;
   --bg-titlebar: #323233;
+  --bg-input: #3c3c3c;
   --border: #3c3c3c;
   --fg: #cccccc;
   --fg-dim: #6e6e6e;
   --fg-bright: #ffffff;
+  --fg-link: #75beff;
+  --fg-error: #f48771;
+  --fg-warning: #cca700;
+  --fg-success: #4ec9b0;
   --accent: #007acc;
+  --hover-bg: rgba(255, 255, 255, 0.1);
+  --selection-bg: #094771;
+  --nav-icon: #858585;
+  --statusbar-bg: #007acc;
+  --statusbar-fg: #ffffff;
+  --font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  --font-size: 13px;
+  --font-size-sm: 12px;
+  --font-size-lg: 16px;
+  --nav-icon-size: 24px;
+  --icon-size: 24px;
 }
 
 * {
@@ -25,13 +42,8 @@ body,
 }
 
 body {
-  font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    'Microsoft YaHei',
-    sans-serif;
-  font-size: 13px;
+  font-family: var(--font-family);
+  font-size: var(--font-size);
   background: var(--bg);
   color: var(--fg);
   user-select: none;
@@ -44,11 +56,11 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #424242;
+  background: var(--fg-dim, #424242);
   border-radius: 5px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #4f4f4f;
+  background: var(--fg, #4f4f4f);
 }
 ::-webkit-scrollbar-track {
   background: transparent;

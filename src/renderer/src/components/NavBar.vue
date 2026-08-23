@@ -181,12 +181,12 @@ function onClick(id: string): void {
 }
 .nav-icon {
   display: flex;
-  width: 24px;
-  height: 24px;
+  width: var(--nav-icon-size, 24px);
+  height: var(--nav-icon-size, 24px);
 }
 .nav-icon :deep(svg) {
-  width: 24px;
-  height: 24px;
+  width: var(--nav-icon-size, 24px);
+  height: var(--nav-icon-size, 24px);
 }
 .nav-badge {
   position: absolute;

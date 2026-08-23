@@ -353,8 +353,8 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
   margin-top: 4px;
 }
 .config-error {
-  font-size: 12px;
-  color: #f48771;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--fg-error, #f48771);
   margin-top: 8px;
 }
 .keybindings-table {
