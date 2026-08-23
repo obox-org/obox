@@ -60,8 +60,16 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $exe = Get-ChildItem release/obox-*.setup.exe | Select-Object -First 1
+          # 调试：列出 release 目录内容
+          Write-Output "release dir contents:"
+          Get-ChildItem release -ErrorAction SilentlyContinue | Select-Object Name, Length
+          $exe = Get-ChildItem -Path release -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            # 兜底：全工作区搜索 setup.exe
+            $exe = Get-ChildItem -Path . -Recurse -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
           if (-not $exe) { Write-Error "setup.exe not found"; exit 1 }
+          Write-Output "uploading: $($exe.FullName)"
           # release 已存在则删除重建（幂等，处理 CI 重跑/失败残留）
           gh release delete $tag --yes --cleanup-tag 2>$null
           gh release create $tag $exe.FullName `
