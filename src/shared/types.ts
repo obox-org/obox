@@ -43,6 +43,24 @@ export interface InstallOixResult {
   replaced: boolean
 }
 
+/** 代理配置（设置-网络页，VS Code 风格） */
+export interface ProxyConfig {
+  /** 是否启用代理 */
+  enabled: boolean
+  /** 代理 host（如 127.0.0.1） */
+  host: string
+  /** 代理端口 */
+  port?: number
+  /** 用户名（可选） */
+  username?: string
+  /** 密码（可选） */
+  password?: string
+  /** 是否忽略 SSL 证书校验 */
+  ignoreSSL?: boolean
+  /** noProxy 排除列表（host 或域名，逗号分隔的数组） */
+  noProxy?: string[]
+}
+
 /** 渲染进程 → 主进程 的调用（invoke） */
 export interface MainApi {
   /** 窗口控制 */
@@ -75,10 +93,31 @@ export interface MainApi {
     height?: number
     iconUrl?: string
   }): Promise<{ appId: string; sequence: number }>
+  /** 获取 obox 当前版本号 */
+  getOboxVersion(): Promise<string>
+  /** 检查更新（feedUrl 由更新提供者扩展提供；无默认源） */
+  checkUpdate(opts: {
+    feedUrl?: string
+    proxy?: ProxyConfig
+  }): Promise<{ ok: boolean; available?: string; error?: string }>
+  /** 下载更新（不自动安装） */
+  downloadUpdate(): Promise<{ ok: boolean; error?: string }>
+  /** 安装并重启（下载完成后） */
+  installUpdate(): Promise<void>
 }
 
 /** 主进程 → 渲染进程 的事件（on） */
 export interface MainEvents {
   /** 窗口状态变化（最大化/还原/全屏/聚焦） */
   'window:state-changed': (state: WindowState) => void
+  /** 更新事件（检查结果/下载进度/下载完成/错误） */
+  'update:event': (e: {
+    type: string
+    info?: { version?: string; files?: unknown[]; releaseDate?: string }
+    percent?: number
+    bytesPerSecond?: number
+    transferred?: number
+    total?: number
+    message?: string
+  }) => void
 }

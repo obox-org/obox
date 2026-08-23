@@ -17,7 +17,11 @@ const api: MainApi = {
   getPathForFile: (file) => webUtils.getPathForFile(file as File),
   capture: (outPath) => ipcRenderer.invoke('window:capture', outPath),
   eval: (script) => ipcRenderer.invoke('window:eval', script),
-  openAppWindow: (req) => ipcRenderer.invoke('app:open-window', req)
+  openAppWindow: (req) => ipcRenderer.invoke('app:open-window', req),
+  getOboxVersion: () => ipcRenderer.invoke('update:get-version'),
+  checkUpdate: (opts) => ipcRenderer.invoke('update:check', opts),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install')
 }
 
 // 主进程 → 渲染进程事件订阅

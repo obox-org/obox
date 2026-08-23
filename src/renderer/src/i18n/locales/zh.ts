@@ -114,7 +114,9 @@ export default {
       appearance: '外观',
       language: '语言',
       keyboard: '快捷键',
-      extensions: '扩展'
+      extensions: '扩展',
+      update: '更新',
+      network: '网络'
     },
     appearance: {
       title: '外观',
@@ -140,6 +142,35 @@ export default {
       title: '扩展',
       empty: '暂无扩展设置项',
       select: '从左侧选择扩展以查看其设置'
+    },
+    update: {
+      title: '更新',
+      provider: '更新提供者扩展',
+      providerDesc: '选择提供 obox 更新能力的非内置扩展（只能一个生效）。未选择时不检查更新。',
+      noProvider: '暂无更新提供者扩展',
+      selected: '当前生效',
+      currentVersion: '当前版本',
+      checkBtn: '检查更新',
+      checking: '检查中…',
+      upToDate: '已是最新版本',
+      updateAvailable: '发现新版本 {version}',
+      downloadBtn: '下载更新',
+      downloading: '下载中… {percent}%',
+      downloaded: '更新已下载',
+      installBtn: '重启并安装',
+      noFeed: '该更新扩展未配置更新源'
+    },
+    network: {
+      title: '网络',
+      proxy: '代理',
+      proxyDesc: 'obox 与内置扩展使用此代理；非内置扩展可选使用（api.proxy）。',
+      enabled: '启用代理',
+      host: '主机',
+      port: '端口',
+      username: '用户名',
+      password: '密码',
+      ignoreSSL: '忽略 SSL 证书校验',
+      noProxy: '排除列表（每行一个，如 localhost, 127.0.0.1）'
     },
     unsaved: '未保存的更改'
   },

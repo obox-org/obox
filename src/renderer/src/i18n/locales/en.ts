@@ -114,7 +114,9 @@ export default {
       appearance: 'Appearance',
       language: 'Language',
       keyboard: 'Keyboard Shortcuts',
-      extensions: 'Extensions'
+      extensions: 'Extensions',
+      update: 'Update',
+      network: 'Network'
     },
     appearance: {
       title: 'Appearance',
@@ -140,6 +142,37 @@ export default {
       title: 'Extensions',
       empty: 'No extension settings',
       select: 'Select an extension from the tree to view its settings'
+    },
+    update: {
+      title: 'Update',
+      provider: 'Update Provider Extension',
+      providerDesc:
+        'Choose the non-builtin extension that provides obox update capability (only one active). Updates are not checked when none is selected.',
+      noProvider: 'No update provider extensions',
+      selected: 'Active',
+      currentVersion: 'Current version',
+      checkBtn: 'Check for Updates',
+      checking: 'Checking…',
+      upToDate: 'You are up to date',
+      updateAvailable: 'Update {version} available',
+      downloadBtn: 'Download Update',
+      downloading: 'Downloading… {percent}%',
+      downloaded: 'Update downloaded',
+      installBtn: 'Restart to Install',
+      noFeed: 'This update extension has no feed URL configured'
+    },
+    network: {
+      title: 'Network',
+      proxy: 'Proxy',
+      proxyDesc:
+        'obox and builtin extensions use this proxy; non-builtin extensions may opt in (api.proxy).',
+      enabled: 'Enable proxy',
+      host: 'Host',
+      port: 'Port',
+      username: 'Username',
+      password: 'Password',
+      ignoreSSL: 'Ignore SSL certificate validation',
+      noProxy: 'No-proxy list (one per line, e.g. localhost, 127.0.0.1)'
     },
     unsaved: 'Unsaved changes'
   },

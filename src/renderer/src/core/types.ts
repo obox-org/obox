@@ -108,6 +108,11 @@ export interface ContributionManifest {
   i18n?: Record<string, Record<string, string>>
   /** 扩展设置 schema（对齐 VS Code contributes.configuration 简化版） */
   settings?: SettingsPage
+  /** 声明为"更新提供者扩展"：提供 obox 更新能力（设置-更新选择，只能一个生效） */
+  updater?: {
+    /** 更新源 URL 模板（可含 {version} 占位）；扩展激活时也可用 api.update 覆盖 */
+    feedUrl?: string
+  }
 }
 
 /** 扩展 manifest（package.json 的 obox 扩展声明） */
@@ -283,6 +288,49 @@ export interface ExtensionActivationApi {
     /** 写入扩展设置值（立即持久化并通知） */
     set(key: string, value: unknown): void
   }
+  /** 更新能力（仅"更新提供者扩展"可用；设置-更新选择生效的提供者） */
+  update: {
+    /** 当前 obox 版本号 */
+    getVersion(): Promise<string>
+    /** 检查更新（feedUrl 为更新源；无默认源） */
+    check(feedUrl: string): Promise<{ ok: boolean; available?: string; error?: string }>
+    /** 下载更新（不自动安装） */
+    download(): Promise<{ ok: boolean; error?: string }>
+    /** 安装并重启（下载完成后） */
+    install(): Promise<void>
+    /** 订阅更新事件（发现新版本/下载进度/下载完成/错误），返回注销函数 */
+    onEvent(callback: (e: UpdateEvent) => void): Disposable
+  }
+  /** 代理配置（obox 与内置扩展自动使用；非内置扩展可选） */
+  proxy: {
+    /** 读取当前代理配置（设置-网络页） */
+    get(): ProxyConfig
+  }
+}
+
+/** 更新事件形状 */
+export type UpdateEvent =
+  | { type: 'update-available'; version?: string }
+  | { type: 'update-not-available' }
+  | {
+      type: 'download-progress'
+      percent: number
+      bytesPerSecond: number
+      transferred: number
+      total: number
+    }
+  | { type: 'update-downloaded'; version: string }
+  | { type: 'error'; message: string }
+
+/** 代理配置 */
+export interface ProxyConfig {
+  enabled: boolean
+  host: string
+  port?: number
+  username?: string
+  password?: string
+  ignoreSSL?: boolean
+  noProxy?: string[]
 }
 
 /** Memento：JSON 值键值存储 */

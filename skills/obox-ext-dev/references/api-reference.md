@@ -159,6 +159,39 @@ page.dispose() // 注销设置页
 
 设置字段类型：`text` / `number` / `boolean` / `select`（见 `SettingField` 类型）。
 
+### update（更新能力，仅更新提供者扩展可用）
+
+扩展 manifest 声明 `contributes.updater` 后成为"更新提供者扩展"，并在**设置-更新**中选择为生效提供者（只能一个）后，可调用：
+
+```ts
+// 当前 obox 版本号
+const version = await api.update.getVersion()
+// 检查更新（feedUrl 为更新源；无默认源，未配置 feed 或未选中时报错）
+const r = await api.update.check('https://example.com/updates')
+// 下载更新（不自动安装）
+const d = await api.update.download()
+// 安装并重启（下载完成后）
+await api.update.install()
+// 订阅更新事件（发现新版本/下载进度/下载完成/错误），返回注销函数
+api.update.onEvent((e) => {
+  if (e.type === 'update-available') { /* e.version */ }
+  if (e.type === 'download-progress') { /* e.percent */ }
+  if (e.type === 'update-downloaded') { /* e.version */ }
+})
+```
+
+> 更新执行由宿主 electron-updater 完成；扩展提供更新源与触发时机。未在设置-更新选中的扩展调用 update API 会抛错。
+
+### proxy（代理配置）
+
+```ts
+// 读取当前代理配置（设置-网络页；obox 与内置扩展自动使用）
+const p = api.proxy.get()
+// { enabled, host, port?, username?, password?, ignoreSSL?, noProxy? }
+```
+
+obox 主进程的网络请求（更新下载等）自动使用该代理；内置扩展经 `api.proxy.get()` 读取并应用；非内置扩展可选使用。
+
 ## 宿主生命周期语义
 
 - **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表

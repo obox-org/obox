@@ -18,7 +18,7 @@ import type { RegisteredSettingsPage } from '../../core/extensionSettings'
 
 const { t } = useI18n()
 
-type TreeKey = 'appearance' | 'language' | 'keyboard' | 'extension'
+type TreeKey = 'appearance' | 'language' | 'keyboard' | 'update' | 'network' | 'extension'
 
 const active = ref<TreeKey>('appearance')
 const activeExt = ref<string | null>(null)
@@ -72,6 +72,94 @@ function onCaptureKeydown(e: KeyboardEvent): void {
   capturing.value = null
 }
 
+// ---- 更新 ----
+import { updaterStore } from '../../core/updaterStore'
+const updaterProviders = computed(() => updaterStore.providers)
+const activeUpdater = computed(() => updaterStore.activeId)
+const oboxVersion = ref('')
+const updateStatus = ref<string>('') // 'checking' | 'available' | 'uptodate' | 'downloading' | 'downloaded' | 'error'
+const isStatus = (s: string): boolean => updateStatus.value === s
+const updateMsg = ref('')
+const downloadPercent = ref(0)
+
+void window.api.getOboxVersion().then((v) => (oboxVersion.value = v))
+
+function selectUpdater(id: string): void {
+  updaterStore.setActive(id === '' ? null : id)
+}
+
+/** 检查更新（用当前生效更新提供者的 feedUrl；无 feed 报错） */
+async function checkUpdate(): Promise<void> {
+  const active = updaterStore.active
+  if (!active) return
+  if (!active.feedUrl) {
+    updateStatus.value = 'error'
+    updateMsg.value = t('settings.update.noFeed')
+    return
+  }
+  updateStatus.value = 'checking'
+  const result = await window.api.checkUpdate({ feedUrl: active.feedUrl, proxy: proxyConfig.value })
+  if (result.ok) {
+    if (result.available && result.available !== oboxVersion.value) {
+      updateStatus.value = 'available'
+      updateMsg.value = t('settings.update.updateAvailable', { version: result.available })
+    } else {
+      updateStatus.value = 'uptodate'
+      updateMsg.value = ''
+    }
+  } else {
+    updateStatus.value = 'error'
+    updateMsg.value = result.error ?? ''
+  }
+}
+
+async function downloadUpdate(): Promise<void> {
+  updateStatus.value = 'downloading'
+  const result = await window.api.downloadUpdate()
+  if (!result.ok) {
+    updateStatus.value = 'error'
+    updateMsg.value = result.error ?? ''
+  }
+}
+
+async function installUpdate(): Promise<void> {
+  await window.api.installUpdate()
+}
+
+// 订阅更新事件（下载进度/完成）
+import { onMounted, onUnmounted } from 'vue'
+let offUpdate: (() => void) | undefined
+onMounted(() => {
+  offUpdate = window.events.on('update:event', (e) => {
+    if (e.type === 'download-progress') {
+      updateStatus.value = 'downloading'
+      downloadPercent.value = e.percent ?? 0
+    } else if (e.type === 'update-downloaded') {
+      updateStatus.value = 'downloaded'
+      downloadPercent.value = 100
+    } else if (e.type === 'error' && e.message) {
+      updateStatus.value = 'error'
+      updateMsg.value = e.message
+    }
+  })
+})
+onUnmounted(() => offUpdate?.())
+
+// ---- 网络（代理） ----
+import type { ProxyConfig } from '../../core/types'
+const proxyConfig = ref<ProxyConfig>(
+  stateStore.getSetting<ProxyConfig>('network.proxy') ?? { enabled: false, host: '', noProxy: [] }
+)
+const noProxyText = ref((proxyConfig.value.noProxy ?? []).join('\n'))
+
+function saveProxy(): void {
+  proxyConfig.value.noProxy = noProxyText.value
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  stateStore.setSetting('network.proxy', { ...proxyConfig.value })
+}
+
 // ---- 扩展设置 ----
 const extensionPages = computed<RegisteredSettingsPage[]>(() => extensionSettingsStore.pages)
 const extIds = computed(() => extensionSettingsStore.extensionIds)
@@ -114,6 +202,12 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
         @click="active = 'keyboard'"
       >
         <span class="tree-label">{{ t('settings.tree.keyboard') }}</span>
+      </div>
+      <div class="tree-node" :class="{ active: active === 'update' }" @click="active = 'update'">
+        <span class="tree-label">{{ t('settings.tree.update') }}</span>
+      </div>
+      <div class="tree-node" :class="{ active: active === 'network' }" @click="active = 'network'">
+        <span class="tree-label">{{ t('settings.tree.network') }}</span>
       </div>
       <div class="tree-node" :class="{ active: active === 'extension' && !activeExt }">
         <span class="tree-label">{{ t('settings.tree.extensions') }}</span>
@@ -205,6 +299,113 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
           <div class="capture-box" tabindex="0" @keydown="onCaptureKeydown" @click.stop>
             <p>{{ t('settings.keyboard.captureHint') }}</p>
           </div>
+        </div>
+      </div>
+
+      <!-- 更新 -->
+      <div v-else-if="active === 'update'" class="config-block">
+        <h2>{{ t('settings.update.title') }}</h2>
+        <p class="config-desc">{{ t('settings.update.providerDesc') }}</p>
+        <div class="config-row">
+          <label>{{ t('settings.update.currentVersion') }}</label>
+          <span class="config-value">{{ oboxVersion }}</span>
+        </div>
+        <div class="config-row">
+          <label>{{ t('settings.update.provider') }}</label>
+          <select
+            :value="activeUpdater ?? ''"
+            @change="selectUpdater(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">—</option>
+            <option v-for="p in updaterProviders" :key="p.extensionId" :value="p.extensionId">
+              {{ extDisplayName(p.extensionId) }}{{ activeUpdater === p.extensionId ? ' ✓' : '' }}
+            </option>
+          </select>
+        </div>
+        <p v-if="updaterProviders.length === 0" class="config-desc">
+          {{ t('settings.update.noProvider') }}
+        </p>
+        <div v-if="activeUpdater" class="config-row actions-row">
+          <button
+            class="btn"
+            :disabled="isStatus('checking') || isStatus('downloading')"
+            @click="checkUpdate"
+          >
+            {{
+              isStatus('checking') ? t('settings.update.checking') : t('settings.update.checkBtn')
+            }}
+          </button>
+          <button
+            v-if="isStatus('available')"
+            class="btn"
+            :disabled="isStatus('downloading')"
+            @click="downloadUpdate"
+          >
+            {{
+              isStatus('downloading')
+                ? t('settings.update.downloading', { percent: downloadPercent })
+                : t('settings.update.downloadBtn')
+            }}
+          </button>
+          <button v-if="isStatus('downloaded')" class="btn primary" @click="installUpdate">
+            {{ t('settings.update.installBtn') }}
+          </button>
+        </div>
+        <p v-if="isStatus('uptodate')" class="config-success">
+          {{ t('settings.update.upToDate') }}
+        </p>
+        <p v-if="isStatus('available')" class="config-info">{{ updateMsg }}</p>
+        <p v-if="isStatus('downloaded')" class="config-success">
+          {{ t('settings.update.downloaded') }}
+        </p>
+        <p v-if="isStatus('error')" class="config-error">{{ updateMsg }}</p>
+      </div>
+
+      <!-- 网络（代理） -->
+      <div v-else-if="active === 'network'" class="config-block">
+        <h2>{{ t('settings.network.title') }}</h2>
+        <p class="config-desc">{{ t('settings.network.proxyDesc') }}</p>
+        <div class="config-row">
+          <label>
+            <input v-model="proxyConfig.enabled" type="checkbox" @change="saveProxy" />
+            {{ t('settings.network.enabled') }}
+          </label>
+        </div>
+        <div class="config-row">
+          <label>{{ t('settings.network.host') }}</label>
+          <input v-model="proxyConfig.host" class="text-input" @change="saveProxy" />
+        </div>
+        <div class="config-row">
+          <label>{{ t('settings.network.port') }}</label>
+          <input
+            v-model.number="proxyConfig.port"
+            class="text-input"
+            type="number"
+            @change="saveProxy"
+          />
+        </div>
+        <div class="config-row">
+          <label>{{ t('settings.network.username') }}</label>
+          <input v-model="proxyConfig.username" class="text-input" @change="saveProxy" />
+        </div>
+        <div class="config-row">
+          <label>{{ t('settings.network.password') }}</label>
+          <input
+            v-model="proxyConfig.password"
+            class="text-input"
+            type="password"
+            @change="saveProxy"
+          />
+        </div>
+        <div class="config-row">
+          <label>
+            <input v-model="proxyConfig.ignoreSSL" type="checkbox" @change="saveProxy" />
+            {{ t('settings.network.ignoreSSL') }}
+          </label>
+        </div>
+        <div class="config-row">
+          <label>{{ t('settings.network.noProxy') }}</label>
+          <textarea v-model="noProxyText" class="text-input" rows="3" @change="saveProxy" />
         </div>
       </div>
 
@@ -356,6 +557,30 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
   font-size: var(--font-size-sm, 12px);
   color: var(--fg-error, #f48771);
   margin-top: 8px;
+}
+.config-success {
+  font-size: var(--font-size-sm, 12px);
+  color: var(--fg-success, #4ec9b0);
+  margin-top: 8px;
+}
+.config-info {
+  font-size: var(--font-size-sm, 12px);
+  color: var(--fg-link, #75beff);
+  margin-top: 8px;
+}
+.config-value {
+  color: var(--fg-bright, #e8e8e8);
+  font-family: ui-monospace, monospace;
+}
+.actions-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.btn.primary {
+  background: var(--accent, #007acc);
+  border-color: var(--accent, #007acc);
+  color: #ffffff;
 }
 .keybindings-table {
   width: 100%;

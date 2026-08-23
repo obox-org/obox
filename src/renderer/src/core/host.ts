@@ -16,12 +16,15 @@ import {
   translateExtension
 } from './extensionI18n'
 import { keybindingStore } from './keybindings'
+import { updaterStore } from './updaterStore'
 import { i18n } from '../i18n'
 import type {
   ExtensionActivationApi,
   ExtensionInfo,
   ExtensionManifest,
-  ExtensionModule
+  ExtensionModule,
+  ProxyConfig,
+  UpdateEvent
 } from './types'
 
 /** 扩展条目（内置/用户统一形状） */
@@ -110,6 +113,8 @@ class ExtensionHost {
     if (c.i18n) registerExtensionMessages(ext.id, c.i18n)
     // 扩展设置 schema（manifest 声明，对齐 VS Code configuration 简化版）
     if (c.settings) extensionSettingsStore.register(ext.id, c.settings)
+    // 更新提供者（manifest 声明；设置-更新选择生效，只能一个）
+    if (c.updater) updaterStore.register(ext.id, c.updater.feedUrl)
     // 校验视图引用：导航项声明的 view 必须在扩展模块具名导出中存在
     for (const nav of c.navItems ?? []) {
       if (nav.view && !(nav.view in module)) {
@@ -267,6 +272,57 @@ class ExtensionHost {
         get: <T = unknown>(key: string, defaultValue?: T): T | undefined =>
           stateStore.getSetting<T>(key, defaultValue),
         set: (key, value) => stateStore.setSetting(key, value)
+      },
+      update: this.buildUpdateApi(ext, disposables),
+      proxy: {
+        get: (): ProxyConfig => {
+          const p = stateStore.getSetting<ProxyConfig>('network.proxy')
+          return (
+            p ?? {
+              enabled: false,
+              host: '',
+              noProxy: []
+            }
+          )
+        }
+      }
+    }
+  }
+
+  /** 构造 api.update（仅更新提供者扩展可用；未选中时抛错） */
+  private buildUpdateApi(
+    ext: ExtensionInfo,
+    disposables: Array<() => void>
+  ): ExtensionActivationApi['update'] {
+    const isProvider = (): void => {
+      if (!updaterStore.isActive(ext.id)) {
+        throw new Error('当前扩展不是生效的更新提供者（需在设置-更新中选择）')
+      }
+    }
+    const proxy = (): ProxyConfig => {
+      const p = stateStore.getSetting<ProxyConfig>('network.proxy')
+      return p ?? { enabled: false, host: '', noProxy: [] }
+    }
+    return {
+      getVersion: () => window.api.getOboxVersion(),
+      check: async (feedUrl) => {
+        isProvider()
+        return window.api.checkUpdate({ feedUrl, proxy: proxy() })
+      },
+      download: async () => {
+        isProvider()
+        return window.api.downloadUpdate()
+      },
+      install: async () => {
+        isProvider()
+        await window.api.installUpdate()
+      },
+      onEvent: (callback) => {
+        const off = window.events.on('update:event', (e) => {
+          callback(e as unknown as UpdateEvent)
+        })
+        disposables.push(off)
+        return { dispose: off }
       }
     }
   }
@@ -412,12 +468,13 @@ class ExtensionHost {
       }
       this.cleanups.delete(id)
     }
-    // 注册表贡献项 + 视图组件 + App 卡片 + 设置页 + 语言包
+    // 注册表贡献项 + 视图组件 + App 卡片 + 设置页 + 语言包 + 更新提供者
     registry.deactivateExtension(id)
     registry.removeViewComponents(id)
     appStore.deactivateExtension(id)
     extensionSettingsStore.deactivateExtension(id)
     clearExtensionMessages(id)
+    updaterStore.deactivateExtension(id)
     this.activated.delete(id)
     this.loaders.delete(id)
     this.extensions.delete(id)

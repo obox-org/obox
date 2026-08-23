@@ -151,6 +151,26 @@
 
 设置"扩展"节点按扩展名展示其设置页。
 
+### updater（更新提供者，manifest 声明）
+
+声明该扩展为"更新提供者扩展"：提供 obox 更新能力（检查/下载/安装），在**设置-更新**中选择生效（只能一个；无默认更新源）。
+
+```json
+{
+  "contributes": {
+    "updater": {
+      "feedUrl": "https://example.com/updates"
+    }
+  }
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `feedUrl` | ❌ | 更新源 URL（electron-updater generic provider）；扩展激活时也可用 `api.update` 覆盖/运行时提供 |
+
+选中后扩展可调用 `api.update.*`（详见 `api-reference.md`）。**只能有一个更新提供者生效**；未选择时不检查更新。
+
 ## 校验规则（`core/manifest.ts`）
 
 - `name` 必填且匹配 `^[a-z0-9][a-z0-9._-]*$` → 否则 **error**，不加载
