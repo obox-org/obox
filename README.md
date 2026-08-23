@@ -89,8 +89,8 @@ git push origin v1.0.0
 ```
 
 - 工作流：[.github/workflows/release.yml](.github/workflows/release.yml)（`on.push.tags: v*`）
-- 流程：checkout tag → 装依赖 → 校验 tag 版本与 package.json 一致 → typecheck → `electron-builder --win nsis --publish always`（发布到 GitHub Releases，产物 `obox-<version>-setup.exe` + `latest.yml` 自动更新元数据）
-- publish 配置：electron-builder.yml `provider: github`（token 由 CI `GITHUB_TOKEN` 注入）
+- 流程：checkout tag → 装依赖 → 校验 tag 版本与 package.json 一致 → typecheck → `electron-builder --win nsis --publish never`（输出到 runner 临时目录）→ `gh release create` 上传 `obox-<version>-setup.exe` + `latest.yml`（release 已存在则删除重建，幂等）
+- 更新源：`https://github.com/obox-org/obox/releases/latest/download/`（`latest.yml` + 安装包），供更新提供者扩展（如 `extensions/obox-updater/`）拉取检查/下载/安装
 
 ## 快速上手（新会话必读）
 
@@ -115,3 +115,7 @@ git push origin v1.0.0
 - **Electron** 39 + **Vue** 3.5 + **TypeScript** 5.9（electron-vite 5 构建）
 - **@cordisjs/core** 3.18（扩展宿主插件框架，运行在渲染进程）
 - 无 UI 组件库：手写 CSS 暗色主题（VS Code 风格）
+
+## License
+
+[MIT](LICENSE) © obox-org
