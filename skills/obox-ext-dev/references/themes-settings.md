@@ -32,8 +32,8 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 | `--hover-bg` | `rgba(255,255,255,.1)` | 悬停背景 |
 | `--selection-bg` | `#094771` | 选中背景（命令面板条目） |
 | `--nav-icon` | `#858585` | 导航栏图标默认色 |
-| `--statusbar-bg` | `#007acc` | 状态栏背景 |
-| `--statusbar-fg` | `#ffffff` | 状态栏文字 |
+| `--statusbar-bg` | `#2a2a2a` | 状态栏背景（随主题色系，非蓝色） |
+| `--statusbar-fg` | `#cccccc` | 状态栏文字 |
 | `--font-family` | 系统字体栈 | 全局字体族 |
 | `--font-size` | `13px` | 全局基准字号 |
 | `--font-size-sm` | `12px` | 小字号（提示/版本号） |
