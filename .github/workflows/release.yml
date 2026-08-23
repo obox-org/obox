@@ -43,6 +43,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # 构建主进程/preload/renderer 到 out/（electron-builder 打包 app.asar 的入口依赖 out/main/index.js）
+      - name: Build
+        run: npm run build
+
       # electron-builder 发布到 GitHub Releases：
       # - publish 配置在 electron-builder.yml（provider: github，token 用 GITHUB_TOKEN 自动注入）
       # - --publish always 在 tag 触发时创建/更新 release 并上传产物
