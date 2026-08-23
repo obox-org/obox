@@ -49,7 +49,7 @@ jobs:
 
       # 编译 Windows 安装包并发布（同一步骤内构建+发布，避免跨步骤产物不可见）
       # - electron-builder 只编译（--publish never，发布由 gh release 负责）
-      # - 用显式绝对输出目录（--config.directories.output），避免相对路径解析差异
+      # - 输出到 runner 临时目录（绝对路径，避免工作区相对路径/gitignore 干扰）
       # - 只上传 obox-<version>-setup.exe；源码归档由 GitHub 自动生成；其他产物不发布
       - name: Build and create GitHub Release
         env:
@@ -57,20 +57,16 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $outDir = Join-Path $env:GITHUB_WORKSPACE "release"
-          Write-Output "workspace: $env:GITHUB_WORKSPACE"
+          $outDir = Join-Path $env:RUNNER_TEMP "obox-release"
           Write-Output "output dir: $outDir"
-          # 1) 编译安装包到显式绝对目录
-          npx electron-builder --win nsis --publish never --config.directories.output=$outDir
+          # 1) 编译安装包到 runner 临时目录（绝对路径）
+          npx electron-builder --win nsis --publish never --config.directories.output="$outDir"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Output "after build, output dir contents:"
           Get-ChildItem $outDir -ErrorAction SilentlyContinue | Select-Object Name, Length
           # 2) 定位安装包
           $exe = Get-ChildItem -Path $outDir -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $exe) {
-            $exe = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "obox-*.setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          if (-not $exe) { Write-Error "setup.exe not found"; exit 1 }
+          if (-not $exe) { Write-Error "setup.exe not found in $outDir"; exit 1 }
           Write-Output "uploading: $($exe.FullName)"
           # 3) 发布（release 已存在则删除重建，幂等）
           gh release delete $tag --yes --cleanup-tag 2>$null
