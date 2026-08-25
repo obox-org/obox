@@ -48,9 +48,10 @@ jobs:
         run: npm run build
 
       # 编译 Windows 安装包并发布（同一步骤内构建+发布，避免跨步骤产物不可见）
+      # - 一次构建 x64 + arm64 两个安装包（--x64 --arm64；electron-builder 下载对应架构 Electron）
       # - electron-builder 只编译（--publish never，发布由 gh release 负责）
       # - 输出到 runner 临时目录（绝对路径，避免工作区相对路径/gitignore 干扰）
-      # - 上传 obox-<version>-setup.exe + latest.yml（自动更新用）；源码归档由 GitHub 自动生成
+      # - 上传 obox-<version>-<arch>-setup.exe（x64/arm64）+ latest.yml / latest-arm64.yml（自动更新按架构拉取）
       - name: Build and create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,33 +60,30 @@ jobs:
           $tag = "${{ github.ref_name }}"
           $outDir = Join-Path $env:RUNNER_TEMP "obox-release"
           Write-Output "output dir: $outDir"
-          # 1) 编译安装包到 runner 临时目录（绝对路径）
-          npx electron-builder --win nsis --publish never --config.directories.output="$outDir"
+          # 1) 编译 x64 + arm64 安装包到 runner 临时目录（绝对路径）
+          npx electron-builder --win nsis --x64 --arm64 --publish never --config.directories.output="$outDir"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Output "after build, output dir contents:"
           Get-ChildItem $outDir -ErrorAction SilentlyContinue | Select-Object Name, Length
-          # 2) 定位安装包：electron-builder 固定命名 obox-<version>-setup.exe
-          #    注意 filter 是 "-setup.exe"（连字符），写成 ".setup.exe"（点号）永远匹配不上
-          $exe = Get-ChildItem -Path $outDir -Filter "obox-*-setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $exe) {
-            # 兜底：按 tag 推导完整路径 Test-Path（runner 上 Get-ChildItem 偶发空结果）
-            $exePath = Join-Path $outDir "obox-$($tag.Substring(1))-setup.exe"
-            Write-Output "fallback: $exePath exists=$(Test-Path $exePath)"
-            if (Test-Path $exePath) { $exe = Get-Item $exePath }
-          }
-          if (-not $exe) {
+          # 2) 定位两个架构的安装包（obox-<version>-x64-setup.exe / -arm64-setup.exe）
+          $exes = @(Get-ChildItem -Path $outDir -Filter "obox-*-setup.exe" -ErrorAction SilentlyContinue)
+          if ($exes.Count -eq 0) {
             Get-ChildItem $outDir -ErrorAction SilentlyContinue | Select-Object Name, Length
             Write-Error "setup.exe not found in $outDir"; exit 1
           }
-          Write-Output "uploading: $($exe.FullName)"
-          # 3) 发布：上传安装包 + latest.yml（release 已存在则删除重建，幂等）
-          $assets = @($exe.FullName)
-          $latestYml = Join-Path $outDir "latest.yml"
-          if (Test-Path $latestYml) { $assets += $latestYml }
+          $assets = @()
+          foreach ($exe in $exes) { $assets += $exe.FullName }
+          # 3) 上传各架构更新元数据（x64 → latest.yml，arm64 → latest-arm64.yml）
+          foreach ($yml in @("latest.yml", "latest-arm64.yml")) {
+            $p = Join-Path $outDir $yml
+            if (Test-Path $p) { $assets += $p }
+          }
+          Write-Output "uploading: $($assets -join ', ')"
+          # 4) 发布（release 已存在则删除重建，幂等）
           gh release delete $tag --yes --cleanup-tag 2>$null
           gh release create $tag $assets `
             --title "obox $tag" `
-            --notes "obox $tag Windows 安装包"
+            --notes "obox $tag Windows 安装包（x64 / arm64，向导式安装：可选目录与安装用户）"
 
       # 上传构建日志（可选，便于排查）
       - name: Upload build artifacts on failure

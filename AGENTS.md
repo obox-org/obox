@@ -70,6 +70,7 @@
 - 任务完成（typecheck + lint 通过）后，用 `.gitoken` 调 GitHub API 自动开 PR：
   - 标题 = Conventional Commits 摘要（squash 合并后即 master 上唯一的 commit 信息）
   - base = `master`，head = 当前 feature 分支；正文简述改动
+  - **中文编码坑（已踩）**：PR 标题/正文含中文时，**不要**把中文写进 pwsh 命令行（`-Body` 字符串会被破坏成乱码）。正确姿势：用 write 工具把标题/正文写成 UTF-8 文件 → pwsh 里 `[System.IO.File]::ReadAllText(path, [System.Text.Encoding]::UTF8)` 读取 → `$bytes = [System.Text.Encoding]::UTF8.GetBytes($json)` 以 **UTF-8 字节**发送（`-ContentType 'application/json; charset=utf-8' -Body $bytes`）。开完 PR 后回读 `$r.title` 验证中文无损
 - 不做本地 squash/整理（tmp 方案已否决）：分支上保留中间 commit，由 GitHub 的 **Squash and merge** 压成 1 条
 - 等用户 approve → 用户手动 squash merge → 分支自动删除
 
