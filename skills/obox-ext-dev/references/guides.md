@@ -278,6 +278,75 @@ export default function todoExt(api) {
 - 数据持久化用 `localStorage`（按 app:// 源持久化，跨窗口/重启保留）；写入失败会降级内存态（store 已 try/catch）
 - 相对路径资源（`./todo.js` / `./todo.css`）同源加载；构建必须 `base: './'`（绝对 `/todo.js` 会解析到 `app://extensions/todo.js`，错）
 
+## 教程：在 VS Code 中调试扩展（不安装、不依赖 obox 源码）
+
+扩展代码运行在 obox 渲染进程（宿主内）。obox 提供 `--debug-extension` 调试加载：把扩展本地目录直接当扩展源加载（**不做 .oix 安装**），配合 CDP 端口，VS Code 内置调试器可对扩展源码打断点。
+
+### 1. 启动 obox（调试模式）
+
+```bash
+# 打包版（已安装 obox）
+obox.exe --remote-debugging-port=9333 --debug-extension <id>@C:\绝对\路径\扩展目录
+
+# 开发版（electron-vite dev，参数经 -- 传给 electron）
+npm run dev -- -- --remote-debugging-port=9333 --debug-extension <id>@<路径>
+```
+
+- `--debug-extension <id>@<路径>` 可重复传多个；id 即扩展 id（须与 manifest.name 一致），路径为扩展仓库目录（含 manifest.json）
+- 调试扩展经 `app://debug/<id>/` 加载：不写 userData、无安装时间戳、扩展管理器显示「调试中」、不可卸载，重启消失
+- 改代码后手动重载窗口生效（v1 无自动 watch）
+
+### 2. 扩展仓库的 .vscode/launch.json
+
+在**扩展自己的仓库**里建 `.vscode/launch.json`（模板，把 `<id>` 换成你的扩展 id，`obox.path` 指向 obox 可执行文件）：
+
+```jsonc
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "启动 obox（调试扩展）",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${config:obox.path}",
+      "args": [
+        "--remote-debugging-port=9333",
+        "--debug-extension", "<id>@${workspaceFolder}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "windows": { "runtimeExecutable": "${config:obox.path}" }
+    },
+    {
+      "name": "Attach obox 渲染进程",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9333,
+      // 关键：把 app://debug/<id>/ 脚本 URL 映射回本地仓库文件，断点才生效
+      "pathMapping": { "app://debug/<id>/": "${workspaceFolder}/" },
+      // dev 渲染进程是 http://localhost:5173；打包版为 file:// 时可去掉 urlFilter
+      "urlFilter": "http://localhost:5173/*"
+    }
+  ],
+  "compounds": [
+    { "name": "调试扩展", "configurations": ["启动 obox（调试扩展）", "Attach obox 渲染进程"] }
+  ]
+}
+```
+
+在 `.vscode/settings.json` 里配 obox 路径：
+
+```json
+{ "obox.path": "C:/path/to/obox.exe" }
+```
+
+F5 选「调试扩展」→ 启动 obox（带调试参数）→ attach 渲染进程 → 在 `index.js` 等源码打断点即可命中。
+
+### 3. 原理与排查
+
+- 扩展脚本以 `app://debug/<id>/index.js` 加载，VS Code 调试器据此 URL 匹配本地文件（pathMapping）；断点不命中先检查 pathMapping 前缀是否与 id 一致、目录尾斜杠
+- `--remote-debugging-port` 是 Chromium 的 CDP 端口（主进程 inspector 另用 `--inspect`，调试扩展代码无需它）
+- 调试扩展同样受宿主校验（manifest 声明式贡献点等），激活失败看扩展管理器详情页的 `activationError`
+
 ## 调试技巧
 
 - **看宿主日志**：dev 下渲染进程 console 转发到终端，前缀 `[renderer:info]`；子窗口前缀 `[child-renderer:...]`

@@ -20,6 +20,7 @@ export default {
     disabled: '已禁用',
     builtin: '内置',
     user: '用户',
+    debug: '调试中',
     install: '安装',
     uninstall: '卸载',
     restart: '立即重启'

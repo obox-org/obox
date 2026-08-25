@@ -4,16 +4,22 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import AppWindow from './AppWindow.vue'
 import { host } from './core/host'
-import { collectBuiltinExtensions, collectUserExtensions } from './core/loader'
+import {
+  collectBuiltinExtensions,
+  collectDebugExtensions,
+  collectUserExtensions
+} from './core/loader'
 import { i18n } from './i18n'
 
 // 启动扩展宿主（两阶段），完成后由根组件消费注册表
 void (async () => {
-  const [builtins, userExtensions] = await Promise.all([
+  const [builtins, userExtensions, debugEntries] = await Promise.all([
     collectBuiltinExtensions(),
-    collectUserExtensions()
+    collectUserExtensions(),
+    window.api.listDebugExtensions()
   ])
-  await host.start({ builtins, userExtensions })
+  const debugExtensions = await collectDebugExtensions(debugEntries)
+  await host.start({ builtins, userExtensions, debugExtensions })
 
   // 子窗口模式：?obox-window=app&appId=xxx → 渲染 AppWindow（标题栏 + 内容 iframe）
   const params = new URLSearchParams(window.location.search)

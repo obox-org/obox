@@ -20,6 +20,7 @@ export default {
     disabled: 'Disabled',
     builtin: 'Built-in',
     user: 'User',
+    debug: 'Debugging',
     install: 'Install',
     uninstall: 'Uninstall',
     restart: 'Reload Now'

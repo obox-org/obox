@@ -4,6 +4,7 @@
  * - 用户扩展：userData/extensions 目录，主进程扫描清单，经 app:// 协议运行时动态 import
  */
 import type { ExtensionInfo, ExtensionManifest, ExtensionModule } from './types'
+import type { DebugExtensionEntry } from '../../../shared/types'
 import { validateManifest } from './manifest'
 import type { ExtensionEntry } from './host'
 
@@ -56,6 +57,43 @@ async function fetchUserManifest(id: string): Promise<ExtensionManifest | null> 
   } catch {
     return null
   }
+}
+
+/** 从任意 app:// 基址拉取 manifest（调试扩展用 app://debug/<id>/） */
+async function fetchManifestFrom(base: string): Promise<ExtensionManifest | null> {
+  try {
+    const res = await fetch(`${base}manifest.json`)
+    if (!res.ok) return null
+    return (await res.json()) as ExtensionManifest
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 调试扩展（--debug-extension <id>@<path> 声明）：本地目录直接加载，不做 .oix 安装。
+ * 经 app://debug/<id>/ 访问其 manifest 与入口。
+ */
+export async function collectDebugExtensions(
+  entries: DebugExtensionEntry[]
+): Promise<ExtensionEntry[]> {
+  const result: ExtensionEntry[] = []
+  for (const entry of entries) {
+    const base = `app://debug/${encodeURIComponent(entry.id)}/`
+    const manifest = await fetchManifestFrom(base)
+    if (!manifest) {
+      console.warn(`[loader] 调试扩展 ${entry.id} manifest 读取失败或缺失（${entry.path}）`)
+      continue
+    }
+    if (validateManifest(manifest).some((v) => v.severity === 'error')) continue
+    result.push({
+      id: entry.id,
+      manifest,
+      source: 'debug',
+      load: () => import(/* @vite-ignore */ `${base}${manifest.main}`)
+    })
+  }
+  return result
 }
 
 /** 主进程返回用户扩展清单（目录名 → manifest），过滤无效项 */
