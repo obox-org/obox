@@ -89,8 +89,10 @@ git push origin v1.0.0
 ```
 
 - 工作流：[.github/workflows/release.yml](.github/workflows/release.yml)（`on.push.tags: v*`）
-- 流程：checkout tag → 装依赖 → 校验 tag 版本与 package.json 一致 → typecheck → `electron-builder --win nsis --publish never`（输出到 runner 临时目录）→ `gh release create` 上传 `obox-<version>-setup.exe` + `latest.yml`（release 已存在则删除重建，幂等）
-- 更新源：`https://github.com/obox-org/obox/releases/latest/download/`（`latest.yml` + 安装包），供更新提供者扩展（如 `extensions/obox-updater/`）拉取检查/下载/安装
+- 流程：checkout tag → 装依赖 → 校验 tag 版本与 package.json 一致 → typecheck → `electron-builder --win nsis --x64 --arm64 --publish never`（输出到 runner 临时目录）→ `gh release create` 上传 `obox-<version>-x64-setup.exe` + `obox-<version>-arm64-setup.exe` + `latest.yml` + `latest-arm64.yml`（release 已存在则删除重建，幂等）
+- **安装器**：NSIS 向导式（`oneClick: false`）——安装时可**选择安装目录**与**“所有用户/当前用户”**（默认当前用户，选所有用户自动提权）；快捷方式、卸载入口由向导生成
+- **架构**：Windows 出 **x64 + arm64** 两个安装包（Electron 已移除 ia32 32 位构建）；electron-updater 按机器架构自动拉取对应 `latest(-arm64).yml` 更新包
+- 更新源：`https://github.com/obox-org/obox/releases/latest/download/`（`latest.yml`/`latest-arm64.yml` + 安装包），供更新提供者扩展（如 `extensions/obox-updater/`）拉取检查/下载/安装
 
 ## 快速上手（新会话必读）
 

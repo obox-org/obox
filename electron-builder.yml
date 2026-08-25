@@ -16,8 +16,18 @@ asarUnpack:
   - resources/**
 win:
   executableName: obox
+  # 双架构：x64（标准 Intel/AMD）+ arm64（Electron 已移除 ia32 32 位构建）
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
 nsis:
-  artifactName: ${name}-${version}-setup.${ext}
+  # 向导式安装：可选安装目录 + 安装时可选"所有用户/当前用户"（multiUserUi 原生页面）
+  # oneClick: false → assisted 向导；perMachine 不设置 → 模式选择页显示，默认当前用户
+  artifactName: ${name}-${version}-${arch}-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
