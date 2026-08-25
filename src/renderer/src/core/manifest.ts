@@ -2,7 +2,7 @@
  * manifest 解析与校验。
  * 内置扩展（resources/extensions 或开发期由 Vite 注入）与用户扩展（userData/extensions）统一走这里。
  */
-import type { ExtensionInfo, ExtensionManifest, ValidationMessage } from './types'
+import type { ExtensionInfo, ExtensionManifest, ExtensionSource, ValidationMessage } from './types'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
@@ -43,7 +43,7 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
 export function makeExtensionInfo(
   id: string,
   manifest: ExtensionManifest,
-  source: 'builtin' | 'user',
+  source: ExtensionSource,
   enabled: boolean,
   extra?: { installedTimestamp?: number }
 ): ExtensionInfo {

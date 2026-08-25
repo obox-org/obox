@@ -32,8 +32,8 @@ export interface ExtensionEntry {
   id: string
   manifest: ExtensionManifest
   load: () => Promise<ExtensionModule>
-  /** 来源：内置（随应用打包，只读）/ 用户（userData，可卸载） */
-  source: 'builtin' | 'user'
+  /** 来源：内置（随应用打包，只读）/ 用户（userData，可卸载）/ 调试（--debug-extension，不安装） */
+  source: 'builtin' | 'user' | 'debug'
   /** 安装时间戳（用户扩展；.obox-meta.json 提供） */
   installedTimestamp?: number
 }
@@ -42,6 +42,7 @@ export interface ExtensionEntry {
 export interface HostOptions {
   builtins: ExtensionEntry[]
   userExtensions: ExtensionEntry[]
+  debugExtensions?: ExtensionEntry[]
 }
 
 class ExtensionHost {
@@ -337,7 +338,11 @@ class ExtensionHost {
     })
     // ---- 1. 汇总扩展（内置 + 用户），跳过禁用项 ----
     const all: ExtensionInfo[] = []
-    const entries: ExtensionEntry[] = [...options.builtins, ...options.userExtensions]
+    const entries: ExtensionEntry[] = [
+      ...options.builtins,
+      ...options.userExtensions,
+      ...(options.debugExtensions ?? [])
+    ]
 
     for (const entry of entries) {
       const enabled = !stateStore.isDisabled(entry.id)
@@ -513,6 +518,7 @@ class ExtensionHost {
     const ext = this.extensions.get(id)
     if (!ext) throw new Error(`extension not found: ${id}`)
     if (ext.source === 'builtin') throw new Error('内置扩展不可卸载')
+    if (ext.source === 'debug') throw new Error('调试扩展不占用安装态，无需卸载')
     await window.api.uninstallUserExtension(id)
     stateStore.setDisabled(id, false)
     if (this.canHotRemove(id)) {

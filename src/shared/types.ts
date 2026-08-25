@@ -27,6 +27,14 @@ export interface UserExtensionEntry {
   path: string
 }
 
+/** 调试扩展（--debug-extension 声明）：本地目录直接加载，不经过 .oix 安装 */
+export interface DebugExtensionEntry {
+  /** 扩展 id（CLI 参数显式指定） */
+  id: string
+  /** 本地目录绝对路径（经 app://debug/<id>/ 访问） */
+  path: string
+}
+
 /** .oix 扩展包安装结果 */
 export interface InstallOixResult {
   /** 安装目录名（= <name>_<清洗后 author>，即扩展 id） */
@@ -70,6 +78,8 @@ export interface MainApi {
   getAppInfo(): Promise<AppInfo>
   /** 用户扩展目录扫描（返回 userData/extensions 下的扩展目录清单） */
   listUserExtensions(): Promise<UserExtensionEntry[]>
+  /** 调试扩展清单（--debug-extension 声明；不安装，重启消失） */
+  listDebugExtensions(): Promise<DebugExtensionEntry[]>
   /** 卸载用户扩展（删除 userData/extensions/<id> 目录） */
   uninstallUserExtension(id: string): Promise<void>
   /** 运行用户扩展的卸载钩子（若有），返回是否成功 */

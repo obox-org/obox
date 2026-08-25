@@ -8,6 +8,7 @@ const api: MainApi = {
   getWindowState: () => ipcRenderer.invoke('window:get-state'),
   getAppInfo: () => ipcRenderer.invoke('app:get-info'),
   listUserExtensions: () => ipcRenderer.invoke('extensions:list-user'),
+  listDebugExtensions: () => ipcRenderer.invoke('extensions:list-debug'),
   uninstallUserExtension: (id) => ipcRenderer.invoke('extensions:uninstall', id),
   runUninstallHook: (id) => ipcRenderer.invoke('extensions:run-uninstall-hook', id),
   installUserExtensionViaDialog: () => ipcRenderer.invoke('extensions:install-oix-dialog'),

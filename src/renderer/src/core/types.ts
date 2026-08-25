@@ -147,7 +147,7 @@ export interface ValidationMessage {
 }
 
 /** 扩展来源 */
-export type ExtensionSource = 'builtin' | 'user'
+export type ExtensionSource = 'builtin' | 'user' | 'debug'
 
 /** 扩展运行时状态 */
 export interface ExtensionInfo {

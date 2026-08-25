@@ -6,19 +6,24 @@ import { registerExtensionProtocol } from './protocol'
 import { registerAppWindowIpc, closeAllAppWindowsOnMainClose } from './appWindow'
 import { registerOixIpc } from './oix'
 import { registerUpdateIpc, onUpdateEvent } from './updater'
+import { parseDebugExtensions, registerDebugIpc } from './debug'
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.obox.app')
 
-  // 注册 app:// 自定义协议：供渲染进程加载用户扩展入口（app://extensions/<id>/...）
-  registerExtensionProtocol()
+  // 调试扩展（--debug-extension <id>@<path>，可重复）：不做 .oix 安装，经 app://debug/<id>/ 加载
+  const debugExtensions = parseDebugExtensions(process.argv)
 
-  // 窗口控制 + 能力服务 + App 子窗口 IPC + .oix 安装 + 更新服务
+  // 注册 app:// 自定义协议：供渲染进程加载用户扩展入口（app://extensions/<id>/...）
+  registerExtensionProtocol(debugExtensions)
+
+  // 窗口控制 + 能力服务 + App 子窗口 IPC + .oix 安装 + 更新服务 + 调试扩展
   registerWindowIpc()
   registerCapabilityIpc()
   registerAppWindowIpc()
   registerOixIpc()
   registerUpdateIpc()
+  registerDebugIpc(debugExtensions)
 
   // 更新事件广播到所有窗口（渲染进程扩展订阅）
   onUpdateEvent((e) => {

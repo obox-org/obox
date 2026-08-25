@@ -229,7 +229,7 @@ onMounted(() => {
 onUnmounted(() => offEvents?.())
 
 const sourceLabel = (s: string): string =>
-  s === 'builtin' ? t('common.builtin') : t('common.user')
+  s === 'builtin' ? t('common.builtin') : s === 'debug' ? t('common.debug') : t('common.user')
 </script>
 
 <template>
@@ -275,6 +275,9 @@ const sourceLabel = (s: string): string =>
           <span class="card-version">{{ ext.manifest.version }}</span>
           <span v-if="ext.source === 'builtin'" class="badge builtin">
             {{ t('common.builtin') }}
+          </span>
+          <span v-else-if="ext.source === 'debug'" class="badge debug">
+            {{ t('common.debug') }}
           </span>
           <span v-if="!ext.enabled" class="badge disabled">{{ t('common.disabled') }}</span>
         </div>
@@ -343,11 +346,16 @@ const sourceLabel = (s: string): string =>
       </div>
 
       <div class="detail-actions">
-        <button class="btn" :disabled="busyId === selected.id" @click="toggleEnabled(selected)">
+        <button
+          v-if="selected.source !== 'debug'"
+          class="btn"
+          :disabled="busyId === selected.id"
+          @click="toggleEnabled(selected)"
+        >
           {{ selected.enabled ? t('extManager.actions.disable') : t('extManager.actions.enable') }}
         </button>
         <button
-          v-if="selected.source !== 'builtin'"
+          v-if="selected.source !== 'builtin' && selected.source !== 'debug'"
           class="btn danger"
           :disabled="busyId === selected.id"
           @click="confirmUninstall = selected"
@@ -540,6 +548,10 @@ const sourceLabel = (s: string): string =>
 }
 .badge.builtin {
   background: #2d5d8b;
+  color: #ffffff;
+}
+.badge.debug {
+  background: #8a5d2d;
   color: #ffffff;
 }
 .badge.disabled {

@@ -16,7 +16,8 @@ src/
 │   ├── appWindow.ts # App 子窗口管理（单开聚焦/多开序号/主机关闭全关）
 │   ├── capabilities.ts # 能力服务：应用信息、用户扩展扫描/卸载/卸载钩子
 │   ├── oix.ts       # .oix 扩展包安装（校验 + 防路径穿越解压 + 安装 IPC）
-│   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源）
+│   ├── debug.ts     # 调试扩展（--debug-extension 解析 + IPC，不安装直接加载）
+│   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源 + app://debug）
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
 ├── shared/          # 三端共享类型（IPC 契约）
 └── renderer/        # Vue 渲染进程（扩展宿主所在地）
@@ -38,7 +39,7 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 | `host.ts` | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效 |
 | `manifest.ts` | 清单校验（name/version/main 必填、semver、依赖检测）+ 错误收集 |
 | `registry.ts` | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive） |
-| `loader.ts` | 内置扩展 Vite 静态收集 + 用户扩展 app:// 运行时加载 |
+| `loader.ts` | 内置扩展 Vite 静态收集 + 用户扩展 app:// 运行时加载 + 调试扩展 app://debug 加载 |
 | `state.ts` | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）** |
 | `appStore.ts` | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理） |
 | `theme.ts` | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题 |
@@ -99,7 +100,7 @@ git push origin v1.0.0
 1. **读本文件**：了解项目概览与架构（上文）
 2. **读约定**：`AGENTS.md`（开发约定 + 强制提交流程）、`CONTEXT.md`（术语表）
 3. **运行**：`yarn dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
-4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装（重启生效）
+4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装（重启生效）。**调试扩展**：`obox --debug-extension <id>@<本地目录> --remote-debugging-port=9333` 在 VS Code 里断点调试（不安装，详见 skills 指南）
 5. **改架构**：改动 `core/`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `skills/obox-ext-dev/` 文档（见 AGENTS.md 约定）和本文件
 
 ## 文档导航
@@ -110,7 +111,7 @@ git push origin v1.0.0
 | [CONTEXT.md](CONTEXT.md) | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等） |
 | [AGENTS.md](AGENTS.md) | 开发者约定：obox-ext-dev 文档同步要求 + 强制提交流程（五步）+ 质量门槛 |
 | [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md) | 扩展开发完整指南（含 references/ 与 scripts/） |
-| [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动/oix 分发与安装） |
+| [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动/oix 分发与安装/调试扩展） |
 
 ## 技术栈
 

@@ -30,6 +30,10 @@ _Avoid_: 插件、模块
 经 .oix 安装到 `userData/extensions/<name>_<author>/` 的扩展（非内置，可卸载）。入口须为纯 ESM JavaScript（宿主动态 import，无构建转换）；静态资源经 `app://extensions/<id>/` 由 App 子窗口 iframe 加载。
 _Avoid_: 插件
 
+**Debug Extension / 调试扩展**:
+经 `obox --debug-extension <id>@<本地目录>` 声明的扩展：不写 userData、不做 .oix 安装、无安装时间戳，经 `app://debug/<id>/` 协议从本地目录直接加载，重启后消失；扩展管理器显示"调试中"、不可卸载。配合 `--remote-debugging-port`（CDP）可在 VS Code 中打断点调试，扩展仓库无需依赖 obox 源码。
+_Avoid_: 开发扩展、测试扩展
+
 **App / 应用**:
 内置扩展（中文名"应用"）。其他扩展可向它注册"插件卡片"（icon/名称/版本/作者/简介 + 内容 URL/HTML），App 以 Grid 网格展示，点击卡片弹出独立子窗口渲染插件内容。导航项位于顶部组。
 _Avoid_: 应用中心、应用市场

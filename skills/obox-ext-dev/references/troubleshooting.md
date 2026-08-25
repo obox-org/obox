@@ -132,3 +132,21 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **扩展侧注意事项**：`api.app.register` 的 `id` 必须是稳定的唯一值（如 `todo.main`）；热重载/覆盖安装时宿主保证不产生重复卡片。
 
+## 17. --debug-extension 调试扩展没被加载
+
+**排查**：
+- 参数格式：`--debug-extension <id>@<绝对路径>`，路径必须存在、id 须匹配 `^[a-z0-9][a-z0-9._-]*$`（非法/路径缺失会被主进程静默忽略并打 warn）
+- manifest 必须能经 `app://debug/<id>/manifest.json` 读到（协议只服务已声明的 id）
+- 看宿主日志 `[host] 启动完成: N 个扩展...` 是否包含调试扩展；激活失败看扩展管理器详情页 `activationError`（调试扩展同样受声明式贡献点校验）
+
+## 18. VS Code 断点不命中（app://debug）
+
+**排查**：
+- launch.json 的 `pathMapping` 前缀必须与 `app://debug/<id>/` 完全一致（id 大小写、目录尾斜杠）；改代码后需**重载 obox 窗口**（宿主在启动时收集扩展）
+- `urlFilter` 只匹配 dev 渲染进程（http://localhost:5173）；打包版（file://）去掉 urlFilter 或改匹配
+- 确认 attach 的是渲染进程（chrome attach + CDP 端口），不是主进程 inspector
+
+## 19. 调试扩展也出现在 userData / 可被卸载
+
+**原因**：混淆了安装态。调试扩展（`--debug-extension`）**不会**写 userData/extensions；若扩展管理器里出现可卸载项，那是以前 .oix 安装的同名扩展——先卸载安装态，再用调试参数加载。
+
