@@ -11,6 +11,7 @@
  * 校验规则与宿主 core/manifest.ts 保持一致：
  *   - name 必填且匹配 ^[a-z0-9][a-z0-9._-]*$
  *   - version 必填且为 semver
+ *   - apiVersion 可选：非负整数，且不得高于 obox 的 apiVersion（读根 package.json）
  *   - main 必填
  *   - contributes 必须是对象；extensionDependencies 是字符串数组；不能依赖自身
  *   - 导航项缺 id/title/icon、状态栏项缺 id/name、命令缺 command/title → warning
@@ -27,6 +28,9 @@ const projectRoot = resolve(scriptDir, '..', '..', '..')
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 
+/** obox 当前 API 版本（单源：根 package.json 的 apiVersion；读不到视为 0） */
+const OBX_API_VERSION = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8')).apiVersion ?? 0
+
 function validateManifest(raw) {
   const messages = []
   if (!raw || typeof raw !== 'object') {
@@ -39,6 +43,14 @@ function validateManifest(raw) {
   }
   if (typeof m.version !== 'string' || !SEMVER_RE.test(m.version)) {
     messages.push({ severity: 'error', message: 'version 必填且必须是 semver（如 1.0.0）' })
+  }
+  if (m.apiVersion !== undefined) {
+    const av = m.apiVersion
+    if (typeof av !== 'number' || !Number.isInteger(av) || av < 0) {
+      messages.push({ severity: 'error', message: 'apiVersion 必须是大于等于 0 的整数' })
+    } else if (av > OBX_API_VERSION) {
+      messages.push({ severity: 'error', message: `需要 obox API v${av} 或更高（当前 obox 为 v${OBX_API_VERSION}）` })
+    }
   }
   if (typeof m.main !== 'string' || !m.main.trim()) {
     messages.push({ severity: 'error', message: 'main（扩展入口）必填' })

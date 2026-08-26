@@ -3,6 +3,7 @@
  * 内置扩展（resources/extensions 或开发期由 Vite 注入）与用户扩展（userData/extensions）统一走这里。
  */
 import type { ExtensionInfo, ExtensionManifest, ExtensionSource, ValidationMessage } from './types'
+import oboxPackage from '../../../../package.json'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
@@ -20,6 +21,14 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
   }
   if (typeof m.version !== 'string' || !SEMVER_RE.test(m.version)) {
     messages.push({ severity: 'error', message: 'version 必填且必须是 semver（如 1.0.0）' })
+  }
+  if (m.apiVersion !== undefined) {
+    const apiVersion = m.apiVersion as unknown
+    if (typeof apiVersion !== 'number' || !Number.isInteger(apiVersion) || apiVersion < 0) {
+      messages.push({ severity: 'error', message: 'apiVersion 必须是大于等于 0 的整数' })
+    } else if (apiVersion > oboxPackage.apiVersion) {
+      messages.push({ severity: 'error', message: `需要 obox API v${apiVersion} 或更高（当前 obox 为 v${oboxPackage.apiVersion}）` })
+    }
   }
   if (typeof m.main !== 'string' || !m.main.trim()) {
     messages.push({ severity: 'error', message: 'main（扩展入口）必填' })
