@@ -1,6 +1,6 @@
 # API Reference
 
-宿主在激活扩展时构造并注入 `ExtensionActivationApi`，作为插件函数的唯一参数（`api`）。类型定义在 `src/renderer/src/core/types.ts`。
+宿主在激活扩展时构造并注入 `ExtensionActivationApi`，作为插件函数的唯一参数（`api`）。类型定义在 `src/api/`（聚合出口 `src/api/index.ts`；`src/renderer/src/core/types.ts` 再导出兼容旧 import）。
 
 ## 入口契约
 
@@ -203,5 +203,12 @@ obox 主进程的网络请求（更新下载等）自动使用该代理；内置
 
 ## 类型文件位置
 
-- `src/renderer/src/core/types.ts`：`ExtensionActivationApi`、`AppRegistration`、`ExtensionManifest`、贡献点类型、`Memento`、`Disposable`
-- 扩展开发时经相对路径或 `@renderer` 别名导入类型
+- `src/api/`：扩展 API 类型总目录（面向扩展作者；聚合出口 `src/api/index.ts`）：
+  - `types.ts`：`ExtensionActivationApi`
+  - `contributions.ts`：贡献点类型（NavItem/StatusBarItem/Command/Theme/Setting/SettingsPage/ContributionManifest）
+  - `manifest.ts`：`ExtensionManifest`
+  - `registration.ts`：`AppRegistration`
+  - `runtime.ts`：`ExtensionInfo`/`ExtensionContextLike`/`Disposable`/`ExtensionModule` 等
+  - `shared.ts`：`Memento`/`UpdateEvent`/`ProxyConfig`
+- `src/renderer/src/core/types.ts`：历史兼容入口（再导出 `src/api`，保持旧 import 零改动）；**新代码应直接 import `src/api`**
+- 扩展开发时经相对路径导入类型（如内置扩展入口 `import type { ExtensionActivationApi } from '../../../../api'`）

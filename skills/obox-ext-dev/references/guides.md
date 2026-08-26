@@ -59,7 +59,7 @@ src/renderer/src/extensions/my-hello/
 ### 3. 入口 index.ts
 
 ```ts
-import type { ExtensionActivationApi } from '../../core/types'
+import type { ExtensionActivationApi } from '../../../../api'
 import HelloView from './HelloView.vue'
 
 export { HelloView }  // 具名导出：导航项 view 字段引用
