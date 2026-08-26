@@ -13,6 +13,7 @@
 |---|---|---|---|
 | `name` | ✅ | string | 扩展 id。`^[a-z0-9][a-z0-9._-]*$`，全局唯一。建议短前缀（如 `ext-manager`、`app`、`todo`） |
 | `version` | ✅ | string | semver（`1.0.0`）。非法版本=校验错误，扩展不加载 |
+| `apiVersion` | ❌ | number | 扩展要求的 obox API 版本（非负整数）。缺失视为 `0`（兼容所有）。**高于 obox 当前 API 版本时校验 error，拒绝加载**。obox API 版本单源在根 `package.json` 的 `apiVersion` 字段（当前 `1`）；只在新版 API 不兼容旧版（破坏性签名变更）时递增 |
 | `main` | ✅ | string | 入口文件相对路径。**用户扩展须为纯 JS（.js ESM）**——经 app:// 动态 import，无构建转换；内置扩展可用 `.ts`（Vite 转换） |
 | `displayName` | ❌ | string | 扩展管理器展示名（默认回退 id） |
 | `author` | ❌ | string | 作者 |
@@ -175,6 +176,7 @@
 
 - `name` 必填且匹配 `^[a-z0-9][a-z0-9._-]*$` → 否则 **error**，不加载
 - `version` 必填且为 semver → 否则 **error**
+- `apiVersion`（可选）：非负整数，否则 **error**；`apiVersion > obox 的 API 版本` → **error**（"需要 obox API vN 或更高"），扩展不加载
 - `main` 必填 → 否则 **error**
 - `contributes` 必须是对象；`extensionDependencies` 必须是字符串数组；不能依赖自身 → error
 - 导航项缺 `id`/`title`/`icon`、状态栏项缺 `id`/`name`、命令缺 `command`/`title` → **warning**（该项跳过，扩展仍加载）

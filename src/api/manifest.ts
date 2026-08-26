@@ -11,6 +11,11 @@ export interface ExtensionManifest {
   name: string
   /** 版本号（必填，semver） */
   version: string
+  /**
+   * 要求的 obox 扩展 API 版本（单个 int，可选）。
+   * 缺失视为 0（兼容所有）；要求高于 obox 的 apiVersion 时拒绝加载。
+   */
+  apiVersion?: number
   /** 显示名（扩展管理器展示） */
   displayName?: string
   /** 作者 */

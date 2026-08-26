@@ -38,7 +38,7 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 |---|---|
 | `types.ts` | 历史兼容入口：再导出 `src/api/`（扩展 API 类型已迁至 `src/api/`：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable；新代码直接 import `src/api`） |
 | `host.ts` | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效 |
-| `manifest.ts` | 清单校验（name/version/main 必填、semver、依赖检测）+ 错误收集 |
+| `manifest.ts` | 清单校验（name/version/main 必填、semver、**apiVersion 门槛**、依赖检测）+ 错误收集 |
 | `registry.ts` | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive） |
 | `loader.ts` | 内置扩展 Vite 静态收集 + 用户扩展 app:// 运行时加载 + 调试扩展 app://debug 加载 |
 | `state.ts` | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）** |
@@ -112,7 +112,7 @@ git push origin v1.0.0
 | [CONTEXT.md](CONTEXT.md) | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等） |
 | [AGENTS.md](AGENTS.md) | 开发者约定：obox-ext-dev 文档同步要求 + 强制提交流程（五步）+ 质量门槛 |
 | [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md) | 扩展开发完整指南（含 references/ 与 scripts/） |
-| [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动/oix 分发与安装/调试扩展） |
+| [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动/oix 分发与安装/调试扩展/扩展 API 版本） |
 
 ## 技术栈
 
