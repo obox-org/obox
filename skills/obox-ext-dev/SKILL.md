@@ -24,7 +24,7 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 
 ## 标准流程
 
-1. **读现状**：先读 `src/renderer/src/core/types.ts`（扩展 API 类型）、`CONTEXT.md`（术语表）、已有的 `src/renderer/src/extensions/*/`（示例扩展：`ext-manager`、`app`）。
+1. **读现状**：先读 `src/api/`（扩展 API 类型；`src/renderer/src/core/types.ts` 为再导出兼容入口）、`CONTEXT.md`（术语表）、已有的 `src/renderer/src/extensions/*/`（示例扩展：`ext-manager`、`app`）。
 2. **定扩展 id**：`name` 字段（manifest），`^[a-z0-9][a-z0-9._-]*$`，建议短前缀如 `my-ext`；命令 id 用 `<扩展名>.<动作>`，导航/状态栏/App 卡片 id 建议含扩展名前缀。
 3. **写 manifest**：`src/renderer/src/extensions/<id>/manifest.json`（内置）——必填 `name`/`version`/`main`，可选 `contributes`（navItems/statusBarItems/commands）、`extensionDependencies`、`uninstall`。
 4. **写入口**：同目录 `index.ts`——`default` 导出插件函数 `(api) => cleanup`，具名导出视图组件（导航项 `view` 字段引用）。所有注册（命令/事件/App 卡片）返回的 Disposable 或 cleanup 函数要能统一释放。
@@ -46,7 +46,7 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 
 **本 skill 必须与代码库保持同步**。以下任一情况发生后，必须更新本 skill 及 `references/`：
 
-- 修改/新增扩展 API（`src/renderer/src/core/types.ts` 的 `ExtensionActivationApi`、`AppRegistration`、贡献点类型）
+- 修改/新增扩展 API（`src/api/` 的 `ExtensionActivationApi`、`AppRegistration`、贡献点类型）
 - 修改贡献点 schema 或 manifest 校验规则（`core/manifest.ts`）
 - 修改宿主生命周期（`core/host.ts` 的激活/停用/依赖排序）
 - 修改主进程能力服务或 IPC（`src/main/*`：窗口控制、App 子窗口、app:// 协议、**.oix 安装**）

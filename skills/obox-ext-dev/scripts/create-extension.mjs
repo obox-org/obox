@@ -77,7 +77,7 @@ const indexTs = `/**
  * ${id} 扩展入口。
  * default 导出插件函数（宿主 apply），具名导出视图组件（导航项 view 字段引用）。
  */
-import type { ExtensionActivationApi } from '../../core/types'
+import type { ExtensionActivationApi } from '../../../../api'
 import ${capitalize(id)}View from './${capitalize(id)}View.vue'
 
 export { ${capitalize(id)}View }

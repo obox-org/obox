@@ -1,6 +1,6 @@
 /**
  * 主进程 / preload / 渲染进程 共享的 IPC 契约类型。
- * 扩展 API 类型见 src/renderer/src/core/types.ts（面向扩展作者）。
+ * 扩展 API 类型见 src/api/（面向扩展作者；src/renderer/src/core/types.ts 再导出兼容）。
  */
 
 /** 窗口控制动作 */

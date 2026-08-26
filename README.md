@@ -10,6 +10,7 @@
 
 ```
 src/
+├── api/             # 扩展 API 类型（面向扩展作者；聚合出口 index.ts，扩展经相对路径导入）
 ├── main/            # Electron 主进程
 │   ├── index.ts     # 入口：窗口创建、协议、IPC 注册
 │   ├── window.ts    # 无边框窗口 + 窗口控制 IPC（最小化/最大化/关闭/状态推送）
@@ -35,7 +36,7 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 | 文件 | 职责 |
 |---|---|
-| `types.ts` | 扩展 API 类型：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable |
+| `types.ts` | 历史兼容入口：再导出 `src/api/`（扩展 API 类型已迁至 `src/api/`：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable；新代码直接 import `src/api`） |
 | `host.ts` | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效 |
 | `manifest.ts` | 清单校验（name/version/main 必填、semver、依赖检测）+ 错误收集 |
 | `registry.ts` | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive） |
