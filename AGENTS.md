@@ -19,7 +19,7 @@
 
 **持续更新要求（强制）**：本项目的扩展系统是演进中的核心。以下情况发生时，**必须同步更新 `skills/obox-ext-dev/`**，不得只改代码：
 
-- 修改/新增扩展 API（`src/renderer/src/core/types.ts` 的 `ExtensionActivationApi`、`AppRegistration`、贡献点类型）→ 更新 `references/api-reference.md`
+- 修改/新增扩展 API（`src/api/` 的 `ExtensionActivationApi`、`AppRegistration`、贡献点类型）→ 更新 `references/api-reference.md`
 - 修改贡献点 schema 或 manifest 校验规则（`core/manifest.ts`）→ 更新 `references/manifest-reference.md`
 - 修改宿主生命周期（`core/host.ts`）或新增扩展约定 → 更新 `SKILL.md` 与相关 reference
 - 修改主进程能力/IPC（`src/main/*`）→ 更新 `references/api-reference.md`
