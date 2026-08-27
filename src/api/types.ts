@@ -71,6 +71,17 @@ export interface ExtensionActivationApi {
   update: {
     /** 当前 obox 版本号 */
     getVersion(): Promise<string>
+    /**
+     * 解析 GitHub 仓库"最后一次编译"的 release 更新源（按创建时间最新，不依赖 latest 标记）。
+     * 返回的 feedUrl 可直接传给 check()。
+     */
+    resolveFeed(repo: string): Promise<{
+      ok: boolean
+      tag?: string
+      feedUrl?: string
+      publishedAt?: string
+      error?: string
+    }>
     /** 检查更新（feedUrl 为更新源；无默认源） */
     check(feedUrl: string): Promise<{ ok: boolean; available?: string; error?: string }>
     /** 下载更新（不自动安装） */

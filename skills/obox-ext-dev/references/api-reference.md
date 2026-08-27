@@ -166,8 +166,11 @@ page.dispose() // 注销设置页
 ```ts
 // 当前 obox 版本号
 const version = await api.update.getVersion()
+// 解析 GitHub 仓库"最后一次编译"的 release 更新源（按创建时间最新，不依赖 latest 标记）
+const feed = await api.update.resolveFeed('obox-org/obox')
+// feed = { ok, tag: 'v1.1.0', feedUrl: 'https://github.com/obox-org/obox/releases/download/v1.1.0/', publishedAt }
 // 检查更新（feedUrl 为更新源；无默认源，未配置 feed 或未选中时报错）
-const r = await api.update.check('https://example.com/updates')
+const r = await api.update.check(feed.feedUrl)
 // 下载更新（不自动安装）
 const d = await api.update.download()
 // 安装并重启（下载完成后）
@@ -181,6 +184,8 @@ api.update.onEvent((e) => {
 ```
 
 > 更新执行由宿主 electron-updater 完成；扩展提供更新源与触发时机。未在设置-更新选中的扩展调用 update API 会抛错。
+>
+> **更新源解析**：`resolveFeed(repo)` 走主进程调 GitHub REST API 取该仓库最新创建的 release（draft 除外），返回该 tag 的 `releases/download/<tag>/` 作为 feedUrl——**不依赖 GitHub 的 latest 标记**，保证拿到的是"最后一次编译"的产物。Windows 上 electron-updater 不分架构固定读 `latest.yml`，宿主已在 arm64 机器上自动改用 `latest-arm64.yml`（channel 指定），扩展无需关心架构。
 
 ### proxy（代理配置）
 

@@ -20,6 +20,7 @@ const api: MainApi = {
   eval: (script) => ipcRenderer.invoke('window:eval', script),
   openAppWindow: (req) => ipcRenderer.invoke('app:open-window', req),
   getOboxVersion: () => ipcRenderer.invoke('update:get-version'),
+  resolveUpdateFeed: (repo) => ipcRenderer.invoke('update:resolve-feed', repo),
   checkUpdate: (opts) => ipcRenderer.invoke('update:check', opts),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install')

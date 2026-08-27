@@ -6,6 +6,7 @@
  */
 import { app, ipcMain } from 'electron'
 import { autoUpdater, UpdateInfo } from 'electron-updater'
+import { request as httpsRequest } from 'node:https'
 import type { ProxyConfig } from '../shared/types'
 
 /** 更新事件（主进程 → 渲染进程） */
@@ -24,6 +25,56 @@ export type UpdateEvent =
 
 let initialized = false
 let listeners: ((e: UpdateEvent) => void)[] = []
+
+/** 解析 GitHub 仓库"最后一次编译"的 release 更新源（按创建时间最新，不依赖 latest 标记） */
+export async function resolveLatestRelease(
+  repo: string
+): Promise<{ ok: boolean; tag?: string; feedUrl?: string; publishedAt?: string; error?: string }> {
+  return new Promise((resolve) => {
+    const req = httpsRequest(
+      {
+        hostname: 'api.github.com',
+        path: `/repos/${repo}/releases?per_page=1`,
+        method: 'GET',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': 'obox-updater'
+        },
+        timeout: 10_000
+      },
+      (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => (body += chunk))
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            resolve({ ok: false, error: `GitHub API 返回 ${res.statusCode}` })
+            return
+          }
+          try {
+            const list = JSON.parse(body) as Array<{ tag_name?: string; published_at?: string; created_at?: string }>
+            const latest = Array.isArray(list) ? list[0] : undefined
+            if (!latest?.tag_name) {
+              resolve({ ok: false, error: '仓库没有已发布的 release' })
+              return
+            }
+            resolve({
+              ok: true,
+              tag: latest.tag_name,
+              publishedAt: latest.published_at ?? latest.created_at,
+              feedUrl: `https://github.com/${repo}/releases/download/${latest.tag_name}/`
+            })
+          } catch (err) {
+            resolve({ ok: false, error: err instanceof Error ? err.message : String(err) })
+          }
+        })
+      }
+    )
+    req.on('timeout', () => req.destroy(new Error('请求超时')))
+    req.on('error', (err) => resolve({ ok: false, error: err.message }))
+    req.end()
+  })
+}
 
 /** 应用当前代理配置到 electron-updater（每次检查前调用） */
 function applyProxy(proxy?: ProxyConfig): void {
@@ -84,6 +135,21 @@ export function registerUpdateIpc(): void {
 
   ipcMain.handle('update:get-version', (): string => app.getVersion())
 
+  // 解析最后一次编译的 release 更新源（obox-updater 扩展调用；仓库格式 "owner/repo"）
+  ipcMain.handle(
+    'update:resolve-feed',
+    async (_e, repo: string): Promise<{ ok: boolean; tag?: string; feedUrl?: string; publishedAt?: string; error?: string }> => {
+      try {
+        if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+          return { ok: false, error: '仓库格式非法（应为 owner/repo）' }
+        }
+        return await resolveLatestRelease(repo)
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
+
   // 检查更新：需要更新源 URL（由更新提供者扩展传入；无默认源）
   ipcMain.handle(
     'update:check',
@@ -94,7 +160,13 @@ export function registerUpdateIpc(): void {
       try {
         if (!opts.feedUrl) return { ok: false, error: '未配置更新源（需在设置-更新选择更新扩展）' }
         applyProxy(opts.proxy)
-        autoUpdater.setFeedURL({ provider: 'generic', url: opts.feedUrl })
+        // Windows 上 electron-updater 不分架构固定读 latest.yml（x64 元数据）；
+        // arm64 机器必须指定 channel 为 latest-arm64，否则会下载到 x64 安装包
+        autoUpdater.setFeedURL({
+          provider: 'generic',
+          url: opts.feedUrl,
+          channel: process.arch === 'arm64' ? 'latest-arm64' : 'latest'
+        })
         const result = await autoUpdater.checkForUpdates()
         return { ok: true, available: result?.updateInfo.version }
       } catch (err) {

@@ -105,6 +105,14 @@ export interface MainApi {
   }): Promise<{ appId: string; sequence: number }>
   /** 获取 obox 当前版本号 */
   getOboxVersion(): Promise<string>
+  /** 解析 GitHub 仓库"最后一次编译"的 release 更新源（按创建时间最新，不依赖 latest 标记） */
+  resolveUpdateFeed(repo: string): Promise<{
+    ok: boolean
+    tag?: string
+    feedUrl?: string
+    publishedAt?: string
+    error?: string
+  }>
   /** 检查更新（feedUrl 由更新提供者扩展提供；无默认源） */
   checkUpdate(opts: {
     feedUrl?: string
