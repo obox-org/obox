@@ -38,7 +38,7 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 - **命令必须声明**：`api.registerCommand(id, handler)` 的命令 id 必须已在该扩展 manifest `contributes.commands` 里声明，否则宿主打 warning。
 - **视图必须导出**：导航项 `view` 字段引用的组件必须在入口**具名导出**（如 `export const MyView`），否则宿主打 warning 且内容栏空白。
 - **Disposable 形状**：所有注册 API（`registerCommand`、`on`、`app.register`）返回 `{ dispose(): void }`；插件函数返回值（cleanup 函数）会被宿主收集，扩展停用时统一释放。不返回/不 dispose 会在热重载时泄漏。
-- **内置扩展只读**：`src/renderer/src/extensions/` 下是内置扩展（随应用打包，不可卸载）；用户扩展放 `userData/extensions/<name>_<author>/`（经 `app://extensions/<id>/` 加载），可卸载，经 .oix 安装（扩展管理器按钮/拖拽）。开发用户扩展建议建独立项目 `extensions/<id>/`（自带 package.json/tsconfig/构建，仅依赖扩展 API），**入口 main 须为纯 ESM JavaScript**（用户扩展无 Vite 转换）。
+- **内置扩展只读**：`src/renderer/src/extensions/` 下是内置扩展（随应用打包，不可卸载）；用户扩展放 `userData/extensions/<name>_<author>/`（经 `app://extensions/<id>/` 加载），可卸载，经 .oix 安装（扩展管理器按钮/拖拽）。开发用户扩展建议建独立项目 `extensions/<id>/`（自带 package.json/tsconfig/构建，仅依赖扩展 API），**入口 main 须为纯 ESM JavaScript**（用户扩展无 Vite 转换）。**纯 JS 扩展零 npm 依赖**（运行时只有宿主注入的 `api`；测试 `node --test`、打包系统 zip，无需 `npm install`，见 guides.md）。
 - **子窗口内容**：`html` 用于 srcdoc 渲染，`url` 优先（app:// 或 https）。用户扩展富界面建议用 `url: app://extensions/<id>/<page>.html` 加载自建静态资源（Vue 编译产物）。**iframe 内联 `onclick` 会被 CSP 阻止**——用外部 `<script>` 或事件绑定；`app://` 页面本身无 CSP 头可执行脚本，但 srcdoc 页面内联脚本同样被 `script-src 'self'` 拦截。窗口控制用 postMessage（`parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`）。
 - **依赖与环**：`extensionDependencies` 声明依赖；宿主按拓扑序激活，检测到环会跳过并标记。缺失依赖不阻塞激活。
 

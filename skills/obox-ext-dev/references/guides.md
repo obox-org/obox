@@ -162,13 +162,15 @@ export default function myHello(api: ExtensionActivationApi): () => void {
 
 用户扩展（非内置）以 .oix（zip）分发，与 obox 仓库只有扩展 API 依赖关系——建议建独立项目目录 `extensions/<id>/`（自带 package.json / tsconfig / 构建，不进 obox 打包）。
 
+**零依赖开发**：扩展运行时**不需要安装任何依赖**——宿主激活时注入 `api` 对象，.oix 里只有你自己的文件（无 node_modules）。纯 JS 扩展（如 `obox-updater`）连构建/打包都零 npm 依赖：测试用 node 内置 `node --test`，打包用系统 zip（`zip` 命令或 Windows 自带 `tar`），**无需 `npm install`**。只有界面型扩展（App 富界面 + Vue 子应用）才需要构建工具链（vue/vite）。
+
 **源码托管**：每个用户扩展在 **`github.com/obox-org/<扩展id>` 独立仓库**维护（如 [obox-org/todo](https://github.com/obox-org/todo)）。obox 仓库不持有扩展源码（`extensions/` 已 gitignore，本地保留副本供开发/打包）；扩展代码的提交/推送发生在自己的仓库，不在 obox 仓库。
 
 ### 1. 项目结构（参考 `extensions/todo/`）
 
 ```
 extensions/todo/
-├── package.json      # 独立依赖（vue、vite、@vitejs/plugin-vue、adm-zip）
+├── package.json      # 纯 JS 扩展零依赖；界面型扩展才需要（vue、vite、@vitejs/plugin-vue）
 ├── tsconfig.json     # 子应用 TS 源码（vue-tsc typecheck）
 ├── vite.config.ts    # 子应用构建（base: './'，iife 经典脚本）
 ├── manifest.json     # name/version/displayName/author/main
@@ -187,7 +189,7 @@ extensions/todo/
 
 ### 3. 安装与验证
 
-- `npm run release`（typecheck → build → pack）产出 `out/<name>-<version>.oix`
+- `npm run release`（typecheck → build → pack，纯 JS 扩展零依赖）产出 `out/<name>-<version>.oix`
 - obox 扩展管理器 → 工具栏「安装扩展」选 .oix，或直接把 .oix 拖进扩展管理器视图
 - 安装成功**立即热生效**：列表即时出现、贡献项立即可用（无需重启）；若 manifest 无效或激活失败，扩展出现在列表但标红（详情见校验信息）
 
@@ -211,7 +213,7 @@ extensions/obox-updater/
 └── scripts/pack.mjs  # .oix 打包（无子应用构建，pack 即 release）
 ```
 
-- `feedUrl` 指向 electron-updater generic provider 目录（`latest.yml` + 安装包所在处）；GitHub Release 场景用 `https://github.com/<owner>/<repo>/releases/latest/download/`（release 资源 `latest.yml` + `setup.exe` 发布后可直接下载）
+- 推荐更新源解析：检查前先 `api.update.resolveFeed('obox-org/obox')` 拿**最后一次编译的 release** 的 `releases/download/<tag>/` 更新源（不依赖 latest 标记），再 `check(feedUrl)`；旧宿主（无 resolveFeed）回退 `https://github.com/<owner>/<repo>/releases/latest/download/`（release 资源 `latest.yml` + `setup.exe` 发布后可直接下载）
 - 入口里调用 `api.update.check(feedUrl)` / `download()` / `install()`；`api.update.onEvent` 订阅进度/完成事件更新状态栏文本
 - 未在设置-更新选中的扩展调用 `check/download/install` 会抛错；入口应捕获并提示"未选择为更新提供者"
 
