@@ -168,7 +168,7 @@
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| `feedUrl` | ❌ | 更新源 URL（electron-updater generic provider）；扩展激活时也可用 `api.update` 覆盖/运行时提供 |
+| `feedUrl` | ❌ | 更新源 URL（electron-updater generic provider）；**推荐用 `api.update.resolveFeed(repo)` 动态解析"最后一次编译"的 release**（见 `api-reference.md`），feedUrl 仅作兜底（无 resolveFeed 的旧宿主用 latest/download） |
 
 选中后扩展可调用 `api.update.*`（详见 `api-reference.md`）。**只能有一个更新提供者生效**；未选择时不检查更新。
 
