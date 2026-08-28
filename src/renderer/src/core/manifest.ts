@@ -36,6 +36,22 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
   if (m.contributes !== undefined && typeof m.contributes !== 'object') {
     messages.push({ severity: 'error', message: 'contributes 必须是对象' })
   }
+  const contributes = m.contributes as Record<string, unknown> | undefined
+  if (contributes?.keybindings !== undefined) {
+    const kb = contributes.keybindings as unknown
+    if (
+      !Array.isArray(kb) ||
+      kb.some(
+        (k) =>
+          !k ||
+          typeof k !== 'object' ||
+          typeof (k as Record<string, unknown>).command !== 'string' ||
+          typeof (k as Record<string, unknown>).key !== 'string'
+      )
+    ) {
+      messages.push({ severity: 'error', message: 'keybindings 必须是 [{command, key}] 数组' })
+    }
+  }
   if (m.extensionDependencies !== undefined) {
     const deps = m.extensionDependencies as unknown
     if (!Array.isArray(deps) || deps.some((d) => typeof d !== 'string')) {

@@ -80,6 +80,13 @@ class ExtensionHost {
     return [...this.extensions.values()]
   }
 
+  /** 执行命令（跨扩展，经命令 id；快捷键触发等场景用） */
+  async executeCommand<T = unknown>(id: string, ...args: unknown[]): Promise<T> {
+    const cmd = registry.commands.find((c) => c.command === id)
+    if (!cmd || !cmd.handler) throw new Error(`command not found: ${id}`)
+    return (await cmd.handler(...args)) as T
+  }
+
   /** 阶段一：注册贡献点（barrier 释放前，UI 不消费注册表） */
   private registerContributions(ext: ExtensionInfo, module: ExtensionModule): void {
     const c = ext.manifest.contributes
@@ -123,6 +130,28 @@ class ExtensionHost {
     if (c.settings) extensionSettingsStore.register(ext.id, c.settings)
     // 更新提供者（manifest 声明；设置-更新选择生效，只能一个）
     if (c.updater) updaterStore.register(ext.id, c.updater.feedUrl)
+    // 快捷键贡献：复用 keybindingStore（冲突检测/可改/设置页展示/持久化）；labelKey 用命令 title
+    for (const kb of c.keybindings ?? []) {
+      const cmd = c.commands?.find((x) => x.command === kb.command)
+      if (!cmd) {
+        ext.validations.push({
+          severity: 'warning',
+          message: `keybindings 引用的命令 ${kb.command} 未在 contributes.commands 声明`
+        })
+        continue
+      }
+      const conflict = keybindingStore
+        .list()
+        .find((e) => e.command !== kb.command && e.currentKey === kb.key)
+      if (conflict) {
+        ext.validations.push({
+          severity: 'warning',
+          message: `快捷键 ${kb.key} 已被 ${conflict.command} 占用（${kb.command} 未注册）`
+        })
+        continue
+      }
+      keybindingStore.register({ command: kb.command, labelKey: cmd.title, defaultKey: kb.key })
+    }
     // 校验视图引用：导航项声明的 view 必须在扩展模块具名导出中存在
     for (const nav of c.navItems ?? []) {
       if (nav.view && !(nav.view in module)) {
@@ -188,11 +217,8 @@ class ExtensionHost {
         }
         return registry.setCommandHandler(id, handler)
       },
-      executeCommand: async <T = unknown>(id: string, ...args: unknown[]): Promise<T> => {
-        const cmd = registry.commands.find((c) => c.command === id)
-        if (!cmd || !cmd.handler) throw new Error(`command not found: ${id}`)
-        return (await cmd.handler(...args)) as T
-      },
+      executeCommand: <T = unknown>(id: string, ...args: unknown[]): Promise<T> =>
+        this.executeCommand(id, ...args),
       statusBar: {
         setText: (id, text) => {
           const item = registry.getStatusBarItem(id)
@@ -248,7 +274,8 @@ class ExtensionHost {
         minimize: () => window.api.windowAction('minimize'),
         toggleMaximize: () => window.api.windowAction('toggle-maximize'),
         close: () => window.api.windowAction('close'),
-        isMaximized: async () => (await window.api.getWindowState())?.isMaximized ?? false
+        isMaximized: async () => (await window.api.getWindowState())?.isMaximized ?? false,
+        setProgressBar: (progress) => window.api.setProgressBar(progress)
       },
       appInfo: {
         get: () => window.api.getAppInfo()
@@ -300,6 +327,78 @@ class ExtensionHost {
       },
       notification: {
         show: (opts) => this.showNotification(ext, opts, disposables)
+      },
+      net: {
+        fetch: (url, opts) =>
+          window.api.netFetch(
+            { url, method: opts?.method, headers: opts?.headers, body: opts?.body, json: opts?.json },
+            stateStore.getSetting<ProxyConfig>('network.proxy')
+          )
+      },
+      dialog: {
+        showOpenDialog: (opts) => window.api.dialogOpen(opts ?? {}),
+        showSaveDialog: (opts) => window.api.dialogSave(opts ?? {}),
+        showMessageBox: (opts) => window.api.dialogMessage(opts ?? {})
+      },
+      shell: {
+        openExternal: (url) => window.api.shellOpenExternal(url),
+        openPath: (p) => window.api.shellOpenPath(p)
+      },
+      clipboard: {
+        readText: () => window.api.clipboardReadText(),
+        writeText: (text) => window.api.clipboardWriteText(text)
+      },
+      env: {
+        platform: window.api.env.platform,
+        arch: window.api.env.arch,
+        nodeVersion: window.api.env.nodeVersion,
+        getOboxVersion: () => window.api.getOboxVersion()
+      },
+      theme: this.buildThemeApi(disposables),
+      fs: this.buildFsApi(ext.id)
+    }
+  }
+
+  /** 构造 api.theme（读当前主题 + 监听切换，纯渲染侧） */
+  private buildThemeApi(disposables: Array<() => void>): ExtensionActivationApi['theme'] {
+    const listeners = new Set<(id: string) => void>()
+    const notify = (): void => {
+      const id = themeStore.currentId
+      listeners.forEach((l) => l(id))
+    }
+    const off = stateStore.onSettingsChanged(notify)
+    disposables.push(off)
+    return {
+      getCurrent: () => themeStore.currentId,
+      onChanged: (callback) => {
+        listeners.add(callback)
+        return {
+          dispose: () => {
+            listeners.delete(callback)
+          }
+        }
+      }
+    }
+  }
+
+  /** 构造 api.fs（限定扩展 data 目录，相对路径） */
+  private buildFsApi(extId: string): ExtensionActivationApi['fs'] {
+    const call = async <T extends { ok: boolean; error?: string }>(
+      p: Promise<T>
+    ): Promise<Omit<T, 'ok' | 'error'>> => {
+      const r = await p
+      if (!r.ok) throw new Error(r.error ?? '文件操作失败')
+      return r as unknown as Omit<T, 'ok' | 'error'>
+    }
+    return {
+      readFile: async (rel) => (await call(window.api.fsReadFile(extId, rel))).content ?? '',
+      writeFile: async (rel, content) => {
+        await call(window.api.fsWriteFile(extId, rel, content))
+      },
+      readDir: async (rel) => (await call(window.api.fsReadDir(extId, rel))).entries ?? [],
+      exists: async (rel) => (await call(window.api.fsExists(extId, rel))).exists ?? false,
+      remove: async (rel) => {
+        await call(window.api.fsRemove(extId, rel))
       }
     }
   }

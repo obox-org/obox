@@ -168,6 +168,45 @@ export interface MainApi {
   ): Promise<{ ok: boolean; id?: number; error?: string }>
   /** 扩展停用/卸载/重载时清理主进程资源（定时器 + 数据库连接） */
   cleanupExtension(extId: string): Promise<void>
+  // ---- 扩展能力：网络（渲染 CSP 禁外网，走主进程 + 代理） ----
+  netFetch(
+    req: { url?: string; method?: string; headers?: Record<string, string>; body?: unknown; json?: boolean },
+    proxy?: ProxyConfig
+  ): Promise<{ ok: boolean; status?: number; statusText?: string; data?: unknown; error?: string }>
+  // ---- 扩展能力：文件系统（限定扩展 data 目录，相对路径） ----
+  fsReadFile(extId: string, rel: string): Promise<{ ok: boolean; content?: string; error?: string }>
+  fsWriteFile(extId: string, rel: string, content: string): Promise<{ ok: boolean; error?: string }>
+  fsReadDir(
+    extId: string,
+    rel: string
+  ): Promise<{ ok: boolean; entries?: Array<{ name: string; isDir: boolean }>; error?: string }>
+  fsExists(extId: string, rel: string): Promise<{ ok: boolean; exists?: boolean; error?: string }>
+  fsRemove(extId: string, rel: string): Promise<{ ok: boolean; error?: string }>
+  // ---- 扩展能力：对话框 / 外链 / 剪贴板 / 任务栏进度 ----
+  dialogOpen(opts: {
+    title?: string
+    filters?: Array<{ name: string; extensions: string[] }>
+    multiSelect?: boolean
+  }): Promise<{ ok: boolean; filePaths?: string[]; canceled?: boolean; error?: string }>
+  dialogSave(opts: {
+    title?: string
+    defaultName?: string
+    filters?: Array<{ name: string; extensions: string[] }>
+  }): Promise<{ ok: boolean; filePath?: string; canceled?: boolean; error?: string }>
+  dialogMessage(opts: {
+    type?: 'info' | 'warning' | 'error' | 'question'
+    title?: string
+    message?: string
+    detail?: string
+    buttons?: string[]
+  }): Promise<{ ok: boolean; response?: number; error?: string }>
+  shellOpenExternal(url: string): Promise<{ ok: boolean; error?: string }>
+  shellOpenPath(p: string): Promise<{ ok: boolean; error?: string }>
+  clipboardReadText(): Promise<string>
+  clipboardWriteText(text: string): Promise<void>
+  setProgressBar(progress: number | null): Promise<void>
+  /** 运行环境静态信息（preload 直接提供，非 IPC） */
+  env: { platform: string; arch: string; nodeVersion: string }
 }
 
 /** 主进程 → 渲染进程 的事件（on） */

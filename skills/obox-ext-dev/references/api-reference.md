@@ -255,6 +255,70 @@ const r = await api.notification.show({
 - `title` 必填，`body`/`icon`/`onClick` 可选；`onClick` 每次 show 独立绑定，点击后自动注销
 - 扩展停用/卸载后不再收到通知点击事件
 
+### net（网络请求）
+
+渲染进程 CSP（`default-src 'self' app:`）**禁止扩展直接 fetch 外部网络**——联网必须走 `api.net.fetch`（主进程发请求，**自动应用设置-网络代理**，默认 30s 超时）：
+
+```ts
+const r = await api.net.fetch('https://api.example.com/items', { method: 'POST', json: true, body: { page: 1 } })
+if (r.ok) { /* r.status, r.data（JSON 已解析或文本） */ }
+// GET 默认；data 按响应 Content-Type 自动解析 JSON/文本；opts.json=true 强制 JSON
+// 失败：r.ok=false, r.error（含超时/网络错误）
+```
+
+### dialog / shell / clipboard（对话框 / 外链 / 剪贴板）
+
+```ts
+// 文件选择（返回路径数组；拿到路径后可配合 api.fs 只能读自己的 data 目录——外部路径仅作展示/传给 api.shell）
+const { ok, filePaths, canceled } = await api.dialog.showOpenDialog({ filters: [{ name: 'JSON', extensions: ['json'] }], multiSelect: false })
+const { filePath } = await api.dialog.showSaveDialog({ defaultName: 'export.json' })
+const { response } = await api.dialog.showMessageBox({ type: 'question', message: '确定？', buttons: ['是', '否'] })
+// 打开外部链接/路径（系统默认程序）
+await api.shell.openExternal('https://example.com')   // 仅 http/https
+await api.shell.openPath('C:\\path\\to\\file.txt')
+// 剪贴板
+await api.clipboard.writeText('hello')
+const text = await api.clipboard.readText()
+```
+
+### env（运行环境）
+
+```ts
+api.env.platform      // 'win32' | 'darwin' | 'linux'
+api.env.arch          // 'x64' | 'arm64'
+api.env.nodeVersion   // 宿主内置 Node 版本
+await api.env.getOboxVersion()  // obox 版本号
+```
+
+### theme（主题）
+
+```ts
+api.theme.getCurrent()                    // 当前主题 id（如 'theme-dark'）
+const off = api.theme.onChanged((id) => { /* 主题切换时刷新自身 UI */ })
+off.dispose()
+```
+
+### fs（文件系统，限定扩展数据目录）
+
+与 sqlite 同安全模型：**相对路径**解析到 `userData/extensions/<扩展id>/data/`，拒绝绝对路径/`..`/盘符；自动建目录：
+
+```ts
+await api.fs.writeFile('export/data.json', JSON.stringify(rows))   // 写（自动建目录）
+const content = await api.fs.readFile('export/data.json')          // 读
+const entries = await api.fs.readDir('.')                          // [{ name, isDir }]
+const exists = await api.fs.exists('export/data.json')
+await api.fs.remove('export')                                       // 删除文件/目录（递归）
+```
+
+> 注意：`api.fs` 只能读写扩展自己的 data 目录；`api.dialog` 选到的外部路径**不能**用 `api.fs` 读写（安全边界）。
+
+### window.setProgressBar（任务栏进度）
+
+```ts
+await api.window.setProgressBar(0.5)   // 0~1 主窗口任务栏进度
+await api.window.setProgressBar(null)  // 清除进度
+```
+
 ## 宿主生命周期语义
 
 - **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表

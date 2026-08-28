@@ -172,6 +172,27 @@
 
 选中后扩展可调用 `api.update.*`（详见 `api-reference.md`）。**只能有一个更新提供者生效**；未选择时不检查更新。
 
+### keybindings（快捷键，manifest 声明）
+
+把已声明命令绑定默认组合键，复用宿主快捷键体系（**冲突检测 / 用户可在设置-快捷键修改 / 持久化 / 设置页展示**）：
+
+```json
+{
+  "contributes": {
+    "commands": [{ "command": "my-ext.sync", "title": "同步", "category": "我的扩展" }],
+    "keybindings": [{ "command": "my-ext.sync", "key": "Ctrl+Shift+K" }]
+  }
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `command` | ✅ | 命令 id（**必须**在 contributes.commands 声明，否则 warning 且不注册） |
+| `key` | ✅ | 组合键字符串（`Ctrl+Alt+Shift` 修饰 + 主键，如 `Ctrl+Shift+K`；主键单字符自动大写） |
+
+- 与内置/其他扩展快捷键**冲突时 warning 且不注册**（该扩展其余功能不受影响）
+- 默认键冲突时用户仍可在设置-快捷键里改（改后以用户值为准）
+
 ## 校验规则（`core/manifest.ts`）
 
 - `name` 必填且匹配 `^[a-z0-9][a-z0-9._-]*$` → 否则 **error**，不加载

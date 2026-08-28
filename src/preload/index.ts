@@ -45,7 +45,29 @@ const api: MainApi = {
   // 扩展能力：系统提醒
   showNotification: (extId, opts) => ipcRenderer.invoke('notification:show', extId, opts),
   // 扩展停用/卸载/重载时清理主进程资源
-  cleanupExtension: (extId) => ipcRenderer.invoke('extension:cleanup', extId)
+  cleanupExtension: (extId) => ipcRenderer.invoke('extension:cleanup', extId),
+  // 扩展能力：网络（主进程 fetch + 代理）
+  netFetch: (req, proxy) => ipcRenderer.invoke('net:fetch', req, proxy),
+  // 扩展能力：文件系统（限定扩展 data 目录）
+  fsReadFile: (extId, rel) => ipcRenderer.invoke('fs:read-file', extId, rel),
+  fsWriteFile: (extId, rel, content) => ipcRenderer.invoke('fs:write-file', extId, rel, content),
+  fsReadDir: (extId, rel) => ipcRenderer.invoke('fs:read-dir', extId, rel),
+  fsExists: (extId, rel) => ipcRenderer.invoke('fs:exists', extId, rel),
+  fsRemove: (extId, rel) => ipcRenderer.invoke('fs:remove', extId, rel),
+  // 扩展能力：对话框 / 外链 / 剪贴板 / 任务栏进度
+  dialogOpen: (opts) => ipcRenderer.invoke('dialog:open', opts),
+  dialogSave: (opts) => ipcRenderer.invoke('dialog:save', opts),
+  dialogMessage: (opts) => ipcRenderer.invoke('dialog:message', opts),
+  shellOpenExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
+  shellOpenPath: (p) => ipcRenderer.invoke('shell:open-path', p),
+  clipboardReadText: () => ipcRenderer.invoke('clipboard:read-text'),
+  clipboardWriteText: (text) => ipcRenderer.invoke('clipboard:write-text', text),
+  setProgressBar: (progress) => ipcRenderer.invoke('window:set-progress-bar', progress),
+  env: {
+    platform: process.platform,
+    arch: process.arch,
+    nodeVersion: process.versions.node
+  }
 }
 
 // 主进程 → 渲染进程事件订阅

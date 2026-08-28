@@ -97,6 +97,14 @@ export interface SettingsPage {
   fields: SettingField[]
 }
 
+/** 快捷键贡献（manifest 声明）：把已声明命令绑定默认组合键 */
+export interface KeybindingContribution {
+  /** 命令 id（必须在 contributes.commands 声明） */
+  command: string
+  /** 组合键字符串（如 Ctrl+Shift+K） */
+  key: string
+}
+
 /** manifest 的贡献点声明 */
 export interface ContributionManifest {
   navItems?: NavItemContribution[]
@@ -107,6 +115,8 @@ export interface ContributionManifest {
   i18n?: Record<string, Record<string, string>>
   /** 扩展设置 schema（对齐 VS Code contributes.configuration 简化版） */
   settings?: SettingsPage
+  /** 快捷键（复用宿主 keybindingStore：冲突检测/用户可改/设置页展示/持久化） */
+  keybindings?: KeybindingContribution[]
   /** 声明为"更新提供者扩展"：提供 obox 更新能力（设置-更新选择，只能一个生效） */
   updater?: {
     /** 更新源 URL 模板（可含 {version} 占位）；扩展激活时也可用 api.update 覆盖 */

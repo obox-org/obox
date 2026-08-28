@@ -69,6 +69,8 @@ export interface ExtensionActivationApi {
     toggleMaximize(): Promise<void>
     close(): Promise<void>
     isMaximized(): Promise<boolean>
+    /** 主窗口任务栏进度（0~1；null 清除） */
+    setProgressBar(progress: number | null): Promise<void>
   }
   /** 应用信息 */
   appInfo: {
@@ -154,4 +156,89 @@ export interface ExtensionActivationApi {
       onClick?: () => void
     }): Promise<{ ok: boolean; error?: string }>
   }
+  /** 网络请求（渲染进程 CSP 禁外网，走主进程 + 自动应用设置-网络代理；默认 30s 超时） */
+  net: {
+    /** 发起请求；data 按响应 Content-Type 自动解析 JSON/文本；opts.json=true 强制解析 JSON */
+    fetch(
+      url: string,
+      opts?: {
+        method?: string
+        headers?: Record<string, string>
+        body?: unknown
+        json?: boolean
+      }
+    ): Promise<{ ok: boolean; status?: number; statusText?: string; data?: unknown; error?: string }>
+  }
+  /** 文件对话框（主进程 dialog） */
+  dialog: {
+    /** 文件选择对话框 → 选中路径数组 */
+    showOpenDialog(opts?: {
+      title?: string
+      filters?: DialogFilter[]
+      multiSelect?: boolean
+    }): Promise<{ ok: boolean; filePaths?: string[]; canceled?: boolean; error?: string }>
+    /** 保存对话框 → 保存路径 */
+    showSaveDialog(opts?: {
+      title?: string
+      defaultName?: string
+      filters?: DialogFilter[]
+    }): Promise<{ ok: boolean; filePath?: string; canceled?: boolean; error?: string }>
+    /** 消息框（info/warning/error/question）→ 点击的按钮下标 */
+    showMessageBox(opts?: {
+      type?: 'info' | 'warning' | 'error' | 'question'
+      title?: string
+      message?: string
+      detail?: string
+      buttons?: string[]
+    }): Promise<{ ok: boolean; response?: number; error?: string }>
+  }
+  /** 打开外部链接/路径（系统默认程序） */
+  shell: {
+    /** 用系统浏览器打开链接（仅 http/https） */
+    openExternal(url: string): Promise<{ ok: boolean; error?: string }>
+    /** 用系统默认程序打开文件/目录 */
+    openPath(p: string): Promise<{ ok: boolean; error?: string }>
+  }
+  /** 剪贴板 */
+  clipboard: {
+    readText(): Promise<string>
+    writeText(text: string): Promise<void>
+  }
+  /** 运行环境信息 */
+  env: {
+    /** 操作系统平台（win32/darwin/linux） */
+    readonly platform: string
+    /** CPU 架构（x64/arm64） */
+    readonly arch: string
+    /** Node 版本（宿主内置） */
+    readonly nodeVersion: string
+    /** obox 版本号 */
+    getOboxVersion(): Promise<string>
+  }
+  /** 主题（读当前主题/监听切换） */
+  theme: {
+    /** 当前主题 id（如 theme-dark） */
+    getCurrent(): string
+    /** 主题切换监听（返回注销函数） */
+    onChanged(callback: (themeId: string) => void): Disposable
+  }
+  /** 文件系统（限定扩展自己的数据目录，相对路径；自动建目录） */
+  fs: {
+    /** 读取文本文件 */
+    readFile(rel: string): Promise<string>
+    /** 写入文本文件（自动建目录） */
+    writeFile(rel: string, content: string): Promise<void>
+    /** 列出目录内容 */
+    readDir(rel: string): Promise<Array<{ name: string; isDir: boolean }>>
+    /** 路径是否存在 */
+    exists(rel: string): Promise<boolean>
+    /** 删除文件/目录（递归） */
+    remove(rel: string): Promise<void>
+  }
+}
+
+/** 文件对话框过滤器 */
+export interface DialogFilter {
+  name: string
+  extensions: string[]
 }

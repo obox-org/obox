@@ -36,12 +36,15 @@ function selectNav(id: string): void {
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
-  // 快捷键系统：匹配内置/自定义快捷键（如 Ctrl+Shift+P 命令面板）
+  // 快捷键系统：匹配内置/扩展快捷键（内置命令面板 + 扩展命令通用执行）
   const command = keybindingStore.matchKeydown(e)
   if (!command) return
   if (command === 'app.showCommands') {
     e.preventDefault()
     paletteOpen.value = !paletteOpen.value
+  } else {
+    e.preventDefault()
+    void host.executeCommand(command).catch((err) => console.error('[keybinding]', command, err))
   }
 }
 
