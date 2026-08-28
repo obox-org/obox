@@ -51,7 +51,7 @@ jobs:
       # - 一次构建 x64 + arm64 两个安装包（--x64 --arm64；electron-builder 下载对应架构 Electron）
       # - electron-builder 只编译（--publish never，发布由 gh release 负责）
       # - 输出到 runner 临时目录（绝对路径，避免工作区相对路径/gitignore 干扰）
-      # - 上传 obox-<version>-<arch>-setup.exe（x64/arm64）+ latest.yml / latest-arm64.yml（自动更新按架构拉取）
+      # - 上传 obox-<version>-<arch>-setup.exe（x64/arm64）+ latest.yml（files 含全部架构安装包，electron-updater 按机器架构自动选）
       - name: Build and create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

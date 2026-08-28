@@ -1,6 +1,7 @@
 /**
  * 应用状态持久化（userData JSON）。
  * - disabledExtensions: 禁用列表（缺省即启用模型）
+ * - notificationDisabledExtensions: 通知关闭列表（设置-通知逐扩展关闭，缺省即开启）
  * - lastActiveNavId: 上次激活的导航项 id（重启恢复）
  * - memento: 每扩展命名空间的 Memento 存储（workspaceState/globalState 共用一处，分命名空间）
  * - settings: 统一设置存储（主题/快捷键/扩展设置等，key-value）
@@ -12,6 +13,7 @@ const STORAGE_KEY = 'obox:state:v1'
 
 interface PersistedState {
   disabledExtensions: string[]
+  notificationDisabledExtensions: string[]
   lastActiveNavId: string | null
   memento: Record<string, Record<string, unknown>>
   settings: Record<string, unknown>
@@ -23,17 +25,32 @@ function load(): PersistedState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) {
-      return { disabledExtensions: [], lastActiveNavId: null, memento: {}, settings: {} }
+      return {
+        disabledExtensions: [],
+        notificationDisabledExtensions: [],
+        lastActiveNavId: null,
+        memento: {},
+        settings: {}
+      }
     }
     const parsed = JSON.parse(raw) as Partial<PersistedState>
     return {
       disabledExtensions: Array.isArray(parsed.disabledExtensions) ? parsed.disabledExtensions : [],
+      notificationDisabledExtensions: Array.isArray(parsed.notificationDisabledExtensions)
+        ? parsed.notificationDisabledExtensions
+        : [],
       lastActiveNavId: typeof parsed.lastActiveNavId === 'string' ? parsed.lastActiveNavId : null,
       memento: parsed.memento && typeof parsed.memento === 'object' ? parsed.memento : {},
       settings: parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {}
     }
   } catch {
-    return { disabledExtensions: [], lastActiveNavId: null, memento: {}, settings: {} }
+    return {
+      disabledExtensions: [],
+      notificationDisabledExtensions: [],
+      lastActiveNavId: null,
+      memento: {},
+      settings: {}
+    }
   }
 }
 
@@ -62,6 +79,21 @@ export const stateStore = {
       save()
     } else if (!disabled) {
       state.disabledExtensions = state.disabledExtensions.filter((x) => x !== id)
+      save()
+    }
+  },
+  /** 通知是否被该扩展关闭（设置-通知；缺省开启） */
+  isNotificationDisabled(id: string): boolean {
+    return state.notificationDisabledExtensions.includes(id)
+  },
+  setNotificationDisabled(id: string, disabled: boolean): void {
+    if (disabled && !state.notificationDisabledExtensions.includes(id)) {
+      state.notificationDisabledExtensions.push(id)
+      save()
+    } else if (!disabled) {
+      state.notificationDisabledExtensions = state.notificationDisabledExtensions.filter(
+        (x) => x !== id
+      )
       save()
     }
   },

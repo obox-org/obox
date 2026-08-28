@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createWindow, registerWindowIpc } from './window'
 import { registerCapabilityIpc } from './capabilities'
@@ -7,6 +7,9 @@ import { registerAppWindowIpc, closeAllAppWindowsOnMainClose } from './appWindow
 import { registerOixIpc } from './oix'
 import { registerUpdateIpc, onUpdateEvent } from './updater'
 import { parseDebugExtensions, registerDebugIpc } from './debug'
+import { registerSqliteIpc, closeExtensionDbs } from './sqlite'
+import { registerTimerIpc, closeExtensionTimers } from './timer'
+import { registerNotificationIpc } from './notification'
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.obox.app')
@@ -17,13 +20,22 @@ app.whenReady().then(() => {
   // 注册 app:// 自定义协议：供渲染进程加载用户扩展入口（app://extensions/<id>/...）
   registerExtensionProtocol(debugExtensions)
 
-  // 窗口控制 + 能力服务 + App 子窗口 IPC + .oix 安装 + 更新服务 + 调试扩展
+  // 窗口控制 + 能力服务 + App 子窗口 IPC + .oix 安装 + 更新服务 + 调试扩展 + 扩展能力（sqlite/定时器/通知）
   registerWindowIpc()
   registerCapabilityIpc()
   registerAppWindowIpc()
   registerOixIpc()
   registerUpdateIpc()
   registerDebugIpc(debugExtensions)
+  registerSqliteIpc()
+  registerTimerIpc()
+  registerNotificationIpc()
+
+  // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接）
+  ipcMain.handle('extension:cleanup', (_e, extId: string): void => {
+    closeExtensionTimers(String(extId))
+    closeExtensionDbs(String(extId))
+  })
 
   // 更新事件广播到所有窗口（渲染进程扩展订阅）
   onUpdateEvent((e) => {

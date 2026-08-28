@@ -122,6 +122,52 @@ export interface MainApi {
   downloadUpdate(): Promise<{ ok: boolean; error?: string }>
   /** 安装并重启（下载完成后） */
   installUpdate(): Promise<void>
+  // ---- 扩展能力：定时器（主进程精确计时，秒粒度） ----
+  setTimerTimeout(extId: string, id: string, seconds: number): Promise<{ ok: boolean; error?: string }>
+  setTimerInterval(extId: string, id: string, seconds: number): Promise<{ ok: boolean; error?: string }>
+  clearTimer(extId: string, id: string): Promise<void>
+  // ---- 扩展能力：sqlite（node:sqlite，相对路径 → 扩展 data 目录） ----
+  sqliteOpen(extId: string, name: string): Promise<{ ok: boolean; error?: string }>
+  sqliteClose(extId: string, name: string): Promise<void>
+  sqliteExec(extId: string, name: string, sql: string): Promise<{ ok: boolean; error?: string }>
+  sqliteQuery(
+    extId: string,
+    name: string,
+    sql: string,
+    params: unknown[]
+  ): Promise<{ ok: boolean; rows?: unknown[]; error?: string }>
+  sqliteInsert(
+    extId: string,
+    name: string,
+    row: Record<string, unknown>
+  ): Promise<{ ok: boolean; row?: unknown; error?: string }>
+  sqliteUpdate(
+    extId: string,
+    name: string,
+    where: Record<string, unknown>,
+    patch: Record<string, unknown>
+  ): Promise<{ ok: boolean; changes?: number; error?: string }>
+  sqliteGet(extId: string, name: string, id: unknown): Promise<{ ok: boolean; row?: unknown; error?: string }>
+  sqliteGetAll(extId: string, name: string): Promise<{ ok: boolean; rows?: unknown[]; error?: string }>
+  sqliteGetBy(
+    extId: string,
+    name: string,
+    where: Record<string, unknown>
+  ): Promise<{ ok: boolean; rows?: unknown[]; error?: string }>
+  sqliteDel(extId: string, name: string, id: unknown): Promise<{ ok: boolean; changes?: number; error?: string }>
+  sqliteDelBy(
+    extId: string,
+    name: string,
+    where: Record<string, unknown>
+  ): Promise<{ ok: boolean; changes?: number; error?: string }>
+  sqliteClear(extId: string, name: string): Promise<{ ok: boolean; changes?: number; error?: string }>
+  // ---- 扩展能力：系统提醒 ----
+  showNotification(
+    extId: string,
+    opts: { title?: string; body?: string; icon?: string }
+  ): Promise<{ ok: boolean; id?: number; error?: string }>
+  /** 扩展停用/卸载/重载时清理主进程资源（定时器 + 数据库连接） */
+  cleanupExtension(extId: string): Promise<void>
 }
 
 /** 主进程 → 渲染进程 的事件（on） */
@@ -138,4 +184,8 @@ export interface MainEvents {
     total?: number
     message?: string
   }) => void
+  /** 定时器到点（key = <扩展id>:<id>；kind = timeout|interval） */
+  'timer:fire': (e: { key: string; kind: 'timeout' | 'interval' }) => void
+  /** 通知被点击（扩展分发 onClick 回调） */
+  'notification:click': (e: { notifId: number; extId: string; title: string }) => void
 }

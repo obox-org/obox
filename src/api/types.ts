@@ -8,6 +8,38 @@ import type { AppRegistration } from './registration'
 import type { Disposable } from './runtime'
 import type { Memento, ProxyConfig, UpdateEvent } from './shared'
 
+/** 数据库行（对象，键=列名） */
+export type SqliteRow = Record<string, unknown>
+
+/** 结构体匹配条件：{ 字段: 值 }，多键 AND 等值匹配 */
+export type SqliteWhere = Record<string, unknown>
+
+/** 扩展数据库句柄（api.sqlite.open 返回；行操作作用于默认表 = 文件名去扩展名） */
+export interface SqliteDb {
+  /** 执行 SQL 脚本（建表/初始化，可多语句；不返回结果集） */
+  exec(sql: string): Promise<{ ok: boolean; error?: string }>
+  /** 复杂查询（SELECT/JOIN/聚合），返回对象数组 */
+  query(sql: string, params?: unknown[]): Promise<SqliteRow[]>
+  /** 插入一行（首次写入自动建表，id 主键自增；含 id 则 upsert），返回新行 */
+  insert(row: Record<string, unknown>): Promise<SqliteRow | null>
+  /** 按等值条件更新部分字段，返回受影响行数 */
+  update(where: SqliteWhere, patch: Record<string, unknown>): Promise<number>
+  /** 按 id 取单行 */
+  get(id: unknown): Promise<SqliteRow | null>
+  /** 取全部行 */
+  get_all(): Promise<SqliteRow[]>
+  /** 按等值条件匹配，返回数组 */
+  get_by(where: SqliteWhere): Promise<SqliteRow[]>
+  /** 按 id 删除，返回受影响行数 */
+  del(id: unknown): Promise<number>
+  /** 按等值条件删除，返回受影响行数 */
+  del_by(where: SqliteWhere): Promise<number>
+  /** 清空表，返回受影响行数 */
+  clear(): Promise<number>
+  /** 关闭连接（扩展停用宿主自动关闭，也可手动调用） */
+  close(): Promise<void>
+}
+
 /** 激活扩展时的宿主能力注入（传给扩展插件函数） */
 export interface ExtensionActivationApi {
   /** 命令注册：把 manifest 声明的命令 id 绑定实现 */
@@ -95,5 +127,31 @@ export interface ExtensionActivationApi {
   proxy: {
     /** 读取当前代理配置（设置-网络页） */
     get(): ProxyConfig
+  }
+  /** 全局定时器（主进程精确计时，**秒粒度**整数 ≥1s，不受渲染进程后台节流影响；扩展停用自动清理） */
+  timer: {
+    /** 一次性定时器：seconds 秒后执行一次 callback（同 id 重复设置会重置） */
+    setTimeout(id: string, seconds: number, callback: () => void): void
+    /** 重复定时器：每 seconds 秒执行一次 callback（同 id 重复设置会重置） */
+    setInterval(id: string, seconds: number, callback: () => void): void
+    /** 取消一次性定时器（无此 id 则无操作） */
+    clearTimeout(id: string): void
+    /** 取消重复定时器（无此 id 则无操作） */
+    clearInterval(id: string): void
+  }
+  /** sqlite 数据库（node:sqlite 内置驱动；**相对路径** → 扩展 data 目录，拒绝绝对路径；首次写入自动建表） */
+  sqlite: {
+    /** 打开数据库（相对路径如 'todo.db' 或 'sub/a.db'；自动建目录），返回表集合句柄 */
+    open(name: string): Promise<SqliteDb>
+  }
+  /** 系统提醒（操作系统通知；设置-通知可逐扩展关闭，关闭后 show 无操作） */
+  notification: {
+    /** 显示一条系统通知；点击通知自动聚焦主窗口并执行 onClick（若有） */
+    show(opts: {
+      title: string
+      body?: string
+      icon?: string
+      onClick?: () => void
+    }): Promise<{ ok: boolean; error?: string }>
   }
 }

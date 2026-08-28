@@ -24,6 +24,8 @@ import type {
   ExtensionManifest,
   ExtensionModule,
   ProxyConfig,
+  SqliteDb,
+  SqliteRow,
   UpdateEvent
 } from './types'
 
@@ -71,6 +73,11 @@ class ExtensionHost {
 
   getExtension(id: string): ExtensionInfo | undefined {
     return this.extensions.get(id)
+  }
+
+  /** 全部扩展（设置页通知开关等 UI 用） */
+  getExtensions(): ExtensionInfo[] {
+    return [...this.extensions.values()]
   }
 
   /** 阶段一：注册贡献点（barrier 释放前，UI 不消费注册表） */
@@ -286,8 +293,108 @@ class ExtensionHost {
             }
           )
         }
+      },
+      timer: this.buildTimerApi(ext, disposables),
+      sqlite: {
+        open: (name) => this.buildSqliteDb(ext.id, name)
+      },
+      notification: {
+        show: (opts) => this.showNotification(ext, opts, disposables)
       }
     }
+  }
+
+  /** 构造 api.timer（主进程精确计时；触发经 'timer:fire' 事件分发回调） */
+  private buildTimerApi(
+    ext: ExtensionInfo,
+    disposables: Array<() => void>
+  ): ExtensionActivationApi['timer'] {
+    const callbacks = new Map<string, () => void>()
+    const offFire = window.events.on('timer:fire', (e) => {
+      const cb = callbacks.get(e.key)
+      if (!cb) return
+      cb()
+      if (e.kind === 'timeout') callbacks.delete(e.key)
+    })
+    disposables.push(offFire)
+    const set = (kind: 'timeout' | 'interval') => (
+      id: string,
+      seconds: number,
+      callback: () => void
+    ): void => {
+      callbacks.set(`${ext.id}:${id}`, callback)
+      void (kind === 'timeout'
+        ? window.api.setTimerTimeout(ext.id, id, seconds)
+        : window.api.setTimerInterval(ext.id, id, seconds))
+    }
+    const clear = (id: string): void => {
+      callbacks.delete(`${ext.id}:${id}`)
+      void window.api.clearTimer(ext.id, id)
+    }
+    return {
+      setTimeout: set('timeout'),
+      setInterval: set('interval'),
+      clearTimeout: clear,
+      clearInterval: clear
+    }
+  }
+
+  /** 构造 api.sqlite.open 返回的数据库句柄（所有操作经 IPC，异步） */
+  private buildSqliteDb(extId: string, name: string): Promise<SqliteDb> {
+    return window.api.sqliteOpen(extId, name).then((r) => {
+      if (!r.ok) throw new Error(r.error ?? '打开数据库失败')
+      const call = async <T extends { ok: boolean; error?: string }>(
+        p: Promise<T>
+      ): Promise<Omit<T, 'ok' | 'error'>> => {
+        const result = await p
+        if (!result.ok) throw new Error(result.error ?? '数据库操作失败')
+        return result as unknown as Omit<T, 'ok' | 'error'>
+      }
+      return {
+        exec: (sql) => window.api.sqliteExec(extId, name, sql),
+        query: async (sql, params = []) =>
+          ((await call(window.api.sqliteQuery(extId, name, sql, params))).rows as SqliteRow[] | undefined) ?? [],
+        insert: async (row) =>
+          ((await call(window.api.sqliteInsert(extId, name, row))).row as SqliteRow | undefined) ?? null,
+        update: async (where, patch) =>
+          (await call(window.api.sqliteUpdate(extId, name, where, patch))).changes ?? 0,
+        get: async (id) =>
+          ((await call(window.api.sqliteGet(extId, name, id))).row as SqliteRow | undefined) ?? null,
+        get_all: async () =>
+          ((await call(window.api.sqliteGetAll(extId, name))).rows as SqliteRow[] | undefined) ?? [],
+        get_by: async (where) =>
+          ((await call(window.api.sqliteGetBy(extId, name, where))).rows as SqliteRow[] | undefined) ?? [],
+        del: async (id) => (await call(window.api.sqliteDel(extId, name, id))).changes ?? 0,
+        del_by: async (where) => (await call(window.api.sqliteDelBy(extId, name, where))).changes ?? 0,
+        clear: async () => (await call(window.api.sqliteClear(extId, name))).changes ?? 0,
+        close: () => window.api.sqliteClose(extId, name)
+      }
+    })
+  }
+
+  /** api.notification.show：设置-通知关闭的扩展直接 no-op；点击通知分发 onClick（一次性） */
+  private showNotification(
+    ext: ExtensionInfo,
+    opts: { title: string; body?: string; icon?: string; onClick?: () => void },
+    disposables: Array<() => void>
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (stateStore.isNotificationDisabled(ext.id)) {
+      return Promise.resolve({ ok: true })
+    }
+    return window.api
+      .showNotification(ext.id, { title: opts.title, body: opts.body, icon: opts.icon })
+      .then((r) => {
+        if (r.ok && r.id !== undefined && opts.onClick) {
+          const off = window.events.on('notification:click', (e) => {
+            if (e.notifId === r.id) {
+              opts.onClick?.()
+              off()
+            }
+          })
+          disposables.push(off)
+        }
+        return { ok: r.ok, error: r.error }
+      })
   }
 
   /** 构造 api.update（仅更新提供者扩展可用；未选中时抛错） */
@@ -487,6 +594,8 @@ class ExtensionHost {
     this.activated.delete(id)
     this.loaders.delete(id)
     this.extensions.delete(id)
+    // 清理主进程资源（定时器 + 数据库连接）
+    void window.api.cleanupExtension(id)
     console.log(`[host] 热移除: ${id}`)
     return true
   }

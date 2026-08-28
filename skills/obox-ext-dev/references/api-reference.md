@@ -185,7 +185,7 @@ api.update.onEvent((e) => {
 
 > 更新执行由宿主 electron-updater 完成；扩展提供更新源与触发时机。未在设置-更新选中的扩展调用 update API 会抛错。
 >
-> **更新源解析**：`resolveFeed(repo)` 走主进程调 GitHub REST API 取该仓库最新创建的 release（draft 除外），返回该 tag 的 `releases/download/<tag>/` 作为 feedUrl——**不依赖 GitHub 的 latest 标记**，保证拿到的是"最后一次编译"的产物。Windows 上 electron-updater 不分架构固定读 `latest.yml`，宿主已在 arm64 机器上自动改用 `latest-arm64.yml`（channel 指定），扩展无需关心架构。
+> **更新源解析**：`resolveFeed(repo)` 走主进程调 GitHub REST API 取该仓库最新创建的 release（draft 除外），返回该 tag 的 `releases/download/<tag>/` 作为 feedUrl——**不依赖 GitHub 的 latest 标记**，保证拿到的是"最后一次编译"的产物。Windows 上 electron-builder 生成的更新元数据固定叫 `latest.yml`（无架构后缀），files 含全部架构安装包，electron-updater 按机器架构自动选匹配的安装包，扩展无需关心架构。
 
 ### proxy（代理配置）
 
@@ -196,6 +196,64 @@ const p = api.proxy.get()
 ```
 
 obox 主进程的网络请求（更新下载等）自动使用该代理；内置扩展经 `api.proxy.get()` 读取并应用；非内置扩展可选使用。
+
+### timer（全局定时器，主进程精确计时）
+
+宿主级定时器跑在**主进程**，不受渲染进程后台节流影响（窗口最小化/不可见时渲染进程 `setTimeout` 会被节流到 1s 粒度）。**间隔为整数秒（≥1s）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器。
+
+```ts
+// 一次性：5 秒后执行一次
+api.timer.setTimeout('sync', 5, () => { /* ... */ })
+// 重复：每 60 秒执行一次
+api.timer.setInterval('tick', 60, () => { /* ... */ })
+// 取消（无此 id 时无操作）
+api.timer.clearTimeout('sync')
+api.timer.clearInterval('tick')
+```
+
+- 回调在扩展上下文（渲染进程）执行，**无 payload**（纯"到点了"），需要数据的扩展在回调里自行查询
+- 定时器 id 在**扩展内**唯一即可（跨扩展自动隔离）；`seconds` 必须是 ≥1 的整数，否则抛错
+
+### sqlite（数据库，node:sqlite 内置驱动）
+
+宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。
+
+```ts
+const db = await api.sqlite.open('todo.db')   // → userData/extensions/todo_chenzhi/data/todo.db
+// 首次写入自动建表（id 主键自增；列按 JS 类型声明：number/boolean→INTEGER，string→TEXT；boolean 读写自动 0/1 还原）
+await db.insert({ title: '买菜', done: false })          // → 新行（含 id）
+await db.insert({ id: 1, title: '买菜改', done: true })  // 含 id = upsert
+await db.get(1)                                          // → { id:1, title:'…', done:true }
+await db.get_all()                                       // → 全部行
+await db.get_by({ done: false })                         // 结构体匹配：等值多键 AND → 数组
+await db.update({ done: false }, { done: true })         // 等值条件更新 → 受影响行数
+await db.del(1)                                          // 按 id 删除 → 受影响行数
+await db.del_by({ done: false })                         // 等值条件删除
+await db.clear()                                         // 清空表
+await db.exec('CREATE INDEX idx_t ON todo(title)')       // 任意 SQL 脚本（不返回结果集）
+await db.query('SELECT title, COUNT(*) AS n FROM todo GROUP BY title')  // 复杂查询 → 对象数组
+await db.close()
+```
+
+- 默认表名 = 数据库文件名去扩展名（`open('todo.db')` → 表 `todo`）；`query`/`exec` 作用于整个库
+- 条件对象（`get_by`/`update`/`del_by` 的 where）只支持**等值匹配**，多键为 AND；复杂条件用 `query` 写 SQL
+- 全部方法 `async`（经 IPC 到主进程）；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
+
+### notification（系统提醒，操作系统通知）
+
+调用操作系统通知 API（Windows Toast / macOS 通知中心）。设置-通知可**逐扩展关闭**，关闭后该扩展 `show` 无操作。
+
+```ts
+const r = await api.notification.show({
+  title: '任务到期',
+  body: '「买菜」已到期',
+  icon: 'app://extensions/todo/icon.png', // 可选：app:// URL / http(s) / data: URI / 本地路径
+  onClick: () => { /* 点击通知时执行（宿主自动聚焦主窗口） */ }
+})
+```
+
+- `title` 必填，`body`/`icon`/`onClick` 可选；`onClick` 每次 show 独立绑定，点击后自动注销
+- 扩展停用/卸载后不再收到通知点击事件
 
 ## 宿主生命周期语义
 
