@@ -5,17 +5,8 @@
  */
 import { app, ipcMain } from 'electron'
 import { promises as fs } from 'node:fs'
-import { isAbsolute, join, sep } from 'node:path'
-
-/** 校验并规范化相对路径（拒绝绝对路径 / .. / 空段 / 盘符） */
-function validateRelPath(name: string): string {
-  if (typeof name !== 'string' || !name.trim()) throw new Error('路径必填（相对路径）')
-  const n = name.trim()
-  if (isAbsolute(n) || /^[a-zA-Z]:/.test(n)) throw new Error('路径必须是相对路径，不能是绝对路径')
-  const parts = n.split(/[\\/]/)
-  if (parts.some((p) => p === '..' || p === '')) throw new Error('路径不能包含 .. 或空路径段')
-  return parts.join(sep)
-}
+import { dirname, join } from 'node:path'
+import { validateRelPath } from './sqliteCore'
 
 /** 扩展数据目录：userData/extensions/<扩展id>/data */
 function dataDirFor(extId: string): string {
@@ -44,7 +35,7 @@ export function registerFsIpc(): void {
     async (_e, extId: string, rel: string, content: string): Promise<{ ok: boolean; error?: string }> => {
       try {
         const p = resolvePath(extId, rel)
-        await fs.mkdir(p.slice(0, p.lastIndexOf(sep)), { recursive: true })
+        await fs.mkdir(dirname(p), { recursive: true })
         await fs.writeFile(p, String(content ?? ''), 'utf8')
         return { ok: true }
       } catch (err) {
