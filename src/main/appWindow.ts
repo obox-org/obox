@@ -128,6 +128,64 @@ export function registerAppWindowIpc(): void {
   )
 }
 
+// ---- App 子窗口 ↔ 扩展消息桥 ----
+// 链路：子窗口 iframe → AppWindow(vue) → IPC 'app:extension-message' → 主进程 → 主窗口
+//   → 宿主分发扩展 handler → 'extension:reply' → 主进程 pending 匹配 → AppWindow → iframe postMessage。
+// 请求-响应经 requestId 关联（主进程生成），10s 超时。
+
+interface PendingReply {
+  resolve: (r: { ok: boolean; data?: unknown; error?: string }) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+const pendingReplies = new Map<number, PendingReply>()
+let reqSeq = 0
+
+function mainWindow(): BrowserWindow | undefined {
+  return BrowserWindow.getAllWindows().find(
+    (w) => !w.isDestroyed() && !w.webContents.getURL().includes('obox-window=app')
+  )
+}
+
+ipcMain.handle(
+  'app:extension-message',
+  (
+    _e,
+    msg: { appId: string; channel: string; payload: unknown }
+  ): Promise<{ ok: boolean; data?: unknown; error?: string }> => {
+    return new Promise((resolve) => {
+      const main = mainWindow()
+      if (!main) {
+        resolve({ ok: false, error: '主窗口不可用' })
+        return
+      }
+      const requestId = ++reqSeq
+      const timer = setTimeout(() => {
+        pendingReplies.delete(requestId)
+        resolve({ ok: false, error: '扩展未响应（超时）' })
+      }, 10_000)
+      pendingReplies.set(requestId, { resolve, timer })
+      main.webContents.send('extension:message', {
+        requestId,
+        appId: msg.appId,
+        channel: msg.channel,
+        payload: msg.payload
+      })
+    })
+  }
+)
+
+ipcMain.on(
+  'extension:reply',
+  (_e, result: { requestId: number; ok: boolean; data?: unknown; error?: string }): void => {
+    const pending = pendingReplies.get(result.requestId)
+    if (!pending) return
+    clearTimeout(pending.timer)
+    pendingReplies.delete(result.requestId)
+    pending.resolve({ ok: result.ok, data: result.data, error: result.error })
+  }
+)
+
 /** 主窗口关闭时关闭所有子窗口（在 createWindow 之后调用） */
 export function closeAllAppWindowsOnMainClose(main: BrowserWindow): void {
   main.on('closed', () => {

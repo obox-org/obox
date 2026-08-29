@@ -214,6 +214,15 @@ export interface MainApi {
   // ---- 扩展能力：文件监听（扩展 data 目录） ----
   fsWatch(extId: string, watchId: string, rel: string): Promise<{ ok: boolean; error?: string }>
   fsUnwatch(extId: string, watchId: string): Promise<void>
+  // ---- App 子窗口 ↔ 扩展消息桥 ----
+  /** 子窗口（AppWindow）向扩展入口发消息并等待响应（经主进程 → 主窗口宿主 → 扩展 handler） */
+  extensionMessage(appId: string, channel: string, payload: unknown): Promise<{
+    ok: boolean
+    data?: unknown
+    error?: string
+  }>
+  /** 主窗口宿主把扩展 handler 的结果回传主进程（请求-响应桥的回复侧） */
+  extensionReply(requestId: number, result: { ok: boolean; data?: unknown; error?: string }): void
 }
 
 /** 主进程 → 渲染进程 的事件（on） */
@@ -236,4 +245,11 @@ export interface MainEvents {
   'notification:click': (e: { notifId: number; extId: string; title: string }) => void
   /** 文件监听事件（key = <扩展id>:<watchId>；relPath 相对监听目录） */
   'fs:watch-event': (e: { key: string; relPath: string }) => void
+  /** App 子窗口向扩展发消息（主窗口宿主按 appId 分发到扩展 handler） */
+  'extension:message': (e: {
+    requestId: number
+    appId: string
+    channel: string
+    payload: unknown
+  }) => void
 }

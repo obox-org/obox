@@ -74,7 +74,11 @@ const api: MainApi = {
   secretsDelete: (extId, key) => ipcRenderer.invoke('secrets:delete', extId, key),
   // 扩展能力：文件监听（扩展 data 目录）
   fsWatch: (extId, watchId, rel) => ipcRenderer.invoke('fs:watch', extId, watchId, rel),
-  fsUnwatch: (extId, watchId) => ipcRenderer.invoke('fs:unwatch', extId, watchId)
+  fsUnwatch: (extId, watchId) => ipcRenderer.invoke('fs:unwatch', extId, watchId),
+  // App 子窗口 ↔ 扩展消息桥
+  extensionMessage: (appId, channel, payload) =>
+    ipcRenderer.invoke('app:extension-message', { appId, channel, payload }),
+  extensionReply: (requestId, result) => ipcRenderer.send('extension:reply', { requestId, ...result })
 }
 
 // 主进程 → 渲染进程事件订阅

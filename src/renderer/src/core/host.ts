@@ -58,6 +58,11 @@ class ExtensionHost {
   private cleanups = new Map<string, () => void>()
   private activated = new Set<string>()
   private barrierWaiters: Array<() => void> = []
+  /** App 子窗口消息处理器（extensionId → handler；api.app.onMessage 注册） */
+  private appMessageHandlers = new Map<
+    string,
+    (channel: string, payload: unknown) => unknown | Promise<unknown>
+  >()
 
   /** 宿主就绪：贡献点已注册完毕，UI 可查询 */
   readonly ready: Promise<void>
@@ -341,7 +346,15 @@ class ExtensionHost {
         get: () => window.api.getAppInfo()
       },
       app: {
-        register: (registration) => appStore.register(ext.id, registration)
+        register: (registration) => appStore.register(ext.id, registration),
+        onMessage: (handler) => {
+          this.appMessageHandlers.set(ext.id, handler)
+          const dispose = (): void => {
+            this.appMessageHandlers.delete(ext.id)
+          }
+          disposables.push(dispose)
+          return { dispose }
+        }
       },
       i18n: {
         t: (key, params) => translateExtension(ext.id, key, params),
@@ -673,6 +686,24 @@ class ExtensionHost {
     })
     // 内置树视图组件（contributes.views 声明的导航项都指向它；数据源由 api.views 提供）
     registry.registerViewComponent('obox.tree', TreeView)
+    // App 子窗口 ↔ 扩展消息桥：按 appId 找到卡片所属扩展，调用其 handler，结果回传
+    window.events.on('extension:message', (e) => {
+      const item = appStore.findById(e.appId)
+      const extId = item?.extensionId
+      const handler = extId ? this.appMessageHandlers.get(extId) : undefined
+      if (!handler) {
+        window.api.extensionReply(e.requestId, { ok: false, error: '扩展未注册消息处理器' })
+        return
+      }
+      Promise.resolve(handler(e.channel, e.payload))
+        .then((data) => window.api.extensionReply(e.requestId, { ok: true, data }))
+        .catch((err) =>
+          window.api.extensionReply(e.requestId, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          })
+        )
+    })
     // ---- 1. 汇总扩展（内置 + 用户），跳过禁用项 ----
     const all: ExtensionInfo[] = []
     const entries: ExtensionEntry[] = [
