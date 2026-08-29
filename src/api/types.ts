@@ -56,6 +56,39 @@ export interface OutputChannel {
   dispose(): void
 }
 
+/** 运行时状态栏项句柄（api.statusBar.createItem 返回） */
+export interface StatusBarItem {
+  /** 显示文本（支持 $(icon) 语法） */
+  text: string
+  /** 悬停提示 */
+  tooltip?: string
+  show(): void
+  hide(): void
+  dispose(): void
+}
+
+/** 树视图节点（contributes.views 树视图数据源） */
+export interface TreeItem {
+  /** 节点 id（同层唯一） */
+  id: string
+  /** 显示文本 */
+  label: string
+  /** 图标（SVG 字符串） */
+  icon?: string
+  /** 是否有子节点（true 时展开才加载） */
+  collapsible?: boolean
+  /** 点击节点执行的命令（须已声明） */
+  command?: string
+  /** 命令参数 */
+  args?: unknown[]
+}
+
+/** 树视图数据源（api.views.registerTreeProvider 注册） */
+export interface TreeViewProvider {
+  /** 返回子节点（element 为空 = 根节点） */
+  getChildren(element?: TreeItem): TreeItem[] | Promise<TreeItem[]>
+}
+
 /** 激活扩展时的宿主能力注入（传给扩展插件函数） */
 export interface ExtensionActivationApi {
   /** 命令注册：把 manifest 声明的命令 id 绑定实现 */
@@ -68,6 +101,13 @@ export interface ExtensionActivationApi {
     setTooltip(id: string, tooltip: string): void
     show(id: string): void
     hide(id: string): void
+    /** 运行时创建状态栏项（动态项，可 show/hide/dispose） */
+    createItem(init?: {
+      text?: string
+      tooltip?: string
+      alignment?: 'left' | 'right'
+      priority?: number
+    }): StatusBarItem
   }
   /** 导航栏徽标 */
   navbar: {
@@ -291,6 +331,10 @@ export interface ExtensionActivationApi {
     get(key: string): Promise<string | undefined>
     set(key: string, value: string): Promise<void>
     delete(key: string): Promise<void>
+  }
+  /** 树视图数据源（contributes.views 声明视图后注册数据源；返回注销函数） */
+  views: {
+    registerTreeProvider(viewId: string, provider: TreeViewProvider): Disposable
   }
 }
 

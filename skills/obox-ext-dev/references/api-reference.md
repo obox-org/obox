@@ -396,6 +396,41 @@ const off = api.window.onFocusChanged((focused) => { /* 聚焦/失焦 */ })
 off.dispose()
 ```
 
+### statusBar.createItem（动态状态栏项，≈VS Code createStatusBarItem）
+
+运行时创建/销毁状态栏项（区别于 manifest 静态声明）：
+
+```ts
+const item = api.statusBar.createItem({ text: '同步中…', alignment: 'right', priority: 10 })
+item.text = '完成 ✓'        // 更新文本（支持 $(icon)）
+item.tooltip = '点击打开'
+item.hide()                 // 隐藏
+item.show()                 // 显示
+item.dispose()              // 销毁（扩展停用宿主自动清理）
+```
+
+### views（树视图，contributes.views 声明 + 数据源注册）
+
+先在 manifest 声明树视图（见 manifest-reference），激活时注册数据源：
+
+```ts
+const off = api.views.registerTreeProvider('my-ext.tree', {
+  async getChildren(element) {
+    if (!element) return [{ id: 'root-1', label: '分组 1', collapsible: true }]
+    if (element.id === 'root-1') {
+      return [
+        { id: 'item-1', label: '任务 A', command: 'my-ext.open', args: ['item-1'] }
+      ]
+    }
+    return []
+  }
+})
+off.dispose()   // 注销数据源
+```
+
+- 节点 `collapsible: true` 展开时才调用 `getChildren(element)` 加载子节点
+- 节点 `command` 点击时执行（`args` 作为参数传给命令 handler）
+
 ## 宿主生命周期语义
 
 - **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表

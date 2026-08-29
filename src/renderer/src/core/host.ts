@@ -19,7 +19,9 @@ import { keybindingStore } from './keybindings'
 import { updaterStore } from './updaterStore'
 import { uiStore } from './uiStore'
 import { outputStore } from './outputStore'
+import { treeStore } from './treeStore'
 import { i18n } from '../i18n'
+import TreeView from '../components/TreeView.vue'
 import type {
   ExtensionActivationApi,
   ExtensionInfo,
@@ -165,6 +167,10 @@ class ExtensionHost {
       }
       registry.registerMenu(ext.id, menu)
     }
+    // 树视图：声明即注册为导航项（view = 内置 'obox.tree'；数据源由 api.views 提供）
+    for (const v of c.views ?? []) {
+      registry.registerNavItem(ext.id, { ...v, view: 'obox.tree' })
+    }
     // 校验视图引用：导航项声明的 view 必须在扩展模块具名导出中存在
     for (const nav of c.navItems ?? []) {
       if (nav.view && !(nav.view in module)) {
@@ -248,6 +254,39 @@ class ExtensionHost {
         hide: (id) => {
           const item = registry.getStatusBarItem(id)
           if (item) item.visible = false
+        },
+        createItem: (init) => {
+          const item = registry.createRuntimeStatusBarItem(ext.id, init)
+          disposables.push(() => {
+            item.active = false
+            const idx = registry.runtimeStatusBarItems.indexOf(item)
+            if (idx >= 0) registry.runtimeStatusBarItems.splice(idx, 1)
+          })
+          return {
+            get text(): string {
+              return item.text
+            },
+            set text(v: string) {
+              item.text = v
+            },
+            get tooltip(): string | undefined {
+              return item.tooltip
+            },
+            set tooltip(v: string | undefined) {
+              item.tooltip = v
+            },
+            show: () => {
+              item.visible = true
+            },
+            hide: () => {
+              item.visible = false
+            },
+            dispose: () => {
+              item.active = false
+              const idx = registry.runtimeStatusBarItems.indexOf(item)
+              if (idx >= 0) registry.runtimeStatusBarItems.splice(idx, 1)
+            }
+          }
         }
       },
       navbar: {
@@ -415,6 +454,13 @@ class ExtensionHost {
         delete: async (key) => {
           const r = await window.api.secretsDelete(ext.id, key)
           if (!r.ok) throw new Error(r.error ?? 'secrets 操作失败')
+        }
+      },
+      views: {
+        registerTreeProvider: (viewId, provider) => {
+          const off = treeStore.registerTreeProvider(viewId, provider)
+          disposables.push(off)
+          return { dispose: off }
         }
       }
     }
@@ -625,6 +671,8 @@ class ExtensionHost {
       labelKey: 'palette.showCommands',
       defaultKey: 'Ctrl+Shift+P'
     })
+    // 内置树视图组件（contributes.views 声明的导航项都指向它；数据源由 api.views 提供）
+    registry.registerViewComponent('obox.tree', TreeView)
     // ---- 1. 汇总扩展（内置 + 用户），跳过禁用项 ----
     const all: ExtensionInfo[] = []
     const entries: ExtensionEntry[] = [

@@ -64,6 +64,24 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
       messages.push({ severity: 'error', message: 'menus 必须是 [{command, when?}] 数组' })
     }
   }
+  if (contributes?.views !== undefined) {
+    const views = contributes.views as unknown
+    if (
+      !Array.isArray(views) ||
+      views.some((v) => {
+        const vv = v as Record<string, unknown> | null
+        return (
+          !vv ||
+          typeof vv !== 'object' ||
+          typeof vv.id !== 'string' ||
+          typeof vv.title !== 'string' ||
+          typeof vv.icon !== 'string'
+        )
+      })
+    ) {
+      messages.push({ severity: 'error', message: 'views 必须是 [{id, title, icon, group?}] 数组' })
+    }
+  }
   if (m.extensionDependencies !== undefined) {
     const deps = m.extensionDependencies as unknown
     if (!Array.isArray(deps) || deps.some((d) => typeof d !== 'string')) {

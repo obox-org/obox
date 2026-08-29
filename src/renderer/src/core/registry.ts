@@ -58,6 +58,39 @@ class Registry {
     this.navItems.push({ ...c, group: c.group ?? 'top', extensionId, active: true })
   }
 
+  /** 动态状态栏项（api.statusBar.createItem 创建；id 宿主生成，按扩展隔离） */
+  private runtimeSeq = 0
+  readonly runtimeStatusBarItems = reactive<RegisteredStatusBarItem[]>([])
+
+  createRuntimeStatusBarItem(
+    extensionId: string,
+    init?: { text?: string; tooltip?: string; alignment?: 'left' | 'right'; priority?: number }
+  ): RegisteredStatusBarItem {
+    const id = `runtime:${extensionId}:${++this.runtimeSeq}`
+    const item: RegisteredStatusBarItem = {
+      id,
+      name: id,
+      text: init?.text ?? '',
+      tooltip: init?.tooltip,
+      alignment: init?.alignment ?? 'right',
+      priority: init?.priority ?? 0,
+      extensionId,
+      visible: true,
+      active: true
+    }
+    this.runtimeStatusBarItems.push(item)
+    return item
+  }
+
+  /** 移除某扩展的全部动态状态栏项（停用时调用） */
+  removeRuntimeStatusBarItems(extensionId: string): void {
+    for (let i = this.runtimeStatusBarItems.length - 1; i >= 0; i--) {
+      if (this.runtimeStatusBarItems[i].extensionId === extensionId) {
+        this.runtimeStatusBarItems.splice(i, 1)
+      }
+    }
+  }
+
   registerStatusBarItem(extensionId: string, c: StatusBarItemContribution): void {
     this.statusBarItems.push({
       ...c,
@@ -153,7 +186,8 @@ class Registry {
   }
 
   getVisibleStatusBarItems(alignment: 'left' | 'right'): RegisteredStatusBarItem[] {
-    return this.statusBarItems
+    const all = [...this.statusBarItems, ...this.runtimeStatusBarItems]
+    return all
       .filter((i) => i.active && i.visible && (i.alignment ?? 'right') === alignment)
       .sort((a, b) => {
         const pa = a.priority ?? 0

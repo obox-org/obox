@@ -32,7 +32,12 @@ const activeView = computed<Component | null>(() => {
 <template>
   <main class="content-area">
     <KeepAlive>
-      <component :is="activeView" v-if="activeView" :key="activeNavId" />
+      <component
+        :is="activeView"
+        v-if="activeView"
+        :key="activeNavId"
+        :active-nav-id="activeNavId"
+      />
     </KeepAlive>
     <div v-if="!activeView" class="content-empty">
       <p>{{ t('content.empty') }}</p>

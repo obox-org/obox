@@ -213,6 +213,29 @@
 
 - 右键该扩展注册的 App 卡片即弹出菜单；菜单项执行命令 handler
 
+### views（树视图，manifest 声明）
+
+在导航区贡献树形视图（数据源由扩展激活时 `api.views.registerTreeProvider(viewId, provider)` 提供）：
+
+```json
+{
+  "contributes": {
+    "views": [
+      { "id": "my-ext.tree", "title": "我的树", "icon": "<svg viewBox='0 0 24 24'>...</svg>" }
+    ]
+  }
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `id` | ✅ | 视图 id（全局唯一，建议含扩展前缀；数据源注册用同一 id） |
+| `title` | ✅ | 显示名（导航 tooltip / 内容区标题） |
+| `icon` | ✅ | 图标（SVG 字符串） |
+| `group` | ❌ | `top`（默认）/ `bottom` |
+
+- 声明即注册为导航项（内容区渲染内置树组件）；节点点击执行 `command`（TreeItem 上声明，`args` 作参数）
+
 ## 校验规则（`core/manifest.ts`）
 
 - `name` 必填且匹配 `^[a-z0-9][a-z0-9._-]*$` → 否则 **error**，不加载
