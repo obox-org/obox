@@ -36,6 +36,52 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
   if (m.contributes !== undefined && typeof m.contributes !== 'object') {
     messages.push({ severity: 'error', message: 'contributes 必须是对象' })
   }
+  const contributes = m.contributes as Record<string, unknown> | undefined
+  if (contributes?.keybindings !== undefined) {
+    const kb = contributes.keybindings as unknown
+    if (
+      !Array.isArray(kb) ||
+      kb.some(
+        (k) =>
+          !k ||
+          typeof k !== 'object' ||
+          typeof (k as Record<string, unknown>).command !== 'string' ||
+          typeof (k as Record<string, unknown>).key !== 'string'
+      )
+    ) {
+      messages.push({ severity: 'error', message: 'keybindings 必须是 [{command, key}] 数组' })
+    }
+  }
+  if (contributes?.menus !== undefined) {
+    const menus = contributes.menus as unknown
+    if (
+      !Array.isArray(menus) ||
+      menus.some(
+        (m) =>
+          !m || typeof m !== 'object' || typeof (m as Record<string, unknown>).command !== 'string'
+      )
+    ) {
+      messages.push({ severity: 'error', message: 'menus 必须是 [{command, when?}] 数组' })
+    }
+  }
+  if (contributes?.views !== undefined) {
+    const views = contributes.views as unknown
+    if (
+      !Array.isArray(views) ||
+      views.some((v) => {
+        const vv = v as Record<string, unknown> | null
+        return (
+          !vv ||
+          typeof vv !== 'object' ||
+          typeof vv.id !== 'string' ||
+          typeof vv.title !== 'string' ||
+          typeof vv.icon !== 'string'
+        )
+      })
+    ) {
+      messages.push({ severity: 'error', message: 'views 必须是 [{id, title, icon, group?}] 数组' })
+    }
+  }
   if (m.extensionDependencies !== undefined) {
     const deps = m.extensionDependencies as unknown
     if (!Array.isArray(deps) || deps.some((d) => typeof d !== 'string')) {

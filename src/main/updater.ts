@@ -160,13 +160,10 @@ export function registerUpdateIpc(): void {
       try {
         if (!opts.feedUrl) return { ok: false, error: '未配置更新源（需在设置-更新选择更新扩展）' }
         applyProxy(opts.proxy)
-        // Windows 上 electron-updater 不分架构固定读 latest.yml（x64 元数据）；
-        // arm64 机器必须指定 channel 为 latest-arm64，否则会下载到 x64 安装包
-        autoUpdater.setFeedURL({
-          provider: 'generic',
-          url: opts.feedUrl,
-          channel: process.arch === 'arm64' ? 'latest-arm64' : 'latest'
-        })
+        // Windows 上 electron-builder 生成的更新元数据固定叫 latest.yml（无架构后缀），
+        // 其中 files 含全部架构安装包；electron-updater 按机器架构自动选匹配的安装包。
+        // 不要设 channel（arm64 不存在 latest-arm64.yml，设了会 404）。
+        autoUpdater.setFeedURL({ provider: 'generic', url: opts.feedUrl })
         const result = await autoUpdater.checkForUpdates()
         return { ok: true, available: result?.updateInfo.version }
       } catch (err) {

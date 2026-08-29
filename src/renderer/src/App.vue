@@ -5,6 +5,9 @@ import NavBar from './components/NavBar.vue'
 import ContentArea from './components/ContentArea.vue'
 import StatusBar from './components/StatusBar.vue'
 import CommandPalette from './components/CommandPalette.vue'
+import PromptHost from './components/PromptHost.vue'
+import ToastHost from './components/ToastHost.vue'
+import OutputPanel from './components/OutputPanel.vue'
 import { registry } from './core/registry'
 import { stateStore } from './core/state'
 import { host } from './core/host'
@@ -36,12 +39,15 @@ function selectNav(id: string): void {
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
-  // 快捷键系统：匹配内置/自定义快捷键（如 Ctrl+Shift+P 命令面板）
+  // 快捷键系统：匹配内置/扩展快捷键（内置命令面板 + 扩展命令通用执行）
   const command = keybindingStore.matchKeydown(e)
   if (!command) return
   if (command === 'app.showCommands') {
     e.preventDefault()
     paletteOpen.value = !paletteOpen.value
+  } else {
+    e.preventDefault()
+    void host.executeCommand(command).catch((err) => console.error('[keybinding]', command, err))
   }
 }
 
@@ -62,8 +68,11 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
       <NavBar :active-nav-id="activeNavId" @select="selectNav" />
       <ContentArea :active-nav-id="activeNavId" />
     </div>
+    <OutputPanel />
     <StatusBar :active-nav-id="activeNavId" />
     <CommandPalette :open="paletteOpen" @close="paletteOpen = false" />
+    <PromptHost />
+    <ToastHost />
   </div>
 </template>
 

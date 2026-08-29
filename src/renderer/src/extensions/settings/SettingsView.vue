@@ -18,7 +18,7 @@ import type { RegisteredSettingsPage } from '../../core/extensionSettings'
 
 const { t } = useI18n()
 
-type TreeKey = 'appearance' | 'language' | 'keyboard' | 'update' | 'network' | 'extension'
+type TreeKey = 'appearance' | 'language' | 'keyboard' | 'update' | 'network' | 'notification' | 'extension'
 
 const active = ref<TreeKey>('appearance')
 const activeExt = ref<string | null>(null)
@@ -160,6 +160,17 @@ function saveProxy(): void {
   stateStore.setSetting('network.proxy', { ...proxyConfig.value })
 }
 
+// ---- 通知（逐扩展开关） ----
+const notificationExts = computed(() => host.getExtensions())
+
+function isNotifDisabled(id: string): boolean {
+  return stateStore.isNotificationDisabled(id)
+}
+
+function toggleNotif(id: string, disabled: boolean): void {
+  stateStore.setNotificationDisabled(id, disabled)
+}
+
 // ---- 扩展设置 ----
 const extensionPages = computed<RegisteredSettingsPage[]>(() => extensionSettingsStore.pages)
 const extIds = computed(() => extensionSettingsStore.extensionIds)
@@ -208,6 +219,13 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
       </div>
       <div class="tree-node" :class="{ active: active === 'network' }" @click="active = 'network'">
         <span class="tree-label">{{ t('settings.tree.network') }}</span>
+      </div>
+      <div
+        class="tree-node"
+        :class="{ active: active === 'notification' }"
+        @click="active = 'notification'"
+      >
+        <span class="tree-label">{{ t('settings.tree.notification') }}</span>
       </div>
       <div class="tree-node" :class="{ active: active === 'extension' && !activeExt }">
         <span class="tree-label">{{ t('settings.tree.extensions') }}</span>
@@ -406,6 +424,25 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
         <div class="config-row">
           <label>{{ t('settings.network.noProxy') }}</label>
           <textarea v-model="noProxyText" class="text-input" rows="3" @change="saveProxy" />
+        </div>
+      </div>
+
+      <!-- 通知（逐扩展开关） -->
+      <div v-else-if="active === 'notification'" class="config-block">
+        <h2>{{ t('settings.notification.title') }}</h2>
+        <p class="config-desc">{{ t('settings.notification.desc') }}</p>
+        <p v-if="notificationExts.length === 0" class="config-desc">
+          {{ t('settings.notification.empty') }}
+        </p>
+        <div v-for="ext in notificationExts" :key="ext.id" class="config-row">
+          <label>
+            <input
+              type="checkbox"
+              :checked="!isNotifDisabled(ext.id)"
+              @change="toggleNotif(ext.id, !($event.target as HTMLInputElement).checked)"
+            />
+            {{ extDisplayName(ext.id) }}
+          </label>
         </div>
       </div>
 

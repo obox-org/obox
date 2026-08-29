@@ -18,6 +18,13 @@ src/
 │   ├── capabilities.ts # 能力服务：应用信息、用户扩展扫描/卸载/卸载钩子
 │   ├── oix.ts       # .oix 扩展包安装（校验 + 防路径穿越解压 + 安装 IPC）
 │   ├── debug.ts     # 调试扩展（--debug-extension 解析 + IPC，不安装直接加载）
+│   ├── sqlite.ts    # 扩展数据库（node:sqlite 内置驱动，相对路径 → 扩展 data 目录，表集合 API）
+│   ├── timer.ts     # 扩展全局定时器（主进程精确计时，秒粒度，按扩展隔离）
+│   ├── notification.ts # 扩展系统提醒（操作系统通知 + 点击事件）
+│   ├── net.ts       # 扩展网络请求（api.net.fetch，主进程 + 代理，绕渲染 CSP 禁外网）
+│   ├── fs.ts        # 扩展文件系统（api.fs，限定扩展 data 目录，相对路径 + watch）
+│   ├── ext.ts       # 扩展杂项能力（对话框/外链/剪贴板/任务栏进度）
+│   ├── secrets.ts   # 扩展密钥存储（api.secrets，safeStorage 加密）
 │   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源 + app://debug）
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
 ├── shared/          # 三端共享类型（IPC 契约）
@@ -93,8 +100,8 @@ git push origin v1.0.0
 - 工作流：[.github/workflows/release.yml](.github/workflows/release.yml)（`on.push.tags: v*`）
 - 流程：checkout tag → 装依赖 → 校验 tag 版本与 package.json 一致 → typecheck → `electron-builder --win nsis --x64 --arm64 --publish never`（输出到 runner 临时目录）→ `gh release create` 上传 `obox-<version>-x64-setup.exe` + `obox-<version>-arm64-setup.exe` + `latest.yml` + `latest-arm64.yml`（release 已存在则删除重建，幂等）
 - **安装器**：NSIS 向导式（`oneClick: false`）——安装时可**选择安装目录**与**“所有用户/当前用户”**（默认当前用户，选所有用户自动提权）；快捷方式、卸载入口由向导生成
-- **架构**：Windows 出 **x64 + arm64** 两个安装包（Electron 已移除 ia32 32 位构建）；electron-updater 按机器架构自动拉取对应 `latest(-arm64).yml` 更新包
-- 更新源：更新提供者扩展（如 `extensions/obox-updater/`）先经 `api.update.resolveFeed('obox-org/obox')` **动态解析最后一次编译的 release**（GitHub API 按创建时间最新，不依赖 latest 标记），再从中拉取 `latest.yml`/`latest-arm64.yml` + 对应架构的 `setup.exe` 安装包（兜底源为 `releases/latest/download/`）
+- **架构**：Windows 出 **x64 + arm64** 两个安装包（Electron 已移除 ia32 32 位构建）；`latest.yml` 内 files 含全部架构安装包，electron-updater 按机器架构自动选对应安装包
+- 更新源：更新提供者扩展（如 `extensions/obox-updater/`）先经 `api.update.resolveFeed('obox-org/obox')` **动态解析最后一次编译的 release**（GitHub API 按创建时间最新，不依赖 latest 标记），再从中拉取 `latest.yml` + 对应架构的 `setup.exe` 安装包（兜底源为 `releases/latest/download/`）
 
 ## 快速上手（新会话必读）
 

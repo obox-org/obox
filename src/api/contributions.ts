@@ -97,6 +97,34 @@ export interface SettingsPage {
   fields: SettingField[]
 }
 
+/** 快捷键贡献（manifest 声明）：把已声明命令绑定默认组合键 */
+export interface KeybindingContribution {
+  /** 命令 id（必须在 contributes.commands 声明） */
+  command: string
+  /** 组合键字符串（如 Ctrl+Shift+K） */
+  key: string
+}
+
+/** 上下文菜单贡献（manifest 声明）：命令挂到该扩展 App 卡片的右键菜单 */
+export interface MenuContribution {
+  /** 命令 id（必须在 contributes.commands 声明） */
+  command: string
+  /** 显隐条件（首版仅 'false' 即隐藏，其余恒真） */
+  when?: string
+}
+
+/** 树视图贡献（manifest 声明）：在导航区贡献树形视图（数据源由 api.views.registerTreeProvider 提供） */
+export interface ViewContribution {
+  /** 视图 id（全局唯一，建议含扩展前缀；数据源注册用同一 id） */
+  id: string
+  /** 显示名（导航图标 tooltip / 内容区标题） */
+  title: string
+  /** 图标（SVG 字符串） */
+  icon: string
+  /** 导航分组：top（可排序业务导航，默认）/ bottom（固定全局区） */
+  group?: 'top' | 'bottom'
+}
+
 /** manifest 的贡献点声明 */
 export interface ContributionManifest {
   navItems?: NavItemContribution[]
@@ -107,6 +135,12 @@ export interface ContributionManifest {
   i18n?: Record<string, Record<string, string>>
   /** 扩展设置 schema（对齐 VS Code contributes.configuration 简化版） */
   settings?: SettingsPage
+  /** 快捷键（复用宿主 keybindingStore：冲突检测/用户可改/设置页展示/持久化） */
+  keybindings?: KeybindingContribution[]
+  /** 上下文菜单（首版：该扩展 App 卡片的右键菜单） */
+  menus?: MenuContribution[]
+  /** 树视图（导航区树形视图；数据源经 api.views.registerTreeProvider 提供） */
+  views?: ViewContribution[]
   /** 声明为"更新提供者扩展"：提供 obox 更新能力（设置-更新选择，只能一个生效） */
   updater?: {
     /** 更新源 URL 模板（可含 {version} 占位）；扩展激活时也可用 api.update 覆盖 */

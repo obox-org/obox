@@ -87,3 +87,15 @@ _Avoid_: 任务、事项
 
 **Disposable**:
 扩展 API 的统一清理形状，所有注册 API 返回 dispose()；扩展上下文的 subscriptions 数组在停用时统一释放。
+
+**System Notification / 系统提醒**:
+经 `api.notification.show` 调用操作系统通知 API（Windows Toast / macOS 通知中心）弹出的提醒；点击通知宿主自动聚焦主窗口并回调扩展。设置-通知可**逐扩展关闭**（关闭后该扩展不再弹出）。
+_Avoid_: 弹窗、应用内提醒
+
+**Database / 数据库**:
+扩展经 `api.sqlite.open(name)` 打开的 SQLite 数据库（宿主内置 node:sqlite 驱动，零依赖）。`name` 为**相对路径**，解析到该扩展自己的数据目录 `userData/extensions/<扩展id>/data/`（宿主自动建目录，天然按扩展隔离）；首次写入自动建表（id 主键，列按类型推断）。表集合操作 + 结构体匹配（等值 AND）+ `exec`/`query` 支持 SQL。
+_Avoid_: 数据库路径、数据文件
+
+**Global Timer / 全局定时器**:
+经 `api.timer` 使用的宿主级定时器，运行在**主进程**（不受渲染进程后台节流影响），间隔为**整数秒**（≥1s）；按扩展隔离，扩展停用自动清理。与扩展自己 `setTimeout` 的区别：后者在渲染进程，窗口最小化时被节流到 1 秒粒度。
+_Avoid_: 系统定时器、计划任务

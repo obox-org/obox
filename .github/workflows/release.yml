@@ -51,7 +51,7 @@ jobs:
       # - 一次构建 x64 + arm64 两个安装包（--x64 --arm64；electron-builder 下载对应架构 Electron）
       # - electron-builder 只编译（--publish never，发布由 gh release 负责）
       # - 输出到 runner 临时目录（绝对路径，避免工作区相对路径/gitignore 干扰）
-      # - 上传 obox-<version>-<arch>-setup.exe（x64/arm64）+ latest.yml / latest-arm64.yml（自动更新按架构拉取）
+      # - 上传 obox-<version>-<arch>-setup.exe（x64/arm64）+ latest.yml（files 含全部架构安装包，electron-updater 按机器架构自动选）
       - name: Build and create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -84,20 +84,6 @@ jobs:
           gh release create $tag $assets `
             --title "obox $tag" `
             --notes "obox $tag Windows 安装包（x64 / arm64，向导式安装：可选目录与安装用户）"
-
-      # 触发 obox-updater 仓库 CI：编译其 .oix 并跨仓上传到本 Release
-      # 前置：本仓库需配置 secret UPSTREAM_DISPATCH_TOKEN（对 obox-org/obox-updater 有写权限的 PAT）
-      - name: Dispatch obox-updater release build
-        env:
-          UPSTREAM_DISPATCH_TOKEN: ${{ secrets.UPSTREAM_DISPATCH_TOKEN }}
-        shell: pwsh
-        run: |
-          $body = @{ event_type = 'obox-released'; client_payload = @{ tag = "${{ github.ref_name }}" } } | ConvertTo-Json
-          $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-          Invoke-RestMethod -Uri 'https://api.github.com/repos/obox-org/obox-updater/dispatches' -Method Post `
-            -Headers @{ Authorization = "token $env:UPSTREAM_DISPATCH_TOKEN"; 'User-Agent' = 'obox-release' } `
-            -ContentType 'application/json; charset=utf-8' -Body $bytes
-          Write-Output "已触发 obox-updater 构建 oix 上传到 ${{ github.ref_name }}"
 
       # 上传构建日志（可选，便于排查）
       - name: Upload build artifacts on failure

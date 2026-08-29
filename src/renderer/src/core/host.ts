@@ -17,13 +17,19 @@ import {
 } from './extensionI18n'
 import { keybindingStore } from './keybindings'
 import { updaterStore } from './updaterStore'
+import { uiStore } from './uiStore'
+import { outputStore } from './outputStore'
+import { treeStore } from './treeStore'
 import { i18n } from '../i18n'
+import TreeView from '../components/TreeView.vue'
 import type {
   ExtensionActivationApi,
   ExtensionInfo,
   ExtensionManifest,
   ExtensionModule,
   ProxyConfig,
+  SqliteDb,
+  SqliteRow,
   UpdateEvent
 } from './types'
 
@@ -73,6 +79,18 @@ class ExtensionHost {
     return this.extensions.get(id)
   }
 
+  /** 全部扩展（设置页通知开关等 UI 用） */
+  getExtensions(): ExtensionInfo[] {
+    return [...this.extensions.values()]
+  }
+
+  /** 执行命令（跨扩展，经命令 id；快捷键触发等场景用） */
+  async executeCommand<T = unknown>(id: string, ...args: unknown[]): Promise<T> {
+    const cmd = registry.commands.find((c) => c.command === id)
+    if (!cmd || !cmd.handler) throw new Error(`command not found: ${id}`)
+    return (await cmd.handler(...args)) as T
+  }
+
   /** 阶段一：注册贡献点（barrier 释放前，UI 不消费注册表） */
   private registerContributions(ext: ExtensionInfo, module: ExtensionModule): void {
     const c = ext.manifest.contributes
@@ -116,6 +134,43 @@ class ExtensionHost {
     if (c.settings) extensionSettingsStore.register(ext.id, c.settings)
     // 更新提供者（manifest 声明；设置-更新选择生效，只能一个）
     if (c.updater) updaterStore.register(ext.id, c.updater.feedUrl)
+    // 快捷键贡献：复用 keybindingStore（冲突检测/可改/设置页展示/持久化）；labelKey 用命令 title
+    for (const kb of c.keybindings ?? []) {
+      const cmd = c.commands?.find((x) => x.command === kb.command)
+      if (!cmd) {
+        ext.validations.push({
+          severity: 'warning',
+          message: `keybindings 引用的命令 ${kb.command} 未在 contributes.commands 声明`
+        })
+        continue
+      }
+      const conflict = keybindingStore
+        .list()
+        .find((e) => e.command !== kb.command && e.currentKey === kb.key)
+      if (conflict) {
+        ext.validations.push({
+          severity: 'warning',
+          message: `快捷键 ${kb.key} 已被 ${conflict.command} 占用（${kb.command} 未注册）`
+        })
+        continue
+      }
+      keybindingStore.register({ command: kb.command, labelKey: cmd.title, defaultKey: kb.key })
+    }
+    // 上下文菜单：命令挂到该扩展 App 卡片右键（command 须已声明）
+    for (const menu of c.menus ?? []) {
+      if (!c.commands?.some((x) => x.command === menu.command)) {
+        ext.validations.push({
+          severity: 'warning',
+          message: `menus 引用的命令 ${menu.command} 未在 contributes.commands 声明`
+        })
+        continue
+      }
+      registry.registerMenu(ext.id, menu)
+    }
+    // 树视图：声明即注册为导航项（view = 内置 'obox.tree'；数据源由 api.views 提供）
+    for (const v of c.views ?? []) {
+      registry.registerNavItem(ext.id, { ...v, view: 'obox.tree' })
+    }
     // 校验视图引用：导航项声明的 view 必须在扩展模块具名导出中存在
     for (const nav of c.navItems ?? []) {
       if (nav.view && !(nav.view in module)) {
@@ -181,11 +236,8 @@ class ExtensionHost {
         }
         return registry.setCommandHandler(id, handler)
       },
-      executeCommand: async <T = unknown>(id: string, ...args: unknown[]): Promise<T> => {
-        const cmd = registry.commands.find((c) => c.command === id)
-        if (!cmd || !cmd.handler) throw new Error(`command not found: ${id}`)
-        return (await cmd.handler(...args)) as T
-      },
+      executeCommand: <T = unknown>(id: string, ...args: unknown[]): Promise<T> =>
+        this.executeCommand(id, ...args),
       statusBar: {
         setText: (id, text) => {
           const item = registry.getStatusBarItem(id)
@@ -202,6 +254,39 @@ class ExtensionHost {
         hide: (id) => {
           const item = registry.getStatusBarItem(id)
           if (item) item.visible = false
+        },
+        createItem: (init) => {
+          const item = registry.createRuntimeStatusBarItem(ext.id, init)
+          disposables.push(() => {
+            item.active = false
+            const idx = registry.runtimeStatusBarItems.indexOf(item)
+            if (idx >= 0) registry.runtimeStatusBarItems.splice(idx, 1)
+          })
+          return {
+            get text(): string {
+              return item.text
+            },
+            set text(v: string) {
+              item.text = v
+            },
+            get tooltip(): string | undefined {
+              return item.tooltip
+            },
+            set tooltip(v: string | undefined) {
+              item.tooltip = v
+            },
+            show: () => {
+              item.visible = true
+            },
+            hide: () => {
+              item.visible = false
+            },
+            dispose: () => {
+              item.active = false
+              const idx = registry.runtimeStatusBarItems.indexOf(item)
+              if (idx >= 0) registry.runtimeStatusBarItems.splice(idx, 1)
+            }
+          }
         }
       },
       navbar: {
@@ -241,7 +326,16 @@ class ExtensionHost {
         minimize: () => window.api.windowAction('minimize'),
         toggleMaximize: () => window.api.windowAction('toggle-maximize'),
         close: () => window.api.windowAction('close'),
-        isMaximized: async () => (await window.api.getWindowState())?.isMaximized ?? false
+        isMaximized: async () => (await window.api.getWindowState())?.isMaximized ?? false,
+        setProgressBar: (progress) => window.api.setProgressBar(progress),
+        isFocused: async () => (await window.api.getWindowState())?.isFocused ?? false,
+        onFocusChanged: (callback) => {
+          const off = window.events.on('window:state-changed', (state) => {
+            callback(state.isFocused)
+          })
+          disposables.push(off)
+          return { dispose: off }
+        }
       },
       appInfo: {
         get: () => window.api.getAppInfo()
@@ -272,7 +366,15 @@ class ExtensionHost {
         },
         get: <T = unknown>(key: string, defaultValue?: T): T | undefined =>
           stateStore.getSetting<T>(key, defaultValue),
-        set: (key, value) => stateStore.setSetting(key, value)
+        set: (key, value) => stateStore.setSetting(key, value),
+        onChanged: (callback) => {
+          const dispose = stateStore.onSettingsChanged(() => {
+            /* 设置变更通知（key 粒度不追踪，通知全部监听者） */
+            callback('')
+          })
+          disposables.push(dispose)
+          return { dispose }
+        }
       },
       update: this.buildUpdateApi(ext, disposables),
       proxy: {
@@ -286,8 +388,237 @@ class ExtensionHost {
             }
           )
         }
+      },
+      timer: this.buildTimerApi(ext, disposables),
+      sqlite: {
+        open: (name) => this.buildSqliteDb(ext.id, name)
+      },
+      notification: {
+        show: (opts) => this.showNotification(ext, opts, disposables)
+      },
+      net: {
+        fetch: (url, opts) =>
+          window.api.netFetch(
+            { url, method: opts?.method, headers: opts?.headers, body: opts?.body, json: opts?.json },
+            stateStore.getSetting<ProxyConfig>('network.proxy')
+          )
+      },
+      dialog: {
+        showOpenDialog: (opts) => window.api.dialogOpen(opts ?? {}),
+        showSaveDialog: (opts) => window.api.dialogSave(opts ?? {}),
+        showMessageBox: (opts) => window.api.dialogMessage(opts ?? {})
+      },
+      shell: {
+        openExternal: (url) => window.api.shellOpenExternal(url),
+        openPath: (p) => window.api.shellOpenPath(p)
+      },
+      clipboard: {
+        readText: () => window.api.clipboardReadText(),
+        writeText: (text) => window.api.clipboardWriteText(text)
+      },
+      env: {
+        platform: window.api.env.platform,
+        arch: window.api.env.arch,
+        nodeVersion: window.api.env.nodeVersion,
+        language: i18n.global.locale.value as string,
+        getOboxVersion: () => window.api.getOboxVersion()
+      },
+      theme: this.buildThemeApi(disposables),
+      fs: this.buildFsApi(ext.id, disposables),
+      ui: {
+        showQuickPick: (items, opts) => uiStore.showQuickPick(items, opts),
+        showInputBox: (opts) => uiStore.showInputBox(opts),
+        showMessage: (message, type = 'info') => uiStore.showToast(message, type),
+        withProgress: async (title, task) => {
+          uiStore.showProgress(title, null)
+          try {
+            return await task((percent) => uiStore.showProgress(title, percent))
+          } finally {
+            uiStore.hideProgress()
+          }
+        }
+      },
+      output: {
+        createChannel: (name) => outputStore.createChannel(name)
+      },
+      secrets: {
+        get: async (key) => {
+          const r = await window.api.secretsGet(ext.id, key)
+          if (!r.ok) throw new Error(r.error ?? 'secrets 操作失败')
+          return r.value
+        },
+        set: async (key, value) => {
+          const r = await window.api.secretsSet(ext.id, key, value)
+          if (!r.ok) throw new Error(r.error ?? 'secrets 操作失败')
+        },
+        delete: async (key) => {
+          const r = await window.api.secretsDelete(ext.id, key)
+          if (!r.ok) throw new Error(r.error ?? 'secrets 操作失败')
+        }
+      },
+      views: {
+        registerTreeProvider: (viewId, provider) => {
+          const off = treeStore.registerTreeProvider(viewId, provider)
+          disposables.push(off)
+          return { dispose: off }
+        }
       }
     }
+  }
+
+  /** 构造 api.theme（读当前主题 + 监听切换，纯渲染侧） */
+  private buildThemeApi(disposables: Array<() => void>): ExtensionActivationApi['theme'] {
+    const listeners = new Set<(id: string) => void>()
+    const notify = (): void => {
+      const id = themeStore.currentId
+      listeners.forEach((l) => l(id))
+    }
+    const off = stateStore.onSettingsChanged(notify)
+    disposables.push(off)
+    return {
+      getCurrent: () => themeStore.currentId,
+      onChanged: (callback) => {
+        listeners.add(callback)
+        return {
+          dispose: () => {
+            listeners.delete(callback)
+          }
+        }
+      }
+    }
+  }
+
+  /** 构造 api.fs（限定扩展 data 目录，相对路径；watch 经 'fs:watch-event' 分发） */
+  private buildFsApi(extId: string, disposables: Array<() => void>): ExtensionActivationApi['fs'] {
+    const call = async <T extends { ok: boolean; error?: string }>(
+      p: Promise<T>
+    ): Promise<Omit<T, 'ok' | 'error'>> => {
+      const r = await p
+      if (!r.ok) throw new Error(r.error ?? '文件操作失败')
+      return r as unknown as Omit<T, 'ok' | 'error'>
+    }
+    const watchCallbacks = new Map<string, (e: { relPath: string }) => void>()
+    const offWatch = window.events.on('fs:watch-event', (e) => {
+      const cb = watchCallbacks.get(e.key)
+      if (cb) cb({ relPath: e.relPath })
+    })
+    disposables.push(offWatch)
+    return {
+      readFile: async (rel) => (await call(window.api.fsReadFile(extId, rel))).content ?? '',
+      writeFile: async (rel, content) => {
+        await call(window.api.fsWriteFile(extId, rel, content))
+      },
+      readDir: async (rel) => (await call(window.api.fsReadDir(extId, rel))).entries ?? [],
+      exists: async (rel) => (await call(window.api.fsExists(extId, rel))).exists ?? false,
+      remove: async (rel) => {
+        await call(window.api.fsRemove(extId, rel))
+      },
+      watch: async (watchId, dir, callback) => {
+        watchCallbacks.set(`${extId}:${watchId}`, callback)
+        const r = await window.api.fsWatch(extId, watchId, dir)
+        if (!r.ok) {
+          watchCallbacks.delete(`${extId}:${watchId}`)
+          throw new Error(r.error ?? '监听失败')
+        }
+      },
+      unwatch: async (watchId) => {
+        watchCallbacks.delete(`${extId}:${watchId}`)
+        await window.api.fsUnwatch(extId, watchId)
+      }
+    }
+  }
+
+  /** 构造 api.timer（主进程精确计时；触发经 'timer:fire' 事件分发回调） */
+  private buildTimerApi(
+    ext: ExtensionInfo,
+    disposables: Array<() => void>
+  ): ExtensionActivationApi['timer'] {
+    const callbacks = new Map<string, () => void>()
+    const offFire = window.events.on('timer:fire', (e) => {
+      const cb = callbacks.get(e.key)
+      if (!cb) return
+      cb()
+      if (e.kind === 'timeout') callbacks.delete(e.key)
+    })
+    disposables.push(offFire)
+    const set = (kind: 'timeout' | 'interval') => (
+      id: string,
+      seconds: number,
+      callback: () => void
+    ): void => {
+      callbacks.set(`${ext.id}:${id}`, callback)
+      void (kind === 'timeout'
+        ? window.api.setTimerTimeout(ext.id, id, seconds)
+        : window.api.setTimerInterval(ext.id, id, seconds))
+    }
+    const clear = (id: string): void => {
+      callbacks.delete(`${ext.id}:${id}`)
+      void window.api.clearTimer(ext.id, id)
+    }
+    return {
+      setTimeout: set('timeout'),
+      setInterval: set('interval'),
+      clearTimeout: clear,
+      clearInterval: clear
+    }
+  }
+
+  /** 构造 api.sqlite.open 返回的数据库句柄（所有操作经 IPC，异步） */
+  private buildSqliteDb(extId: string, name: string): Promise<SqliteDb> {
+    return window.api.sqliteOpen(extId, name).then((r) => {
+      if (!r.ok) throw new Error(r.error ?? '打开数据库失败')
+      const call = async <T extends { ok: boolean; error?: string }>(
+        p: Promise<T>
+      ): Promise<Omit<T, 'ok' | 'error'>> => {
+        const result = await p
+        if (!result.ok) throw new Error(result.error ?? '数据库操作失败')
+        return result as unknown as Omit<T, 'ok' | 'error'>
+      }
+      return {
+        exec: (sql) => window.api.sqliteExec(extId, name, sql),
+        query: async (sql, params = []) =>
+          ((await call(window.api.sqliteQuery(extId, name, sql, params))).rows as SqliteRow[] | undefined) ?? [],
+        insert: async (row) =>
+          ((await call(window.api.sqliteInsert(extId, name, row))).row as SqliteRow | undefined) ?? null,
+        update: async (where, patch) =>
+          (await call(window.api.sqliteUpdate(extId, name, where, patch))).changes ?? 0,
+        get: async (id) =>
+          ((await call(window.api.sqliteGet(extId, name, id))).row as SqliteRow | undefined) ?? null,
+        get_all: async () =>
+          ((await call(window.api.sqliteGetAll(extId, name))).rows as SqliteRow[] | undefined) ?? [],
+        get_by: async (where) =>
+          ((await call(window.api.sqliteGetBy(extId, name, where))).rows as SqliteRow[] | undefined) ?? [],
+        del: async (id) => (await call(window.api.sqliteDel(extId, name, id))).changes ?? 0,
+        del_by: async (where) => (await call(window.api.sqliteDelBy(extId, name, where))).changes ?? 0,
+        clear: async () => (await call(window.api.sqliteClear(extId, name))).changes ?? 0,
+        close: () => window.api.sqliteClose(extId, name)
+      }
+    })
+  }
+
+  /** api.notification.show：设置-通知关闭的扩展直接 no-op；点击通知分发 onClick（一次性） */
+  private showNotification(
+    ext: ExtensionInfo,
+    opts: { title: string; body?: string; icon?: string; onClick?: () => void },
+    disposables: Array<() => void>
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (stateStore.isNotificationDisabled(ext.id)) {
+      return Promise.resolve({ ok: true })
+    }
+    return window.api
+      .showNotification(ext.id, { title: opts.title, body: opts.body, icon: opts.icon })
+      .then((r) => {
+        if (r.ok && r.id !== undefined && opts.onClick) {
+          const off = window.events.on('notification:click', (e) => {
+            if (e.notifId === r.id) {
+              opts.onClick?.()
+              off()
+            }
+          })
+          disposables.push(off)
+        }
+        return { ok: r.ok, error: r.error }
+      })
   }
 
   /** 构造 api.update（仅更新提供者扩展可用；未选中时抛错） */
@@ -340,6 +671,8 @@ class ExtensionHost {
       labelKey: 'palette.showCommands',
       defaultKey: 'Ctrl+Shift+P'
     })
+    // 内置树视图组件（contributes.views 声明的导航项都指向它；数据源由 api.views 提供）
+    registry.registerViewComponent('obox.tree', TreeView)
     // ---- 1. 汇总扩展（内置 + 用户），跳过禁用项 ----
     const all: ExtensionInfo[] = []
     const entries: ExtensionEntry[] = [
@@ -487,6 +820,8 @@ class ExtensionHost {
     this.activated.delete(id)
     this.loaders.delete(id)
     this.extensions.delete(id)
+    // 清理主进程资源（定时器 + 数据库连接）
+    void window.api.cleanupExtension(id)
     console.log(`[host] 热移除: ${id}`)
     return true
   }

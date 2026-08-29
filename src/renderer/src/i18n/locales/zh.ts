@@ -117,7 +117,8 @@ export default {
       keyboard: '快捷键',
       extensions: '扩展',
       update: '更新',
-      network: '网络'
+      network: '网络',
+      notification: '通知'
     },
     appearance: {
       title: '外观',
@@ -172,6 +173,11 @@ export default {
       password: '密码',
       ignoreSSL: '忽略 SSL 证书校验',
       noProxy: '排除列表（每行一个，如 localhost, 127.0.0.1）'
+    },
+    notification: {
+      title: '通知',
+      desc: '逐扩展控制系统提醒（扩展经 api.notification.show 弹出系统通知）。关闭后该扩展的通知不再弹出。',
+      empty: '暂无扩展'
     },
     unsaved: '未保存的更改'
   },

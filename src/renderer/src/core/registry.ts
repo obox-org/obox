@@ -8,6 +8,7 @@ import type { Component } from 'vue'
 import type {
   CommandContribution,
   Disposable,
+  MenuContribution,
   NavItemContribution,
   StatusBarItemContribution
 } from './types'
@@ -36,10 +37,17 @@ export interface RegisteredCommand extends CommandContribution {
   active: boolean
 }
 
+/** 注册的上下文菜单项（挂到该扩展 App 卡片右键） */
+export interface RegisteredMenu extends MenuContribution {
+  extensionId: string
+  active: boolean
+}
+
 class Registry {
   readonly navItems = reactive<RegisteredNavItem[]>([])
   readonly statusBarItems = reactive<RegisteredStatusBarItem[]>([])
   readonly commands = reactive<RegisteredCommand[]>([])
+  readonly menus = reactive<RegisteredMenu[]>([])
   /** 视图组件表：view id → Vue 组件（扩展激活时登记） */
   readonly viewComponents = new Map<string, Component>()
   private commandIndex = new Map<string, RegisteredCommand>()
@@ -48,6 +56,39 @@ class Registry {
 
   registerNavItem(extensionId: string, c: NavItemContribution): void {
     this.navItems.push({ ...c, group: c.group ?? 'top', extensionId, active: true })
+  }
+
+  /** 动态状态栏项（api.statusBar.createItem 创建；id 宿主生成，按扩展隔离） */
+  private runtimeSeq = 0
+  readonly runtimeStatusBarItems = reactive<RegisteredStatusBarItem[]>([])
+
+  createRuntimeStatusBarItem(
+    extensionId: string,
+    init?: { text?: string; tooltip?: string; alignment?: 'left' | 'right'; priority?: number }
+  ): RegisteredStatusBarItem {
+    const id = `runtime:${extensionId}:${++this.runtimeSeq}`
+    const item: RegisteredStatusBarItem = {
+      id,
+      name: id,
+      text: init?.text ?? '',
+      tooltip: init?.tooltip,
+      alignment: init?.alignment ?? 'right',
+      priority: init?.priority ?? 0,
+      extensionId,
+      visible: true,
+      active: true
+    }
+    this.runtimeStatusBarItems.push(item)
+    return item
+  }
+
+  /** 移除某扩展的全部动态状态栏项（停用时调用） */
+  removeRuntimeStatusBarItems(extensionId: string): void {
+    for (let i = this.runtimeStatusBarItems.length - 1; i >= 0; i--) {
+      if (this.runtimeStatusBarItems[i].extensionId === extensionId) {
+        this.runtimeStatusBarItems.splice(i, 1)
+      }
+    }
   }
 
   registerStatusBarItem(extensionId: string, c: StatusBarItemContribution): void {
@@ -71,6 +112,15 @@ class Registry {
     this.commands.push(cmd)
   }
 
+  registerMenu(extensionId: string, c: MenuContribution): void {
+    this.menus.push({ ...c, extensionId, active: true })
+  }
+
+  /** 某扩展的激活菜单项（App 卡片右键用） */
+  getMenusFor(extensionId: string): RegisteredMenu[] {
+    return this.menus.filter((m) => m.active && m.extensionId === extensionId && m.when !== 'false')
+  }
+
   // ---- 扩展停用：清除该扩展的贡献项 ----
 
   deactivateExtension(extensionId: string): void {
@@ -85,6 +135,9 @@ class Registry {
         cmd.active = false
         cmd.handler = undefined
       }
+    }
+    for (const menu of this.menus) {
+      if (menu.extensionId === extensionId) menu.active = false
     }
   }
 
@@ -133,7 +186,8 @@ class Registry {
   }
 
   getVisibleStatusBarItems(alignment: 'left' | 'right'): RegisteredStatusBarItem[] {
-    return this.statusBarItems
+    const all = [...this.statusBarItems, ...this.runtimeStatusBarItems]
+    return all
       .filter((i) => i.active && i.visible && (i.alignment ?? 'right') === alignment)
       .sort((a, b) => {
         const pa = a.priority ?? 0

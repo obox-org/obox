@@ -185,7 +185,7 @@ api.update.onEvent((e) => {
 
 > 更新执行由宿主 electron-updater 完成；扩展提供更新源与触发时机。未在设置-更新选中的扩展调用 update API 会抛错。
 >
-> **更新源解析**：`resolveFeed(repo)` 走主进程调 GitHub REST API 取该仓库最新创建的 release（draft 除外），返回该 tag 的 `releases/download/<tag>/` 作为 feedUrl——**不依赖 GitHub 的 latest 标记**，保证拿到的是"最后一次编译"的产物。Windows 上 electron-updater 不分架构固定读 `latest.yml`，宿主已在 arm64 机器上自动改用 `latest-arm64.yml`（channel 指定），扩展无需关心架构。
+> **更新源解析**：`resolveFeed(repo)` 走主进程调 GitHub REST API 取该仓库最新创建的 release（draft 除外），返回该 tag 的 `releases/download/<tag>/` 作为 feedUrl——**不依赖 GitHub 的 latest 标记**，保证拿到的是"最后一次编译"的产物。Windows 上 electron-builder 生成的更新元数据固定叫 `latest.yml`（无架构后缀），files 含全部架构安装包，electron-updater 按机器架构自动选匹配的安装包，扩展无需关心架构。
 
 ### proxy（代理配置）
 
@@ -196,6 +196,240 @@ const p = api.proxy.get()
 ```
 
 obox 主进程的网络请求（更新下载等）自动使用该代理；内置扩展经 `api.proxy.get()` 读取并应用；非内置扩展可选使用。
+
+### timer（全局定时器，主进程精确计时）
+
+宿主级定时器跑在**主进程**，不受渲染进程后台节流影响（窗口最小化/不可见时渲染进程 `setTimeout` 会被节流到 1s 粒度）。**间隔为整数秒（≥1s）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器。
+
+```ts
+// 一次性：5 秒后执行一次
+api.timer.setTimeout('sync', 5, () => { /* ... */ })
+// 重复：每 60 秒执行一次
+api.timer.setInterval('tick', 60, () => { /* ... */ })
+// 取消（无此 id 时无操作）
+api.timer.clearTimeout('sync')
+api.timer.clearInterval('tick')
+```
+
+- 回调在扩展上下文（渲染进程）执行，**无 payload**（纯"到点了"），需要数据的扩展在回调里自行查询
+- 定时器 id 在**扩展内**唯一即可（跨扩展自动隔离）；`seconds` 必须是 ≥1 的整数，否则抛错
+
+### sqlite（数据库，node:sqlite 内置驱动）
+
+宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。
+
+```ts
+const db = await api.sqlite.open('todo.db')   // → userData/extensions/todo_chenzhi/data/todo.db
+// 首次写入自动建表（id 主键自增；列按 JS 类型声明：number/boolean→INTEGER，string→TEXT；boolean 读写自动 0/1 还原）
+await db.insert({ title: '买菜', done: false })          // → 新行（含 id）
+await db.insert({ id: 1, title: '买菜改', done: true })  // 含 id = upsert
+await db.get(1)                                          // → { id:1, title:'…', done:true }
+await db.get_all()                                       // → 全部行
+await db.get_by({ done: false })                         // 结构体匹配：等值多键 AND → 数组
+await db.update({ done: false }, { done: true })         // 等值条件更新 → 受影响行数
+await db.del(1)                                          // 按 id 删除 → 受影响行数
+await db.del_by({ done: false })                         // 等值条件删除
+await db.clear()                                         // 清空表
+await db.exec('CREATE INDEX idx_t ON todo(title)')       // 任意 SQL 脚本（不返回结果集）
+await db.query('SELECT title, COUNT(*) AS n FROM todo GROUP BY title')  // 复杂查询 → 对象数组
+await db.close()
+```
+
+- 默认表名 = 数据库文件名去扩展名（`open('todo.db')` → 表 `todo`）；`query`/`exec` 作用于整个库
+- 条件对象（`get_by`/`update`/`del_by` 的 where）只支持**等值匹配**，多键为 AND；复杂条件用 `query` 写 SQL
+- 全部方法 `async`（经 IPC 到主进程）；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
+
+### notification（系统提醒，操作系统通知）
+
+调用操作系统通知 API（Windows Toast / macOS 通知中心）。设置-通知可**逐扩展关闭**，关闭后该扩展 `show` 无操作。
+
+```ts
+const r = await api.notification.show({
+  title: '任务到期',
+  body: '「买菜」已到期',
+  icon: 'app://extensions/todo/icon.png', // 可选：app:// URL / http(s) / data: URI / 本地路径
+  onClick: () => { /* 点击通知时执行（宿主自动聚焦主窗口） */ }
+})
+```
+
+- `title` 必填，`body`/`icon`/`onClick` 可选；`onClick` 每次 show 独立绑定，点击后自动注销
+- 扩展停用/卸载后不再收到通知点击事件
+
+### net（网络请求）
+
+渲染进程 CSP（`default-src 'self' app:`）**禁止扩展直接 fetch 外部网络**——联网必须走 `api.net.fetch`（主进程发请求，**自动应用设置-网络代理**，默认 30s 超时）：
+
+```ts
+const r = await api.net.fetch('https://api.example.com/items', { method: 'POST', json: true, body: { page: 1 } })
+if (r.ok) { /* r.status, r.data（JSON 已解析或文本） */ }
+// GET 默认；data 按响应 Content-Type 自动解析 JSON/文本；opts.json=true 强制 JSON
+// 失败：r.ok=false, r.error（含超时/网络错误）
+```
+
+### dialog / shell / clipboard（对话框 / 外链 / 剪贴板）
+
+```ts
+// 文件选择（返回路径数组；拿到路径后可配合 api.fs 只能读自己的 data 目录——外部路径仅作展示/传给 api.shell）
+const { ok, filePaths, canceled } = await api.dialog.showOpenDialog({ filters: [{ name: 'JSON', extensions: ['json'] }], multiSelect: false })
+const { filePath } = await api.dialog.showSaveDialog({ defaultName: 'export.json' })
+const { response } = await api.dialog.showMessageBox({ type: 'question', message: '确定？', buttons: ['是', '否'] })
+// 打开外部链接/路径（系统默认程序）
+await api.shell.openExternal('https://example.com')   // 仅 http/https
+await api.shell.openPath('C:\\path\\to\\file.txt')
+// 剪贴板
+await api.clipboard.writeText('hello')
+const text = await api.clipboard.readText()
+```
+
+### env（运行环境）
+
+```ts
+api.env.platform      // 'win32' | 'darwin' | 'linux'
+api.env.arch          // 'x64' | 'arm64'
+api.env.nodeVersion   // 宿主内置 Node 版本
+await api.env.getOboxVersion()  // obox 版本号
+```
+
+### theme（主题）
+
+```ts
+api.theme.getCurrent()                    // 当前主题 id（如 'theme-dark'）
+const off = api.theme.onChanged((id) => { /* 主题切换时刷新自身 UI */ })
+off.dispose()
+```
+
+### fs（文件系统，限定扩展数据目录）
+
+与 sqlite 同安全模型：**相对路径**解析到 `userData/extensions/<扩展id>/data/`，拒绝绝对路径/`..`/盘符；自动建目录：
+
+```ts
+await api.fs.writeFile('export/data.json', JSON.stringify(rows))   // 写（自动建目录）
+const content = await api.fs.readFile('export/data.json')          // 读
+const entries = await api.fs.readDir('.')                          // [{ name, isDir }]
+const exists = await api.fs.exists('export/data.json')
+await api.fs.remove('export')                                       // 删除文件/目录（递归）
+```
+
+> 注意：`api.fs` 只能读写扩展自己的 data 目录；`api.dialog` 选到的外部路径**不能**用 `api.fs` 读写（安全边界）。
+
+### window.setProgressBar（任务栏进度）
+
+```ts
+await api.window.setProgressBar(0.5)   // 0~1 主窗口任务栏进度
+await api.window.setProgressBar(null)  // 清除进度
+```
+
+### ui（交互输入：QuickPick / InputBox / toast / 进度）
+
+应用内 UI（非模态），命令参数化交互的常用入口：
+
+```ts
+// 选项选择面板（返回选中项 label；取消 → undefined）
+const choice = await api.ui.showQuickPick(
+  [{ label: '全部', description: '不过滤' }, { label: '已完成' }],
+  { title: '筛选', placeHolder: '输入过滤…' }
+)
+// 单行输入框（password 遮蔽；取消 → undefined）
+const name = await api.ui.showInputBox({ title: '新建待办', placeHolder: '任务名称', value: '' })
+const token = await api.ui.showInputBox({ title: '输入 Token', password: true })
+// 应用内 toast（非模态，自动消失；区别于 dialog 阻塞框与系统 notification）
+api.ui.showMessage('已保存', 'success')   // 'info' | 'warning' | 'error' | 'success'
+// 任务进度（完成自动关闭；report(percent) 更新进度条）
+await api.ui.withProgress('正在同步…', async (report) => {
+  report(30)
+  await doSync()
+  report(100)
+})
+```
+
+### output（输出通道，底部输出面板）
+
+扩展日志/结果展示（主窗口底部面板，多通道 tab）：
+
+```ts
+const log = api.output.createChannel('我的扩展日志')
+log.appendLine('开始处理…')
+log.append('进度 30%')
+log.show()       // 打开底部面板并切到该通道
+log.clear()      // 清空
+log.dispose()    // 关闭并移除通道
+```
+
+### secrets（密钥存储，safeStorage 加密）
+
+token/凭据安全存储（主进程 safeStorage 加密存 userData；**不要**用 Memento 存密钥）：
+
+```ts
+await api.secrets.set('github_token', 'ghp_xxx')
+const token = await api.secrets.get('github_token')   // undefined = 未设置
+await api.secrets.delete('github_token')
+```
+
+### fs.watch（文件监听）
+
+监听扩展 data 目录内变化（相对路径事件）：
+
+```ts
+await api.fs.watch('watch-1', '.', (e) => {
+  console.log('文件变化:', e.relPath)   // 相对监听目录
+})
+// 停止监听
+await api.fs.unwatch('watch-1')
+// 扩展停用/卸载时宿主自动关闭全部监听
+```
+
+### settings.onChanged（设置变更监听，≈onDidChangeConfiguration）
+
+```ts
+const off = api.settings.onChanged(() => {
+  const v = api.settings.get('my-ext.interval', 30)
+})
+off.dispose()
+```
+
+### env.language / window 聚焦
+
+```ts
+api.env.language              // 当前 UI 语言 'zh' | 'en'
+await api.window.isFocused()  // 主窗口是否聚焦
+const off = api.window.onFocusChanged((focused) => { /* 聚焦/失焦 */ })
+off.dispose()
+```
+
+### statusBar.createItem（动态状态栏项，≈VS Code createStatusBarItem）
+
+运行时创建/销毁状态栏项（区别于 manifest 静态声明）：
+
+```ts
+const item = api.statusBar.createItem({ text: '同步中…', alignment: 'right', priority: 10 })
+item.text = '完成 ✓'        // 更新文本（支持 $(icon)）
+item.tooltip = '点击打开'
+item.hide()                 // 隐藏
+item.show()                 // 显示
+item.dispose()              // 销毁（扩展停用宿主自动清理）
+```
+
+### views（树视图，contributes.views 声明 + 数据源注册）
+
+先在 manifest 声明树视图（见 manifest-reference），激活时注册数据源：
+
+```ts
+const off = api.views.registerTreeProvider('my-ext.tree', {
+  async getChildren(element) {
+    if (!element) return [{ id: 'root-1', label: '分组 1', collapsible: true }]
+    if (element.id === 'root-1') {
+      return [
+        { id: 'item-1', label: '任务 A', command: 'my-ext.open', args: ['item-1'] }
+      ]
+    }
+    return []
+  }
+})
+off.dispose()   // 注销数据源
+```
+
+- 节点 `collapsible: true` 展开时才调用 `getChildren(element)` 加载子节点
+- 节点 `command` 点击时执行（`args` 作为参数传给命令 handler）
 
 ## 宿主生命周期语义
 

@@ -117,7 +117,8 @@ export default {
       keyboard: 'Keyboard Shortcuts',
       extensions: 'Extensions',
       update: 'Update',
-      network: 'Network'
+      network: 'Network',
+      notification: 'Notifications'
     },
     appearance: {
       title: 'Appearance',
@@ -174,6 +175,11 @@ export default {
       password: 'Password',
       ignoreSSL: 'Ignore SSL certificate validation',
       noProxy: 'No-proxy list (one per line, e.g. localhost, 127.0.0.1)'
+    },
+    notification: {
+      title: 'Notifications',
+      desc: 'Control system notifications per extension (extensions show them via api.notification.show). Disabled extensions will not pop notifications.',
+      empty: 'No extensions'
     },
     unsaved: 'Unsaved changes'
   },
