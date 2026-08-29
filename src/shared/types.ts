@@ -207,6 +207,13 @@ export interface MainApi {
   setProgressBar(progress: number | null): Promise<void>
   /** 运行环境静态信息（preload 直接提供，非 IPC） */
   env: { platform: string; arch: string; nodeVersion: string }
+  // ---- 扩展能力：密钥存储（safeStorage 加密） ----
+  secretsGet(extId: string, key: string): Promise<{ ok: boolean; value?: string; error?: string }>
+  secretsSet(extId: string, key: string, value: string): Promise<{ ok: boolean; error?: string }>
+  secretsDelete(extId: string, key: string): Promise<{ ok: boolean; error?: string }>
+  // ---- 扩展能力：文件监听（扩展 data 目录） ----
+  fsWatch(extId: string, watchId: string, rel: string): Promise<{ ok: boolean; error?: string }>
+  fsUnwatch(extId: string, watchId: string): Promise<void>
 }
 
 /** 主进程 → 渲染进程 的事件（on） */
@@ -227,4 +234,6 @@ export interface MainEvents {
   'timer:fire': (e: { key: string; kind: 'timeout' | 'interval' }) => void
   /** 通知被点击（扩展分发 onClick 回调） */
   'notification:click': (e: { notifId: number; extId: string; title: string }) => void
+  /** 文件监听事件（key = <扩展id>:<watchId>；relPath 相对监听目录） */
+  'fs:watch-event': (e: { key: string; relPath: string }) => void
 }

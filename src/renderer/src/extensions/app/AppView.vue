@@ -6,10 +6,33 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { appStore } from '../../core/appStore'
+import { registry } from '../../core/registry'
+import { host } from '../../core/host'
 
 const { t } = useI18n()
 
 const query = ref('')
+
+// ---- 右键菜单（该扩展 contributes.menus 声明的命令） ----
+const menuState = ref<{ x: number; y: number; extensionId: string } | null>(null)
+
+const menuItems = computed(() => {
+  if (!menuState.value) return []
+  return registry.getMenusFor(menuState.value.extensionId).map((m) => ({
+    command: m.command,
+    title: registry.commands.find((c) => c.command === m.command)?.title ?? m.command
+  }))
+})
+
+function showMenu(extensionId: string, e: MouseEvent): void {
+  if (registry.getMenusFor(extensionId).length === 0) return
+  menuState.value = { x: e.clientX, y: e.clientY, extensionId }
+}
+
+function runMenu(command: string): void {
+  menuState.value = null
+  void host.executeCommand(command).catch((err) => console.error('[menu]', command, err))
+}
 
 const items = computed(() => {
   const q = query.value.trim().toLowerCase()
@@ -50,7 +73,13 @@ function isSvgIcon(icon: string): boolean {
     </div>
 
     <div class="grid">
-      <div v-for="item in items" :key="item.id" class="card" @click="openApp(item.id)">
+      <div
+        v-for="item in items"
+        :key="item.id"
+        class="card"
+        @click="openApp(item.id)"
+        @contextmenu.prevent="showMenu(item.extensionId, $event)"
+      >
         <div class="card-icon">
           <img v-if="!isSvgIcon(item.icon)" :src="item.icon" alt="" />
           <span v-else class="card-icon-svg" v-html="item.icon" />
@@ -68,6 +97,22 @@ function isSvgIcon(icon: string): boolean {
         <p class="empty-hint">{{ t('appExt.emptyHint') }}</p>
       </div>
     </div>
+
+    <!-- 右键菜单 -->
+    <Teleport to="body">
+      <div v-if="menuState" class="ctx-overlay" @click="menuState = null" @contextmenu.prevent="menuState = null">
+        <div class="ctx-menu" :style="{ left: menuState.x + 'px', top: menuState.y + 'px' }">
+          <div
+            v-for="item in menuItems"
+            :key="item.command"
+            class="ctx-item"
+            @click.stop="runMenu(item.command)"
+          >
+            {{ item.title }}
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -79,6 +124,29 @@ function isSvgIcon(icon: string): boolean {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5300;
+}
+.ctx-menu {
+  position: fixed;
+  min-width: 160px;
+  background: var(--bg-panel, #252526);
+  border: 1px solid var(--border, #454545);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  padding: 4px 0;
+}
+.ctx-item {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--fg, #cccccc);
+  cursor: pointer;
+}
+.ctx-item:hover {
+  background: var(--selection-bg, #094771);
+  color: var(--fg-bright, #ffffff);
 }
 .toolbar {
   display: flex;

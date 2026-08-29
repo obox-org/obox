@@ -22,8 +22,9 @@ src/
 │   ├── timer.ts     # 扩展全局定时器（主进程精确计时，秒粒度，按扩展隔离）
 │   ├── notification.ts # 扩展系统提醒（操作系统通知 + 点击事件）
 │   ├── net.ts       # 扩展网络请求（api.net.fetch，主进程 + 代理，绕渲染 CSP 禁外网）
-│   ├── fs.ts        # 扩展文件系统（api.fs，限定扩展 data 目录，相对路径）
+│   ├── fs.ts        # 扩展文件系统（api.fs，限定扩展 data 目录，相对路径 + watch）
 │   ├── ext.ts       # 扩展杂项能力（对话框/外链/剪贴板/任务栏进度）
+│   ├── secrets.ts   # 扩展密钥存储（api.secrets，safeStorage 加密）
 │   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源 + app://debug）
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
 ├── shared/          # 三端共享类型（IPC 契约）

@@ -2,8 +2,8 @@
  * 扩展运行时类型（面向扩展作者；扩展经相对路径导入 src/api）。
  * 宿主激活扩展时构造的信息/上下文/模块契约。
  * 由 src/api/index.ts 聚合导出。
+ * **纯接口层：不依赖任何宿主框架类型（vue 等）。**
  */
-import type { Component } from 'vue'
 import type { ExtensionManifest } from './manifest'
 
 /** 校验消息级别 */
@@ -59,8 +59,8 @@ export interface Disposable {
   dispose(): void
 }
 
-/** 由扩展模块具名导出的视图组件表：view id → Vue 组件 */
-export type ExtensionViews = Record<string, Component>
+/** 由扩展模块具名导出的视图组件表（宿主按 Vue 组件渲染；扩展作者无需关心框架类型） */
+export type ExtensionViews = Record<string, unknown>
 
 /** 扩展模块契约 */
 export interface ExtensionModule {

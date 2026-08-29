@@ -319,6 +319,83 @@ await api.window.setProgressBar(0.5)   // 0~1 主窗口任务栏进度
 await api.window.setProgressBar(null)  // 清除进度
 ```
 
+### ui（交互输入：QuickPick / InputBox / toast / 进度）
+
+应用内 UI（非模态），命令参数化交互的常用入口：
+
+```ts
+// 选项选择面板（返回选中项 label；取消 → undefined）
+const choice = await api.ui.showQuickPick(
+  [{ label: '全部', description: '不过滤' }, { label: '已完成' }],
+  { title: '筛选', placeHolder: '输入过滤…' }
+)
+// 单行输入框（password 遮蔽；取消 → undefined）
+const name = await api.ui.showInputBox({ title: '新建待办', placeHolder: '任务名称', value: '' })
+const token = await api.ui.showInputBox({ title: '输入 Token', password: true })
+// 应用内 toast（非模态，自动消失；区别于 dialog 阻塞框与系统 notification）
+api.ui.showMessage('已保存', 'success')   // 'info' | 'warning' | 'error' | 'success'
+// 任务进度（完成自动关闭；report(percent) 更新进度条）
+await api.ui.withProgress('正在同步…', async (report) => {
+  report(30)
+  await doSync()
+  report(100)
+})
+```
+
+### output（输出通道，底部输出面板）
+
+扩展日志/结果展示（主窗口底部面板，多通道 tab）：
+
+```ts
+const log = api.output.createChannel('我的扩展日志')
+log.appendLine('开始处理…')
+log.append('进度 30%')
+log.show()       // 打开底部面板并切到该通道
+log.clear()      // 清空
+log.dispose()    // 关闭并移除通道
+```
+
+### secrets（密钥存储，safeStorage 加密）
+
+token/凭据安全存储（主进程 safeStorage 加密存 userData；**不要**用 Memento 存密钥）：
+
+```ts
+await api.secrets.set('github_token', 'ghp_xxx')
+const token = await api.secrets.get('github_token')   // undefined = 未设置
+await api.secrets.delete('github_token')
+```
+
+### fs.watch（文件监听）
+
+监听扩展 data 目录内变化（相对路径事件）：
+
+```ts
+await api.fs.watch('watch-1', '.', (e) => {
+  console.log('文件变化:', e.relPath)   // 相对监听目录
+})
+// 停止监听
+await api.fs.unwatch('watch-1')
+// 扩展停用/卸载时宿主自动关闭全部监听
+```
+
+### settings.onChanged（设置变更监听，≈onDidChangeConfiguration）
+
+```ts
+const off = api.settings.onChanged(() => {
+  const v = api.settings.get('my-ext.interval', 30)
+})
+off.dispose()
+```
+
+### env.language / window 聚焦
+
+```ts
+api.env.language              // 当前 UI 语言 'zh' | 'en'
+await api.window.isFocused()  // 主窗口是否聚焦
+const off = api.window.onFocusChanged((focused) => { /* 聚焦/失焦 */ })
+off.dispose()
+```
+
 ## 宿主生命周期语义
 
 - **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表

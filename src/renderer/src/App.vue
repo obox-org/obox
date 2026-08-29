@@ -5,6 +5,9 @@ import NavBar from './components/NavBar.vue'
 import ContentArea from './components/ContentArea.vue'
 import StatusBar from './components/StatusBar.vue'
 import CommandPalette from './components/CommandPalette.vue'
+import PromptHost from './components/PromptHost.vue'
+import ToastHost from './components/ToastHost.vue'
+import OutputPanel from './components/OutputPanel.vue'
 import { registry } from './core/registry'
 import { stateStore } from './core/state'
 import { host } from './core/host'
@@ -65,8 +68,11 @@ onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
       <NavBar :active-nav-id="activeNavId" @select="selectNav" />
       <ContentArea :active-nav-id="activeNavId" />
     </div>
+    <OutputPanel />
     <StatusBar :active-nav-id="activeNavId" />
     <CommandPalette :open="paletteOpen" @close="paletteOpen = false" />
+    <PromptHost />
+    <ToastHost />
   </div>
 </template>
 

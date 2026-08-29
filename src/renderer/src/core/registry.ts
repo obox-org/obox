@@ -8,6 +8,7 @@ import type { Component } from 'vue'
 import type {
   CommandContribution,
   Disposable,
+  MenuContribution,
   NavItemContribution,
   StatusBarItemContribution
 } from './types'
@@ -36,10 +37,17 @@ export interface RegisteredCommand extends CommandContribution {
   active: boolean
 }
 
+/** 注册的上下文菜单项（挂到该扩展 App 卡片右键） */
+export interface RegisteredMenu extends MenuContribution {
+  extensionId: string
+  active: boolean
+}
+
 class Registry {
   readonly navItems = reactive<RegisteredNavItem[]>([])
   readonly statusBarItems = reactive<RegisteredStatusBarItem[]>([])
   readonly commands = reactive<RegisteredCommand[]>([])
+  readonly menus = reactive<RegisteredMenu[]>([])
   /** 视图组件表：view id → Vue 组件（扩展激活时登记） */
   readonly viewComponents = new Map<string, Component>()
   private commandIndex = new Map<string, RegisteredCommand>()
@@ -71,6 +79,15 @@ class Registry {
     this.commands.push(cmd)
   }
 
+  registerMenu(extensionId: string, c: MenuContribution): void {
+    this.menus.push({ ...c, extensionId, active: true })
+  }
+
+  /** 某扩展的激活菜单项（App 卡片右键用） */
+  getMenusFor(extensionId: string): RegisteredMenu[] {
+    return this.menus.filter((m) => m.active && m.extensionId === extensionId && m.when !== 'false')
+  }
+
   // ---- 扩展停用：清除该扩展的贡献项 ----
 
   deactivateExtension(extensionId: string): void {
@@ -85,6 +102,9 @@ class Registry {
         cmd.active = false
         cmd.handler = undefined
       }
+    }
+    for (const menu of this.menus) {
+      if (menu.extensionId === extensionId) menu.active = false
     }
   }
 

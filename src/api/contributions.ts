@@ -105,6 +105,14 @@ export interface KeybindingContribution {
   key: string
 }
 
+/** 上下文菜单贡献（manifest 声明）：命令挂到该扩展 App 卡片的右键菜单 */
+export interface MenuContribution {
+  /** 命令 id（必须在 contributes.commands 声明） */
+  command: string
+  /** 显隐条件（首版仅 'false' 即隐藏，其余恒真） */
+  when?: string
+}
+
 /** manifest 的贡献点声明 */
 export interface ContributionManifest {
   navItems?: NavItemContribution[]
@@ -117,6 +125,8 @@ export interface ContributionManifest {
   settings?: SettingsPage
   /** 快捷键（复用宿主 keybindingStore：冲突检测/用户可改/设置页展示/持久化） */
   keybindings?: KeybindingContribution[]
+  /** 上下文菜单（首版：该扩展 App 卡片的右键菜单） */
+  menus?: MenuContribution[]
   /** 声明为"更新提供者扩展"：提供 obox 更新能力（设置-更新选择，只能一个生效） */
   updater?: {
     /** 更新源 URL 模板（可含 {version} 占位）；扩展激活时也可用 api.update 覆盖 */

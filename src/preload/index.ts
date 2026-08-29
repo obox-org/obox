@@ -67,7 +67,14 @@ const api: MainApi = {
     platform: process.platform,
     arch: process.arch,
     nodeVersion: process.versions.node
-  }
+  },
+  // 扩展能力：密钥存储（safeStorage 加密）
+  secretsGet: (extId, key) => ipcRenderer.invoke('secrets:get', extId, key),
+  secretsSet: (extId, key, value) => ipcRenderer.invoke('secrets:set', extId, key, value),
+  secretsDelete: (extId, key) => ipcRenderer.invoke('secrets:delete', extId, key),
+  // 扩展能力：文件监听（扩展 data 目录）
+  fsWatch: (extId, watchId, rel) => ipcRenderer.invoke('fs:watch', extId, watchId, rel),
+  fsUnwatch: (extId, watchId) => ipcRenderer.invoke('fs:unwatch', extId, watchId)
 }
 
 // 主进程 → 渲染进程事件订阅

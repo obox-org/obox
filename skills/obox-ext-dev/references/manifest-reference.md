@@ -193,6 +193,26 @@
 - 与内置/其他扩展快捷键**冲突时 warning 且不注册**（该扩展其余功能不受影响）
 - 默认键冲突时用户仍可在设置-快捷键里改（改后以用户值为准）
 
+### menus（上下文菜单，manifest 声明）
+
+把已声明命令挂到该扩展 **App 卡片**的右键菜单：
+
+```json
+{
+  "contributes": {
+    "commands": [{ "command": "my-ext.sync", "title": "同步", "category": "我的扩展" }],
+    "menus": [{ "command": "my-ext.sync" }]
+  }
+}
+```
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `command` | ✅ | 命令 id（**必须**在 contributes.commands 声明，否则 warning 且不注册） |
+| `when` | ❌ | 显隐条件（首版仅 `'false'` 即隐藏，其余恒真） |
+
+- 右键该扩展注册的 App 卡片即弹出菜单；菜单项执行命令 handler
+
 ## 校验规则（`core/manifest.ts`）
 
 - `name` 必填且匹配 `^[a-z0-9][a-z0-9._-]*$` → 否则 **error**，不加载

@@ -52,6 +52,18 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
       messages.push({ severity: 'error', message: 'keybindings 必须是 [{command, key}] 数组' })
     }
   }
+  if (contributes?.menus !== undefined) {
+    const menus = contributes.menus as unknown
+    if (
+      !Array.isArray(menus) ||
+      menus.some(
+        (m) =>
+          !m || typeof m !== 'object' || typeof (m as Record<string, unknown>).command !== 'string'
+      )
+    ) {
+      messages.push({ severity: 'error', message: 'menus 必须是 [{command, when?}] 数组' })
+    }
+  }
   if (m.extensionDependencies !== undefined) {
     const deps = m.extensionDependencies as unknown
     if (!Array.isArray(deps) || deps.some((d) => typeof d !== 'string')) {

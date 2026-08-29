@@ -11,8 +11,9 @@ import { registerSqliteIpc, closeExtensionDbs } from './sqlite'
 import { registerTimerIpc, closeExtensionTimers } from './timer'
 import { registerNotificationIpc } from './notification'
 import { registerNetIpc } from './net'
-import { registerFsIpc } from './fs'
+import { registerFsIpc, closeExtensionWatchers } from './fs'
 import { registerExtIpc } from './ext'
+import { registerSecretsIpc } from './secrets'
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.obox.app')
@@ -36,11 +37,13 @@ app.whenReady().then(() => {
   registerNetIpc()
   registerFsIpc()
   registerExtIpc()
+  registerSecretsIpc()
 
-  // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接）
+  // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接 + 文件监听）
   ipcMain.handle('extension:cleanup', (_e, extId: string): void => {
     closeExtensionTimers(String(extId))
     closeExtensionDbs(String(extId))
+    closeExtensionWatchers(String(extId))
   })
 
   // 更新事件广播到所有窗口（渲染进程扩展订阅）

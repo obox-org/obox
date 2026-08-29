@@ -17,6 +17,8 @@ import {
 } from './extensionI18n'
 import { keybindingStore } from './keybindings'
 import { updaterStore } from './updaterStore'
+import { uiStore } from './uiStore'
+import { outputStore } from './outputStore'
 import { i18n } from '../i18n'
 import type {
   ExtensionActivationApi,
@@ -152,6 +154,17 @@ class ExtensionHost {
       }
       keybindingStore.register({ command: kb.command, labelKey: cmd.title, defaultKey: kb.key })
     }
+    // 上下文菜单：命令挂到该扩展 App 卡片右键（command 须已声明）
+    for (const menu of c.menus ?? []) {
+      if (!c.commands?.some((x) => x.command === menu.command)) {
+        ext.validations.push({
+          severity: 'warning',
+          message: `menus 引用的命令 ${menu.command} 未在 contributes.commands 声明`
+        })
+        continue
+      }
+      registry.registerMenu(ext.id, menu)
+    }
     // 校验视图引用：导航项声明的 view 必须在扩展模块具名导出中存在
     for (const nav of c.navItems ?? []) {
       if (nav.view && !(nav.view in module)) {
@@ -275,7 +288,15 @@ class ExtensionHost {
         toggleMaximize: () => window.api.windowAction('toggle-maximize'),
         close: () => window.api.windowAction('close'),
         isMaximized: async () => (await window.api.getWindowState())?.isMaximized ?? false,
-        setProgressBar: (progress) => window.api.setProgressBar(progress)
+        setProgressBar: (progress) => window.api.setProgressBar(progress),
+        isFocused: async () => (await window.api.getWindowState())?.isFocused ?? false,
+        onFocusChanged: (callback) => {
+          const off = window.events.on('window:state-changed', (state) => {
+            callback(state.isFocused)
+          })
+          disposables.push(off)
+          return { dispose: off }
+        }
       },
       appInfo: {
         get: () => window.api.getAppInfo()
@@ -306,7 +327,15 @@ class ExtensionHost {
         },
         get: <T = unknown>(key: string, defaultValue?: T): T | undefined =>
           stateStore.getSetting<T>(key, defaultValue),
-        set: (key, value) => stateStore.setSetting(key, value)
+        set: (key, value) => stateStore.setSetting(key, value),
+        onChanged: (callback) => {
+          const dispose = stateStore.onSettingsChanged(() => {
+            /* 设置变更通知（key 粒度不追踪，通知全部监听者） */
+            callback('')
+          })
+          disposables.push(dispose)
+          return { dispose }
+        }
       },
       update: this.buildUpdateApi(ext, disposables),
       proxy: {
@@ -352,10 +381,42 @@ class ExtensionHost {
         platform: window.api.env.platform,
         arch: window.api.env.arch,
         nodeVersion: window.api.env.nodeVersion,
+        language: i18n.global.locale.value as string,
         getOboxVersion: () => window.api.getOboxVersion()
       },
       theme: this.buildThemeApi(disposables),
-      fs: this.buildFsApi(ext.id)
+      fs: this.buildFsApi(ext.id, disposables),
+      ui: {
+        showQuickPick: (items, opts) => uiStore.showQuickPick(items, opts),
+        showInputBox: (opts) => uiStore.showInputBox(opts),
+        showMessage: (message, type = 'info') => uiStore.showToast(message, type),
+        withProgress: async (title, task) => {
+          uiStore.showProgress(title, null)
+          try {
+            return await task((percent) => uiStore.showProgress(title, percent))
+          } finally {
+            uiStore.hideProgress()
+          }
+        }
+      },
+      output: {
+        createChannel: (name) => outputStore.createChannel(name)
+      },
+      secrets: {
+        get: async (key) => {
+          const r = await window.api.secretsGet(ext.id, key)
+          if (!r.ok) throw new Error(r.error ?? 'secrets 操作失败')
+          return r.value
+        },
+        set: async (key, value) => {
+          const r = await window.api.secretsSet(ext.id, key, value)
+          if (!r.ok) throw new Error(r.error ?? 'secrets 操作失败')
+        },
+        delete: async (key) => {
+          const r = await window.api.secretsDelete(ext.id, key)
+          if (!r.ok) throw new Error(r.error ?? 'secrets 操作失败')
+        }
+      }
     }
   }
 
@@ -381,8 +442,8 @@ class ExtensionHost {
     }
   }
 
-  /** 构造 api.fs（限定扩展 data 目录，相对路径） */
-  private buildFsApi(extId: string): ExtensionActivationApi['fs'] {
+  /** 构造 api.fs（限定扩展 data 目录，相对路径；watch 经 'fs:watch-event' 分发） */
+  private buildFsApi(extId: string, disposables: Array<() => void>): ExtensionActivationApi['fs'] {
     const call = async <T extends { ok: boolean; error?: string }>(
       p: Promise<T>
     ): Promise<Omit<T, 'ok' | 'error'>> => {
@@ -390,6 +451,12 @@ class ExtensionHost {
       if (!r.ok) throw new Error(r.error ?? '文件操作失败')
       return r as unknown as Omit<T, 'ok' | 'error'>
     }
+    const watchCallbacks = new Map<string, (e: { relPath: string }) => void>()
+    const offWatch = window.events.on('fs:watch-event', (e) => {
+      const cb = watchCallbacks.get(e.key)
+      if (cb) cb({ relPath: e.relPath })
+    })
+    disposables.push(offWatch)
     return {
       readFile: async (rel) => (await call(window.api.fsReadFile(extId, rel))).content ?? '',
       writeFile: async (rel, content) => {
@@ -399,6 +466,18 @@ class ExtensionHost {
       exists: async (rel) => (await call(window.api.fsExists(extId, rel))).exists ?? false,
       remove: async (rel) => {
         await call(window.api.fsRemove(extId, rel))
+      },
+      watch: async (watchId, dir, callback) => {
+        watchCallbacks.set(`${extId}:${watchId}`, callback)
+        const r = await window.api.fsWatch(extId, watchId, dir)
+        if (!r.ok) {
+          watchCallbacks.delete(`${extId}:${watchId}`)
+          throw new Error(r.error ?? '监听失败')
+        }
+      },
+      unwatch: async (watchId) => {
+        watchCallbacks.delete(`${extId}:${watchId}`)
+        await window.api.fsUnwatch(extId, watchId)
       }
     }
   }

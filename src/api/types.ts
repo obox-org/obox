@@ -40,6 +40,22 @@ export interface SqliteDb {
   close(): Promise<void>
 }
 
+/** 快速选择项（api.ui.showQuickPick） */
+export interface QuickPickItem {
+  label: string
+  description?: string
+}
+
+/** 输出通道（api.output.createChannel 返回，底部输出面板） */
+export interface OutputChannel {
+  append(text: string): void
+  appendLine(text: string): void
+  /** 显示输出面板并切到该通道 */
+  show(): void
+  clear(): void
+  dispose(): void
+}
+
 /** 激活扩展时的宿主能力注入（传给扩展插件函数） */
 export interface ExtensionActivationApi {
   /** 命令注册：把 manifest 声明的命令 id 绑定实现 */
@@ -71,6 +87,10 @@ export interface ExtensionActivationApi {
     isMaximized(): Promise<boolean>
     /** 主窗口任务栏进度（0~1；null 清除） */
     setProgressBar(progress: number | null): Promise<void>
+    /** 主窗口是否聚焦 */
+    isFocused(): Promise<boolean>
+    /** 聚焦状态变化监听（返回注销函数） */
+    onFocusChanged(callback: (focused: boolean) => void): Disposable
   }
   /** 应用信息 */
   appInfo: {
@@ -100,6 +120,8 @@ export interface ExtensionActivationApi {
     get<T = unknown>(key: string, defaultValue?: T): T | undefined
     /** 写入扩展设置值（立即持久化并通知） */
     set(key: string, value: unknown): void
+    /** 设置变更监听（≈VS Code onDidChangeConfiguration；返回注销函数） */
+    onChanged(callback: (key: string) => void): Disposable
   }
   /** 更新能力（仅"更新提供者扩展"可用；设置-更新选择生效的提供者） */
   update: {
@@ -212,6 +234,8 @@ export interface ExtensionActivationApi {
     readonly arch: string
     /** Node 版本（宿主内置） */
     readonly nodeVersion: string
+    /** 当前 UI 语言（'zh' | 'en'） */
+    readonly language: string
     /** obox 版本号 */
     getOboxVersion(): Promise<string>
   }
@@ -234,6 +258,39 @@ export interface ExtensionActivationApi {
     exists(rel: string): Promise<boolean>
     /** 删除文件/目录（递归） */
     remove(rel: string): Promise<void>
+    /** 监听扩展 data 目录内变化（相对路径事件；扩展停用自动清理） */
+    watch(watchId: string, dir: string, callback: (e: { relPath: string }) => void): Promise<void>
+    /** 停止监听 */
+    unwatch(watchId: string): Promise<void>
+  }
+  /** 交互 UI（应用内，非模态） */
+  ui: {
+    /** 选项选择面板，返回选中项 label（取消 → undefined） */
+    showQuickPick(
+      items: QuickPickItem[],
+      opts?: { title?: string; placeHolder?: string }
+    ): Promise<string | undefined>
+    /** 单行输入框，返回输入值（取消 → undefined） */
+    showInputBox(opts?: {
+      title?: string
+      value?: string
+      placeHolder?: string
+      password?: boolean
+    }): Promise<string | undefined>
+    /** 应用内 toast（非模态，自动消失；区别于 dialog 阻塞消息框和系统 notification） */
+    showMessage(message: string, type?: 'info' | 'warning' | 'error' | 'success'): void
+    /** 任务进度（title + 进度条，task 完成自动关闭；report(percent) 更新进度） */
+    withProgress<T>(title: string, task: (report: (percent: number) => void) => Promise<T>): Promise<T>
+  }
+  /** 输出通道（底部输出面板，多通道 tab） */
+  output: {
+    createChannel(name: string): OutputChannel
+  }
+  /** 密钥存储（主进程 safeStorage 加密存 userData；token/凭据用） */
+  secrets: {
+    get(key: string): Promise<string | undefined>
+    set(key: string, value: string): Promise<void>
+    delete(key: string): Promise<void>
   }
 }
 
