@@ -125,9 +125,14 @@ onMounted(() => {
     } else {
       p = Promise.resolve(undefined)
     }
-    void p.then((value) => {
-      window.api.uiResult(e.requestId, { canceled: value === undefined, value })
-    })
+    void p
+      .then((value) => {
+        window.api.uiResult(e.requestId, { canceled: value === undefined, value })
+      })
+      .catch((err) => {
+        console.error('[AppWindow] ui result error', e.kind, err)
+        window.api.uiResult(e.requestId, { canceled: true })
+      })
   })
 })
 
