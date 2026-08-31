@@ -164,6 +164,12 @@ function submitForm(): void {
             class="form-input"
             type="date"
           />
+          <input
+            v-else-if="field.type === 'time'"
+            v-model="uiState.form.values[field.key] as string"
+            class="form-input"
+            type="time"
+          />
           <select
             v-else-if="field.type === 'select'"
             v-model="uiState.form.values[field.key] as string"
