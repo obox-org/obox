@@ -15,6 +15,8 @@ interface QuickPickState {
   placeHolder?: string
   selectedIndex: number
   query: string
+  /** 点击遮罩是否关闭（默认 true；false 只能经选择/取消按钮关闭） */
+  closeOnClickOutside: boolean
   resolve: (value: string | undefined) => void
 }
 
@@ -23,6 +25,7 @@ interface InputBoxState {
   value: string
   placeHolder?: string
   password: boolean
+  closeOnClickOutside: boolean
   resolve: (value: string | undefined) => void
 }
 
@@ -53,6 +56,8 @@ export interface FormState {
   title?: string
   fields: FormField[]
   values: Record<string, unknown>
+  /** 点击遮罩是否关闭（默认 true；false 只能经取消/确定关闭） */
+  closeOnClickOutside: boolean
   resolve: (value: Record<string, unknown> | undefined) => void
 }
 
@@ -70,7 +75,7 @@ export const uiStore = {
   /** 打开快速选择面板，返回选中项 label（取消 → undefined） */
   showQuickPick(
     items: QuickPickOption[],
-    opts?: { title?: string; placeHolder?: string }
+    opts?: { title?: string; placeHolder?: string; closeOnClickOutside?: boolean }
   ): Promise<string | undefined> {
     return new Promise((resolve) => {
       uiState.quickPick = {
@@ -79,6 +84,7 @@ export const uiStore = {
         placeHolder: opts?.placeHolder,
         selectedIndex: 0,
         query: '',
+        closeOnClickOutside: opts?.closeOnClickOutside ?? true,
         resolve
       }
     })
@@ -90,13 +96,20 @@ export const uiStore = {
   },
 
   /** 打开输入框，返回输入值（取消 → undefined） */
-  showInputBox(opts?: { title?: string; value?: string; placeHolder?: string; password?: boolean }): Promise<string | undefined> {
+  showInputBox(opts?: {
+    title?: string
+    value?: string
+    placeHolder?: string
+    password?: boolean
+    closeOnClickOutside?: boolean
+  }): Promise<string | undefined> {
     return new Promise((resolve) => {
       uiState.inputBox = {
         title: opts?.title,
         value: opts?.value ?? '',
         placeHolder: opts?.placeHolder,
         password: opts?.password ?? false,
+        closeOnClickOutside: opts?.closeOnClickOutside ?? true,
         resolve
       }
     })
@@ -108,7 +121,11 @@ export const uiStore = {
   },
 
   /** 多字段表单模态框（返回字段键值；取消 → undefined） */
-  showForm(opts: { title?: string; fields: FormField[] }): Promise<Record<string, unknown> | undefined> {
+  showForm(opts: {
+    title?: string
+    fields: FormField[]
+    closeOnClickOutside?: boolean
+  }): Promise<Record<string, unknown> | undefined> {
     return new Promise((resolve) => {
       const values: Record<string, unknown> = {}
       for (const f of opts.fields) {
@@ -117,7 +134,13 @@ export const uiStore = {
         else if (d !== undefined) values[f.key] = d
         else values[f.key] = ''
       }
-      uiState.form = { title: opts.title, fields: opts.fields, values, resolve }
+      uiState.form = {
+        title: opts.title,
+        fields: opts.fields,
+        values,
+        closeOnClickOutside: opts.closeOnClickOutside ?? true,
+        resolve
+      }
     })
   },
 
