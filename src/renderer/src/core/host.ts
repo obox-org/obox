@@ -442,6 +442,7 @@ class ExtensionHost {
         showQuickPick: (items, opts) => uiStore.showQuickPick(items, opts),
         showInputBox: (opts) => uiStore.showInputBox(opts),
         showMessage: (message, type = 'info') => uiStore.showToast(message, type),
+        showForm: (opts) => uiStore.showForm(opts),
         withProgress: async (title, task) => {
           uiStore.showProgress(title, null)
           try {

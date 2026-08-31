@@ -57,6 +57,20 @@ function onInputKeydown(e: KeyboardEvent): void {
     uiStore.resolveInputBox(undefined)
   }
 }
+
+/** 表单提交：校验必填后 resolve */
+function submitForm(): void {
+  const form = uiState.form
+  if (!form) return
+  for (const f of form.fields) {
+    if (f.required) {
+      const v = form.values[f.key]
+      const empty = f.type === 'checkbox' ? (Array.isArray(v) && v.length === 0) : !v
+      if (empty) return
+    }
+  }
+  uiStore.resolveForm({ ...form.values })
+}
 </script>
 
 <template>
@@ -113,6 +127,67 @@ function onInputKeydown(e: KeyboardEvent): void {
           :placeholder="uiState.inputBox.placeHolder"
           @keydown="onInputKeydown"
         />
+      </div>
+    </div>
+
+    <!-- Form（多字段表单模态框） -->
+    <div v-if="uiState.form" class="prompt-overlay" @click.self="uiStore.resolveForm(undefined)">
+      <div class="prompt form-prompt">
+        <div v-if="uiState.form.title" class="prompt-title">{{ uiState.form.title }}</div>
+        <div v-for="field in uiState.form.fields" :key="field.key" class="form-row">
+          <label class="form-label">
+            {{ field.label }}<span v-if="field.required" class="form-required"> *</span>
+          </label>
+          <input
+            v-if="field.type === 'text'"
+            v-model="uiState.form.values[field.key] as string"
+            class="form-input"
+            :placeholder="field.placeholder"
+            @keydown.enter="submitForm"
+          />
+          <textarea
+            v-else-if="field.type === 'textarea'"
+            v-model="uiState.form.values[field.key] as string"
+            class="form-input form-textarea"
+            :placeholder="field.placeholder"
+            rows="3"
+          ></textarea>
+          <input
+            v-else-if="field.type === 'number'"
+            v-model="uiState.form.values[field.key] as string"
+            class="form-input"
+            type="number"
+          />
+          <input
+            v-else-if="field.type === 'date'"
+            v-model="uiState.form.values[field.key] as string"
+            class="form-input"
+            type="date"
+          />
+          <select
+            v-else-if="field.type === 'select'"
+            v-model="uiState.form.values[field.key] as string"
+            class="form-input"
+          >
+            <option v-for="opt in field.options ?? []" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <div v-else-if="field.type === 'checkbox'" class="form-checks">
+            <label v-for="opt in field.options ?? []" :key="opt.value" class="form-check">
+              <input
+                type="checkbox"
+                :value="opt.value"
+                v-model="uiState.form.values[field.key] as string[]"
+              />
+              {{ opt.label }}
+            </label>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn" @click="uiStore.resolveForm(undefined)">取消</button>
+          <button class="btn primary" @click="submitForm">确定</button>
+        </div>
       </div>
     </div>
   </Teleport>
@@ -188,5 +263,72 @@ function onInputKeydown(e: KeyboardEvent): void {
   padding: 12px;
   color: var(--fg-dim, #6e6e6e);
   font-size: 13px;
+}
+.form-prompt {
+  width: 420px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+.form-row {
+  padding: 8px 12px 0;
+}
+.form-label {
+  display: block;
+  font-size: 12px;
+  color: var(--fg, #cccccc);
+  margin-bottom: 4px;
+}
+.form-required {
+  color: var(--fg-error, #f48771);
+}
+.form-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border, #454545);
+  color: var(--fg, #cccccc);
+  padding: 5px 8px;
+  font-size: 13px;
+}
+.form-textarea {
+  resize: vertical;
+}
+.form-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.form-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--fg, #cccccc);
+}
+.form-check input {
+  accent-color: var(--accent, #007acc);
+}
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 12px 0;
+}
+.btn {
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border, #454545);
+  color: var(--fg, #cccccc);
+  padding: 4px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn.primary {
+  background: var(--accent, #007acc);
+  border-color: var(--accent, #007acc);
+  color: #ffffff;
+}
+.btn:hover {
+  filter: brightness(1.15);
 }
 </style>
