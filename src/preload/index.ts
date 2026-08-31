@@ -78,7 +78,10 @@ const api: MainApi = {
   // App 子窗口 ↔ 扩展消息桥
   extensionMessage: (appId, channel, payload) =>
     ipcRenderer.invoke('app:extension-message', { appId, channel, payload }),
-  extensionReply: (requestId, result) => ipcRenderer.send('extension:reply', { requestId, ...result })
+  extensionReply: (requestId, result) => ipcRenderer.send('extension:reply', { requestId, ...result }),
+  // 窗口化 ui 模态框（按焦点窗口显示）
+  uiShow: (kind, payload) => ipcRenderer.invoke('ui:show', { kind, payload }),
+  uiResult: (requestId, r) => ipcRenderer.send('ui:result', { requestId, ...r })
 }
 
 // 主进程 → 渲染进程事件订阅

@@ -223,6 +223,11 @@ export interface MainApi {
   }>
   /** 主窗口宿主把扩展 handler 的结果回传主进程（请求-响应桥的回复侧） */
   extensionReply(requestId: number, result: { ok: boolean; data?: unknown; error?: string }): void
+  // ---- 窗口化 ui 模态框（按焦点窗口显示） ----
+  /** 扩展 ui 模态框：焦点在 App 子窗口时转发到该窗口渲染；否则 local（主窗口自己渲染） */
+  uiShow(kind: string, payload: unknown): Promise<{ local: boolean; canceled?: boolean; value?: unknown }>
+  /** 子窗口把模态框结果回传主进程（ui:show 的回复侧） */
+  uiResult(requestId: number, r: { canceled: boolean; value?: unknown }): void
 }
 
 /** 主进程 → 渲染进程 的事件（on） */
@@ -252,4 +257,6 @@ export interface MainEvents {
     channel: string
     payload: unknown
   }) => void
+  /** 主进程把扩展 ui 模态框显示指令发给目标窗口（App 子窗口渲染，结果经 uiResult 回传） */
+  'ui:show': (e: { requestId: number; kind: string; payload: unknown }) => void
 }

@@ -386,6 +386,8 @@ await api.ui.withProgress('正在同步…', async (report) => {
 })
 ```
 
+> **模态框显示位置**：`showQuickPick` / `showInputBox` / `showForm` 的模态框按**当前焦点窗口**显示——在 App 子窗口（扩展页面）操作时弹在子窗口，在主窗口操作时弹在主窗口（子窗口模态框结果经宿主桥回传）。
+
 ### output（输出通道，底部输出面板）
 
 扩展日志/结果展示（主窗口底部面板，多通道 tab）：
