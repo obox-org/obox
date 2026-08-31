@@ -79,7 +79,7 @@ function submitForm(): void {
     <div
       v-if="uiState.quickPick"
       class="prompt-overlay"
-      @click.self="uiStore.resolveQuickPick(undefined)"
+      @click.self="uiState.quickPick.closeOnClickOutside && uiStore.resolveQuickPick(undefined)"
     >
       <div class="prompt">
         <div v-if="uiState.quickPick.title" class="prompt-title">
@@ -115,7 +115,7 @@ function submitForm(): void {
     <div
       v-if="uiState.inputBox"
       class="prompt-overlay"
-      @click.self="uiStore.resolveInputBox(undefined)"
+      @click.self="uiState.inputBox.closeOnClickOutside && uiStore.resolveInputBox(undefined)"
     >
       <div class="prompt input-prompt">
         <div v-if="uiState.inputBox.title" class="prompt-title">{{ uiState.inputBox.title }}</div>
@@ -131,7 +131,11 @@ function submitForm(): void {
     </div>
 
     <!-- Form（多字段表单模态框） -->
-    <div v-if="uiState.form" class="prompt-overlay" @click.self="uiStore.resolveForm(undefined)">
+    <div
+      v-if="uiState.form"
+      class="prompt-overlay"
+      @click.self="uiState.form.closeOnClickOutside && uiStore.resolveForm(undefined)"
+    >
       <div class="prompt form-prompt">
         <div v-if="uiState.form.title" class="prompt-title">{{ uiState.form.title }}</div>
         <div v-for="field in uiState.form.fields" :key="field.key" class="form-row">

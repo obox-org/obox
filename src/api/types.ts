@@ -326,7 +326,7 @@ export interface ExtensionActivationApi {
     /** 选项选择面板，返回选中项 label（取消 → undefined） */
     showQuickPick(
       items: QuickPickItem[],
-      opts?: { title?: string; placeHolder?: string }
+      opts?: { title?: string; placeHolder?: string; closeOnClickOutside?: boolean }
     ): Promise<string | undefined>
     /** 单行输入框，返回输入值（取消 → undefined） */
     showInputBox(opts?: {
@@ -334,11 +334,19 @@ export interface ExtensionActivationApi {
       value?: string
       placeHolder?: string
       password?: boolean
+      closeOnClickOutside?: boolean
     }): Promise<string | undefined>
     /** 应用内 toast（非模态，自动消失；区别于 dialog 阻塞消息框和系统 notification） */
     showMessage(message: string, type?: 'info' | 'warning' | 'error' | 'success'): void
-    /** 多字段表单模态框（返回 {field: value}；取消/校验不通过 → undefined） */
-    showForm(opts: { title?: string; fields: FormField[] }): Promise<Record<string, unknown> | undefined>
+    /**
+     * 多字段表单模态框（返回 {field: value}；取消/校验不通过 → undefined）。
+     * closeOnClickOutside: 点击遮罩是否关闭（默认 true；false 只能经取消/确定关闭，避免误触丢失输入）
+     */
+    showForm(opts: {
+      title?: string
+      fields: FormField[]
+      closeOnClickOutside?: boolean
+    }): Promise<Record<string, unknown> | undefined>
     /** 任务进度（title + 进度条，task 完成自动关闭；report(percent) 更新进度） */
     withProgress<T>(title: string, task: (report: (percent: number) => void) => Promise<T>): Promise<T>
   }
