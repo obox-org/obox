@@ -8,9 +8,11 @@
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TitleBar from './components/TitleBar.vue'
+import PromptHost from './components/PromptHost.vue'
 import { appStore } from './core/appStore'
 import { themeStore } from './core/theme'
 import { stateStore } from './core/state'
+import { uiStore } from './core/uiStore'
 
 const { t } = useI18n()
 
@@ -97,6 +99,7 @@ function onMessage(e: MessageEvent): void {
 }
 
 let offTheme: (() => void) | undefined
+let offUiShow: (() => void) | undefined
 
 onMounted(() => {
   window.addEventListener('message', onMessage)
@@ -104,11 +107,34 @@ onMounted(() => {
   offTheme = stateStore.onSettingsChanged(() => {
     // 仅依赖 key 变化触发重渲染；无需额外逻辑
   })
+  // 扩展 ui 模态框（焦点在本窗口时由主进程转发）：驱动本地 uiStore 渲染，结果回传
+  offUiShow = window.events.on('ui:show', (e) => {
+    let p: Promise<unknown | undefined>
+    if (e.kind === 'form') {
+      p = uiStore.showForm(e.payload as Parameters<typeof uiStore.showForm>[0])
+    } else if (e.kind === 'quickPick') {
+      const payload = e.payload as {
+        items: { label: string; description?: string }[]
+        opts?: { title?: string; placeHolder?: string }
+      }
+      p = uiStore.showQuickPick(payload.items, payload.opts)
+    } else if (e.kind === 'inputBox') {
+      p = uiStore.showInputBox(
+        e.payload as { title?: string; value?: string; placeHolder?: string; password?: boolean }
+      )
+    } else {
+      p = Promise.resolve(undefined)
+    }
+    void p.then((value) => {
+      window.api.uiResult(e.requestId, { canceled: value === undefined, value })
+    })
+  })
 })
 
 onUnmounted(() => {
   window.removeEventListener('message', onMessage)
   offTheme?.()
+  offUiShow?.()
 })
 </script>
 
@@ -128,6 +154,7 @@ onUnmounted(() => {
         <p>{{ t('appExt.notFound', { appId }) }}</p>
       </div>
     </div>
+    <PromptHost />
   </div>
 </template>
 

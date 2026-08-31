@@ -14,6 +14,7 @@ import { registerNetIpc } from './net'
 import { registerFsIpc, closeExtensionWatchers } from './fs'
 import { registerExtIpc } from './ext'
 import { registerSecretsIpc } from './secrets'
+import { registerUiIpc } from './ui'
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.obox.app')
@@ -38,6 +39,7 @@ app.whenReady().then(() => {
   registerFsIpc()
   registerExtIpc()
   registerSecretsIpc()
+  registerUiIpc()
 
   // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接 + 文件监听）
   ipcMain.handle('extension:cleanup', (_e, extId: string): void => {

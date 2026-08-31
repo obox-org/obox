@@ -439,10 +439,11 @@ class ExtensionHost {
       theme: this.buildThemeApi(disposables),
       fs: this.buildFsApi(ext.id, disposables),
       ui: {
-        showQuickPick: (items, opts) => uiStore.showQuickPick(items, opts),
-        showInputBox: (opts) => uiStore.showInputBox(opts),
+        showQuickPick: (items, opts) =>
+          this.showUiModal('quickPick', { items, opts }, () => uiStore.showQuickPick(items, opts)),
+        showInputBox: (opts) => this.showUiModal('inputBox', opts, () => uiStore.showInputBox(opts)),
         showMessage: (message, type = 'info') => uiStore.showToast(message, type),
-        showForm: (opts) => uiStore.showForm(opts),
+        showForm: (opts) => this.showUiModal('form', opts, () => uiStore.showForm(opts)),
         withProgress: async (title, task) => {
           uiStore.showProgress(title, null)
           try {
@@ -611,6 +612,18 @@ class ExtensionHost {
   }
 
   /** api.notification.show：设置-通知关闭的扩展直接 no-op；点击通知分发 onClick（一次性） */
+  /** 窗口化 ui 模态框：焦点在 App 子窗口 → 转发渲染；否则主窗口本地渲染 */
+  private showUiModal<T>(
+    kind: string,
+    payload: unknown,
+    localFn: () => Promise<T | undefined>
+  ): Promise<T | undefined> {
+    return window.api.uiShow(kind, payload).then((r) => {
+      if (r.local) return localFn()
+      return (r.canceled ? undefined : r.value) as T | undefined
+    })
+  }
+
   private showNotification(
     ext: ExtensionInfo,
     opts: { title: string; body?: string; icon?: string; onClick?: () => void },
