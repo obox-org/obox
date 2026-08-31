@@ -131,7 +131,7 @@ export function registerAppWindowIpc(): void {
 // ---- App 子窗口 ↔ 扩展消息桥 ----
 // 链路：子窗口 iframe → AppWindow(vue) → IPC 'app:extension-message' → 主进程 → 主窗口
 //   → 宿主分发扩展 handler → 'extension:reply' → 主进程 pending 匹配 → AppWindow → iframe postMessage。
-// 请求-响应经 requestId 关联（主进程生成），10s 超时。
+// 请求-响应经 requestId 关联（主进程生成），60s 超时（handler 内可能弹模态框等用户填写）。
 
 interface PendingReply {
   resolve: (r: { ok: boolean; data?: unknown; error?: string }) => void
@@ -160,10 +160,11 @@ ipcMain.handle(
         return
       }
       const requestId = ++reqSeq
+      // 超时放宽到 60s：handler 内可能弹模态框（api.ui.showForm 等）等待用户填写
       const timer = setTimeout(() => {
         pendingReplies.delete(requestId)
         resolve({ ok: false, error: '扩展未响应（超时）' })
-      }, 10_000)
+      }, 60_000)
       pendingReplies.set(requestId, { resolve, timer })
       main.webContents.send('extension:message', {
         requestId,
