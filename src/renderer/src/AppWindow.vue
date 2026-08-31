@@ -62,6 +62,37 @@ function onMessage(e: MessageEvent): void {
     case 'close':
       void window.api.windowAction('close')
       break
+    case 'obox-extension':
+      // 扩展消息：转发到扩展入口（主窗口宿主），结果回传 iframe
+      void window.api
+        .extensionMessage(data.appId, data.channel, data.payload)
+        .then((result) => {
+          if (e.source) {
+            ;(e.source as Window).postMessage(
+              {
+                source: 'obox-app',
+                action: 'obox-extension-reply',
+                requestId: data.requestId,
+                result
+              },
+              '*'
+            )
+          }
+        })
+        .catch((err) => {
+          if (e.source) {
+            ;(e.source as Window).postMessage(
+              {
+                source: 'obox-app',
+                action: 'obox-extension-reply',
+                requestId: data.requestId,
+                result: { ok: false, error: err instanceof Error ? err.message : String(err) }
+              },
+              '*'
+            )
+          }
+        })
+      break
   }
 }
 

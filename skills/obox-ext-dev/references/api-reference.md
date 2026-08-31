@@ -119,6 +119,38 @@ const d = api.app.register({
 - 子窗口内容通信：iframe 内 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')` 控制子窗口（**不要用内联 onclick，会被 CSP 阻止**）
 - **url 加载用户扩展静态页**：CSP 已放行 `app:` scheme，`url: 'app://extensions/<id>/todo.html'` 可由 iframe 同源加载（页面可执行脚本、可用 localStorage）；子窗口 iframe 无 allow-modals，禁 alert/confirm/prompt
 
+### app.onMessage(handler) → Disposable（App 子窗口 ↔ 扩展消息桥）
+
+子窗口 iframe 里的页面**没有 api 对象**（扩展入口运行在主窗口）。要用 `api.sqlite`/`api.notification`/`api.timer` 等宿主能力，扩展入口注册消息处理器，子应用经 postMessage 请求：
+
+```ts
+// 扩展入口（index.js，主窗口）
+const off = api.app.onMessage(async (channel, payload) => {
+  switch (channel) {
+    case 'todos:list':
+      return await db.query('SELECT * FROM todos')
+    case 'todos:add':
+      await db.query('INSERT INTO todos ...', [...])
+      return { ok: true }
+    default:
+      throw new Error(`未知操作: ${channel}`)
+  }
+})
+off.dispose()
+```
+
+```ts
+// 子应用（iframe 内）
+window.parent.postMessage(
+  { source: 'obox-app', action: 'obox-extension', requestId: 1, appId: 'todo.main', channel: 'todos:list', payload: undefined },
+  '*'
+)
+// 结果回传：parent 收到后 postMessage { source:'obox-app', action:'obox-extension-reply', requestId, result:{ok,data|error} }
+```
+
+- `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；10s 超时
+- `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销
+
 ### i18n（扩展多语言）
 
 扩展语言包与宿主语言包独立命名空间，互不冲突：

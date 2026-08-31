@@ -140,6 +140,11 @@ export interface ExtensionActivationApi {
   app: {
     /** 注册一张插件卡片，返回注销函数；扩展停用时宿主自动清理 */
     register(registration: AppRegistration): Disposable
+    /**
+     * 注册 App 子窗口消息处理器（子窗口 iframe 经 postMessage 发来的消息）。
+     * handler(channel, payload) 返回值/结果回传给 iframe（可返回 Promise）；返回注销函数。
+     */
+    onMessage(handler: (channel: string, payload: unknown) => unknown | Promise<unknown>): Disposable
   }
   /** 扩展多语言能力（扩展语言包与宿主语言包独立命名空间） */
   i18n: {
