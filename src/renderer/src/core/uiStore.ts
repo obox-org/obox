@@ -145,7 +145,11 @@ export const uiStore = {
   },
 
   resolveForm(value: Record<string, unknown> | undefined): void {
-    uiState.form?.resolve(value)
+    // 深拷贝为纯数据：form.values 里的 checkbox 数组是 Vue reactive（Proxy），
+    // 直接回传会在 IPC structured clone 时报 "could not be cloned"
+    let out = value
+    if (value !== undefined) out = JSON.parse(JSON.stringify(value))
+    uiState.form?.resolve(out)
     uiState.form = null
   },
 
