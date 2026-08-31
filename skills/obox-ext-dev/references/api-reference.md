@@ -366,6 +366,18 @@ const name = await api.ui.showInputBox({ title: '新建待办', placeHolder: '�
 const token = await api.ui.showInputBox({ title: '输入 Token', password: true })
 // 应用内 toast（非模态，自动消失；区别于 dialog 阻塞框与系统 notification）
 api.ui.showMessage('已保存', 'success')   // 'info' | 'warning' | 'error' | 'success'
+// 多字段表单模态框（返回 {field: value}；取消或必填未过 → undefined）
+const form = await api.ui.showForm({
+  title: '添加待办',
+  fields: [
+    { key: 'title', label: '标题', type: 'text', required: true, placeholder: '待办内容' },
+    { key: 'notes', label: '备注', type: 'textarea' },
+    { key: 'dueDate', label: '截止日期', type: 'date' },
+    { key: 'priority', label: '优先级', type: 'select', default: 'medium', options: [{ value: 'high', label: '高' }] },
+    { key: 'tags', label: '标签', type: 'checkbox', options: [{ value: 't1', label: '工作' }] }
+  ]
+})
+// 字段类型：text / textarea / number / date / select / checkbox（checkbox 值为选中 value 数组）
 // 任务进度（完成自动关闭；report(percent) 更新进度条）
 await api.ui.withProgress('正在同步…', async (report) => {
   report(30)

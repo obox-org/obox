@@ -38,9 +38,28 @@ export interface ProgressState {
   percent: number | null
 }
 
+/** 表单字段（api.ui.showForm） */
+export interface FormField {
+  key: string
+  label: string
+  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox'
+  required?: boolean
+  placeholder?: string
+  default?: unknown
+  options?: Array<{ value: string; label: string }>
+}
+
+export interface FormState {
+  title?: string
+  fields: FormField[]
+  values: Record<string, unknown>
+  resolve: (value: Record<string, unknown> | undefined) => void
+}
+
 export const uiState = reactive({
   quickPick: null as QuickPickState | null,
   inputBox: null as InputBoxState | null,
+  form: null as FormState | null,
   toasts: [] as ToastItem[],
   progress: null as ProgressState | null
 })
@@ -86,6 +105,25 @@ export const uiStore = {
   resolveInputBox(value: string | undefined): void {
     uiState.inputBox?.resolve(value)
     uiState.inputBox = null
+  },
+
+  /** 多字段表单模态框（返回字段键值；取消 → undefined） */
+  showForm(opts: { title?: string; fields: FormField[] }): Promise<Record<string, unknown> | undefined> {
+    return new Promise((resolve) => {
+      const values: Record<string, unknown> = {}
+      for (const f of opts.fields) {
+        const d = f.default
+        if (f.type === 'checkbox') values[f.key] = Array.isArray(d) ? [...d] : []
+        else if (d !== undefined) values[f.key] = d
+        else values[f.key] = ''
+      }
+      uiState.form = { title: opts.title, fields: opts.fields, values, resolve }
+    })
+  },
+
+  resolveForm(value: Record<string, unknown> | undefined): void {
+    uiState.form?.resolve(value)
+    uiState.form = null
   },
 
   /** 应用内 toast（非模态，自动消失） */
