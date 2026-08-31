@@ -369,15 +369,18 @@ api.ui.showMessage('已保存', 'success')   // 'info' | 'warning' | 'error' | '
 // 多字段表单模态框（返回 {field: value}；取消或必填未过 → undefined）
 const form = await api.ui.showForm({
   title: '添加待办',
+  closeOnClickOutside: false, // 可选：点击遮罩是否关闭（默认 true；false 只能经取消/确定关闭，避免误触丢失输入）
   fields: [
     { key: 'title', label: '标题', type: 'text', required: true, placeholder: '待办内容' },
     { key: 'notes', label: '备注', type: 'textarea' },
     { key: 'dueDate', label: '截止日期', type: 'date' },
+    { key: 'dueTime', label: '截止时间', type: 'time' },
     { key: 'priority', label: '优先级', type: 'select', default: 'medium', options: [{ value: 'high', label: '高' }] },
     { key: 'tags', label: '标签', type: 'checkbox', options: [{ value: 't1', label: '工作' }] }
   ]
 })
-// 字段类型：text / textarea / number / date / select / checkbox（checkbox 值为选中 value 数组）
+// 字段类型：text / textarea / number / date / time / select / checkbox（checkbox 值为选中 value 数组）
+// showQuickPick / showInputBox 同样支持 closeOnClickOutside 配置
 // 任务进度（完成自动关闭；report(percent) 更新进度条）
 await api.ui.withProgress('正在同步…', async (report) => {
   report(30)
