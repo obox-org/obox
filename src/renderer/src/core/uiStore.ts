@@ -42,7 +42,7 @@ export interface ProgressState {
 export interface FormField {
   key: string
   label: string
-  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox'
+  type: 'text' | 'textarea' | 'number' | 'date' | 'time' | 'select' | 'checkbox'
   required?: boolean
   placeholder?: string
   default?: unknown

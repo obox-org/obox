@@ -50,7 +50,7 @@ export interface QuickPickItem {
 export interface FormField {
   key: string
   label: string
-  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox'
+  type: 'text' | 'textarea' | 'number' | 'date' | 'time' | 'select' | 'checkbox'
   /** 必填（提交时校验；checkbox 数组为空视为未填） */
   required?: boolean
   placeholder?: string
