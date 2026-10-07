@@ -49,6 +49,13 @@ export interface HostOptions {
   builtins: ExtensionEntry[]
   userExtensions: ExtensionEntry[]
   debugExtensions?: ExtensionEntry[]
+  /**
+   * 是否激活扩展（阶段二），默认 true。
+   * App 子窗口传 false：只注册贡献点（主题 token / 语言包 / 导航项等数据），**不执行扩展代码**——
+   * 子窗口渲染只需要这些数据 + 经 localStorage 共享的 App 卡片（appStore），
+   * 若照常激活，会让每个子窗口都把全部扩展跑一遍（定时器 / DB 连接 / fs.watch 等副作用重复注册）。
+   */
+  activateExtensions?: boolean
 }
 
 class ExtensionHost {
@@ -239,7 +246,7 @@ class ExtensionHost {
             `[host] ${ext.id} 注册了未声明的命令 ${id}（manifest contributes.commands 未包含）`
           )
         }
-        return registry.setCommandHandler(id, handler)
+        return registry.setCommandHandler(id, handler, ext.id)
       },
       executeCommand: <T = unknown>(id: string, ...args: unknown[]): Promise<T> =>
         this.executeCommand(id, ...args),
@@ -375,7 +382,8 @@ class ExtensionHost {
       settings: {
         register: (page) => {
           extensionSettingsStore.register(ext.id, page)
-          return { dispose: () => extensionSettingsStore.deactivateExtension(ext.id) }
+          // 只撤掉本页（旧实现调 deactivateExtension 会连带清掉该扩展全部设置页，含 manifest 声明的）
+          return { dispose: () => extensionSettingsStore.removePage(page.id) }
         },
         get: <T = unknown>(key: string, defaultValue?: T): T | undefined =>
           stateStore.getSetting<T>(key, defaultValue),
@@ -473,7 +481,7 @@ class ExtensionHost {
       },
       views: {
         registerTreeProvider: (viewId, provider) => {
-          const off = treeStore.registerTreeProvider(viewId, provider)
+          const off = treeStore.registerTreeProvider(viewId, provider, ext.id)
           disposables.push(off)
           return { dispose: off }
         }
@@ -765,8 +773,13 @@ class ExtensionHost {
     this.barrierWaiters.forEach((w) => w())
     this.barrierWaiters = []
 
-    // ---- 4. 阶段二：依赖拓扑序激活 ----
-    const { ordered, cyclic } = topoSort(all.filter((e) => e.enabled && e.isValid))
+    // ---- 4. 阶段二：依赖拓扑序激活（子窗口模式跳过，见 HostOptions.activateExtensions） ----
+    const topo = topoSort(all.filter((e) => e.enabled && e.isValid))
+    const ordered = options.activateExtensions === false ? [] : topo.ordered
+    const cyclic = topo.cyclic
+    if (options.activateExtensions === false) {
+      console.log('[host] 子窗口模式：仅注册贡献点，不激活扩展')
+    }
     for (const ext of ordered) {
       const load = this.loaders.get(ext.id)
       if (!load) continue
@@ -858,6 +871,8 @@ class ExtensionHost {
     // 注册表贡献项 + 视图组件 + App 卡片 + 设置页 + 语言包 + 更新提供者
     registry.deactivateExtension(id)
     registry.removeViewComponents(id)
+    // 物理清除贡献项：命令/导航项/状态栏项/菜单（否则同 id 重装会被误判重复、数组持续增长）
+    registry.unregisterExtension(id)
     appStore.deactivateExtension(id)
     extensionSettingsStore.deactivateExtension(id)
     clearExtensionMessages(id)

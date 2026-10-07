@@ -68,9 +68,12 @@ function reloadWindow(): void {
 async function toggleEnabled(ext: ExtensionInfo): Promise<void> {
   busyId.value = ext.id
   try {
-    const { hot, needsRestart } = host.setEnabled(ext.id, !ext.enabled)
+    // 先记录原状态：host.setEnabled 会**就地改写** ext.enabled，
+    // 之后再读它推导文案就会与实际操作相反（禁用却提示"已启用"）
+    const wasEnabled = ext.enabled
+    const { hot, needsRestart } = host.setEnabled(ext.id, !wasEnabled)
     refreshTick.value++
-    const action = ext.enabled ? t('extManager.actions.disable') : t('extManager.actions.enable')
+    const action = wasEnabled ? t('extManager.actions.disable') : t('extManager.actions.enable')
     if (hot) {
       showNotice(t('extManager.notices.toggledHot', { action }))
     } else if (needsRestart) {
@@ -205,28 +208,31 @@ async function onDrop(e: DragEvent): Promise<void> {
   }
 }
 
-function onEvent(...args: unknown[]): void {
-  const name = args[0] as string
-  const payload = args[1]
-  if (name === 'ext-manager:refresh') refreshTick.value++
-  if (name === 'ext-manager:disable' || name === 'ext-manager:enable') {
-    const id = payload as string
-    const ext = extensions.value.find((e) => e.id === id)
-    if (ext) void toggleEnabled(ext)
-  }
+function onToggleById(payload: unknown): void {
+  if (typeof payload !== 'string') return
+  const ext = extensions.value.find((e) => e.id === payload)
+  if (ext) void toggleEnabled(ext)
 }
 
-let offEvents: (() => void) | undefined
+let offEvents: Array<() => void> = []
 
 onMounted(() => {
-  offEvents = (
-    host.rootContext as unknown as {
-      on(e: string, l: (...args: unknown[]) => void): () => void
-    }
-  ).on('ext-manager', onEvent)
+  // 事件契约：入口（ext-manager/index.ts）分别 emit 三个**具体事件名**——
+  // 'ext-manager:refresh'（无载荷）、'ext-manager:disable'（载荷 = 扩展 id）、'ext-manager:enable'（载荷 = 扩展 id）。
+  // 旧实现只订阅 'ext-manager'，与入口 emit 的名字不一致 → 刷新/禁用/启用命令与状态栏点击全是空操作。
+  const ctx = host.rootContext as unknown as {
+    on(e: string, l: (...args: unknown[]) => void): () => void
+  }
+  offEvents = [
+    ctx.on('ext-manager:refresh', () => {
+      refreshTick.value++
+    }),
+    ctx.on('ext-manager:disable', onToggleById),
+    ctx.on('ext-manager:enable', onToggleById)
+  ]
 })
 
-onUnmounted(() => offEvents?.())
+onUnmounted(() => offEvents.forEach((off) => off()))
 
 const sourceLabel = (s: string): string =>
   s === 'builtin' ? t('common.builtin') : s === 'debug' ? t('common.debug') : t('common.user')
