@@ -120,6 +120,7 @@ git push origin v1.0.0
 | [CONTEXT.md](CONTEXT.md) | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等） |
 | [AGENTS.md](AGENTS.md) | 开发者约定：obox-ext-dev 文档同步要求 + 强制提交流程（五步）+ 质量门槛 |
 | [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md) | 扩展开发完整指南（含 references/ 与 scripts/） |
+| [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装） |
 | [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动/oix 分发与安装/调试扩展/扩展 API 版本） |
 
 ## 技术栈
