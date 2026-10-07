@@ -9,16 +9,12 @@ import {
   removeKnownExtension,
   requireKnownExtension
 } from './extGuard'
+import { runExtensionHook } from './hookRunner'
 
-/** 用户扩展目录：userData/extensions */
-export function getUserExtensionsDir(): string {
-  return join(app.getPath('userData'), 'extensions')
-}
+/** 路径约定实现在 ./paths（独立模块，避免与 hookRunner 形成循环依赖）；此处转出以兼容既有引用 */
+import { getBuiltinExtensionsDir, getUserExtensionsDir } from './paths'
 
-/** 内置扩展目录（打包后 resources/extensions；开发期返回 null，由渲染进程走 Vite） */
-export function getBuiltinExtensionsDir(): string {
-  return join(process.resourcesPath, 'extensions')
-}
+export { getBuiltinExtensionsDir, getUserExtensionsDir }
 
 async function listDirectories(root: string): Promise<string[]> {
   try {
@@ -38,6 +34,17 @@ async function listUserExtensionIds(): Promise<string[]> {
 /** 刷新"已知扩展"的磁盘扫描部分（启动与每次列目录时调用；不影响调试扩展与安装登记） */
 function refreshKnownExtensions(ids: string[]): void {
   refreshScannedExtensions(ids)
+}
+
+/** 读扩展清单里的版本（供卸载钩子的请求上下文用；读不到给占位值，不阻塞卸载） */
+async function readManifestVersion(dir: string): Promise<string> {
+  try {
+    const raw = await fs.readFile(join(dir, 'manifest.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { version?: unknown }
+    return typeof parsed.version === 'string' ? parsed.version : '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
 }
 
 export function registerCapabilityIpc(): void {
@@ -63,13 +70,31 @@ export function registerCapabilityIpc(): void {
     if (basename(target) !== safeId || parent !== root) {
       throw new Error(`unsafe path: ${target}`)
     }
-    // 先跑卸载钩子（尽力而为）
-    try {
-      const hook = join(target, '.uninstall.cjs')
-      await fs.access(hook)
-      await runHook(hook)
-    } catch {
-      // 无钩子或执行失败：继续删除
+    // 先跑卸载钩子（尽力而为）：**入口导出的 uninstall 优先**，旧固定文件 `.uninstall.cjs` 回退。
+    // 钩子在渲染进程执行（扩展入口只在那里被 import）；窗口不可用或入口未加载 → 回退旧文件。
+    // 无论钩子成败都继续删除：否则一个写错的钩子会让扩展永远删不掉（issue #52 的既定语义）。
+    const version = await readManifestVersion(target)
+    const outcome = await runExtensionHook({
+      extId: safeId,
+      phase: 'uninstall',
+      version,
+      upgraded: false
+    })
+    const handledByEntry =
+      outcome.delivered && outcome.deferred !== true && outcome.skipped !== true
+    if (!handledByEntry) {
+      try {
+        const hook = join(target, '.uninstall.cjs')
+        await fs.access(hook)
+        await runHook(hook)
+      } catch {
+        // 无旧钩子或执行失败：继续删除
+      }
+    }
+    if (outcome.delivered && outcome.ok === false && outcome.deferred !== true) {
+      console.warn(
+        `[capabilities] 扩展 ${safeId} 的 uninstall 钩子失败：${outcome.error ?? '未知错误'}`
+      )
     }
     await fs.rm(target, { recursive: true, force: true })
     // 已不在磁盘上：从已知集合移除（避免陈旧 id 通过成员校验）

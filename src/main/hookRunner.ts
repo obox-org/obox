@@ -10,7 +10,7 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { createHookBridge, type HookRunOutcome } from './hookBridge'
-import { getUserExtensionsDir } from './capabilities'
+import { getUserExtensionsDir } from './paths'
 import { requireKnownExtension } from './extGuard'
 import { recordInstallHookResult } from './oixCore'
 import type { ExtensionHookRunResult } from '../shared/types'
