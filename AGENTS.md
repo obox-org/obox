@@ -43,7 +43,7 @@
 ### 其他项目约定
 
 - 扩展 API 类型定义是单包共享类型，修改时同步 `tsconfig` 无感；扩展开发经相对路径导入类型
-- 质量门槛：`npm run typecheck` + `npm run lint` 必须通过（`npm run build` 含两者）
+- 质量门槛：`npm run typecheck` + `npm run lint` + `npm test` 必须通过（`npm run build` 含前两者）
 - `vendor/vscode` 是 VS Code 源码参考目录（只读参考，不修改）；eslint/prettier 已忽略该目录
 
 ## 提交约定（强制）
@@ -67,7 +67,7 @@
 
 ### 开 PR（任务完成时）
 
-- 任务完成（typecheck + lint 通过）后，用 `.gitoken` 调 GitHub API 自动开 PR：
+- 任务完成（typecheck + lint + 单元测试通过）后，用 `.gitoken` 调 GitHub API 自动开 PR：
   - 标题 = Conventional Commits 摘要（squash 合并后即 master 上唯一的 commit 信息）
   - base = `master`，head = 当前 feature 分支；正文简述改动
   - **中文编码坑（已踩）**：PR 标题/正文含中文时，**不要**把中文写进 pwsh 命令行（`-Body` 字符串会被破坏成乱码）。正确姿势：用 write 工具把标题/正文写成 UTF-8 文件 → pwsh 里 `[System.IO.File]::ReadAllText(path, [System.Text.Encoding]::UTF8)` 读取 → `$bytes = [System.Text.Encoding]::UTF8.GetBytes($json)` 以 **UTF-8 字节**发送（`-ContentType 'application/json; charset=utf-8' -Body $bytes`）。开完 PR 后回读 `$r.title` 验证中文无损
@@ -76,7 +76,7 @@
 
 ### 提交前质量门槛
 
-- 改动涉及 `src/` 代码时：先跑 `npm run typecheck`（必须通过），尽量跑 `npm run lint`（0 errors）；PR 的 CI（`.github/workflows/pr-check.yml`）会强制两者通过才能合并
+- 改动涉及 `src/` 代码时：先跑 `npm run typecheck`（必须通过）、`npm run lint`（0 errors）与 `npm test`（vitest）；PR 的 CI（`.github/workflows/pr-check.yml`）会强制三者通过才能合并
 - 纯文档/配置/skill 改动：跳过本地检查直接提交（CI 仍会跑）
 - typecheck 失败时：先修复再提交，不得带着错误提交
 
