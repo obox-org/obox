@@ -60,6 +60,27 @@ export function planRuntimeTrim(relPaths: readonly string[]): { remove: string[]
   return { remove, keep }
 }
 
+/** 裁剪涉及的目录（打包时**按目录整体删除**，避免把空目录打进包） */
+export const RUNTIME_TRIM_DIRS: readonly string[] = [
+  'include',
+  'libs',
+  'Lib/idlelib',
+  'Lib/turtledemo'
+]
+
+/**
+ * 从清单里算出"应整体删除的裁剪目录"。
+ *
+ * `planRuntimeTrim` 给的是**文件级**判断；若只按文件删，会留下空的 `include/`、`libs/`、
+ * `Lib/idlelib/` 等目录（真机跑打包任务时踩到）。打包侧应当按这里返回的目录递归删除。
+ */
+export function runtimeTrimDirs(relPaths: readonly string[]): string[] {
+  const normalized = relPaths.map((p) => p.replace(/\\/g, '/').replace(/^\.\//, ''))
+  return RUNTIME_TRIM_DIRS.filter((dir) =>
+    normalized.some((p) => p === dir || p.startsWith(`${dir}/`))
+  )
+}
+
 export interface TreeEntry {
   /** 相对路径（posix 分隔） */
   path: string

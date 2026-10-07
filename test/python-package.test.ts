@@ -9,6 +9,7 @@ import {
   runtimeArchiveName,
   runtimeDownloadUrl,
   runtimeManifestFields,
+  runtimeTrimDirs,
   summarizeTree,
   treeDigest,
   uvWheelInstallArgs
@@ -87,6 +88,18 @@ describe('planRuntimeTrim（基线 stripped + 只删确定安全的）', () => {
     ]) {
       expect(keep).toContain(must)
     }
+  })
+
+  it('runtimeTrimDirs 给出"应整删的目录"（只按文件删会留下空目录）', () => {
+    expect(runtimeTrimDirs(paths)).toEqual(['include', 'libs', 'Lib/idlelib', 'Lib/turtledemo'])
+    // 只有文件、没有目录项时也要能判断出来
+    expect(runtimeTrimDirs(['include/internal/pycore_gc.h', 'Lib/tkinter/__init__.py'])).toEqual([
+      'include'
+    ])
+    // 无关路径不产生删除项
+    expect(runtimeTrimDirs(['Lib/os.py', 'python.exe'])).toEqual([])
+    // 反斜杠同样识别
+    expect(runtimeTrimDirs(['.\\libs\\python313.lib'])).toEqual(['libs'])
   })
 
   it('容错反斜杠与 ./ 前缀', () => {

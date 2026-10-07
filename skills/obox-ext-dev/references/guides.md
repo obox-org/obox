@@ -225,19 +225,30 @@ extensions/todo/
 
 ### 5. 把 Python 运行时打进扩展包（ADR-0018）
 
-想把 Python 生态（如 matplotlib）带进扩展时，运行时**随扩展包分发**、按架构各发一个包。作者侧只需三步：
+想把 Python 生态（如 matplotlib）带进扩展时，运行时**随扩展包分发**、按架构各发一个包。作者侧三步：
 
 ```powershell
-# 1) 准备运行时：下载 install_only_stripped 归档 → 解压 → 裁剪 → 用 uv 预置 wheel
-node scripts/build-python-runtime.mts --arch x64 --python 3.13.16 --release 20261003 `
-  --out extensions/my-py-ext --requirements matplotlib==3.11.2
+# 1) 先下载对应架构的 install_only_stripped 归档
+#    地址 = https://github.com/astral-sh/python-build-standalone/releases/download/<release>/
+#           cpython-<版本>+<release>-<x86_64|aarch64>-pc-windows-msvc-install_only_stripped.tar.gz
+#    （与代码里的 runtimeDownloadUrl() 同源，见 src/main/pythonPackage.ts）
+$archive = "$env:TEMP\cpython-3.13.16-x64.tar.gz"
 
-# 2) 若目标还有 Windows on ARM：换架构再来一次（wheel 会交叉取到 win_arm64）
-node scripts/build-python-runtime.mts --arch arm64 --python 3.13.16 --release 20261003 `
-  --out extensions/my-py-ext-arm64 --requirements matplotlib==3.11.2
+# 2) 跑打包任务：解压 → 按既定档位裁剪 → 汇总并写 python-package.json（产物保留，供打包 .oix）
+$env:OBOX_PACK_RUNTIME_OUT = "extensions/my-py-ext"       # 产物目录
+$env:OBOX_PYTHON_ARCHIVE   = $archive
+npx vitest run test/python-runtime-task.test.ts
 
 # 3) 打包 .oix：manifest.json + 入口 + python/ 压平到 zip 根
 ```
+
+> 为什么是"任务测试"而不是 `scripts/*.mts` CLI：Node 原生跑 `.mts` 时**无法解析 `src/` 内部的无扩展名 import**
+> （项目风格就是无扩展名），而 vitest 走 Vite 解析、可以直接复用 `src/main/pythonPackage.ts` 里那些**已有单测**
+> 的规划函数。所以打包这一步做成环境变量门控的 vitest 任务（默认跳过，`npm test` 不受影响）。
+
+需要预置依赖（如 matplotlib）时，把 `OBOX_PACK_REQUIREMENTS=matplotlib==3.11.2` 一并设上（需要 `uv` 在 PATH 上；
+它会用 `--python-platform` **交叉取对应架构的 wheel**，实测能取到 win_arm64 的 matplotlib/numpy）。
+arm64 包把 `OBOX_PACK_ARCH=arm64` + arm64 归档再跑一次即可。
 
 manifest 必须成对声明（安装期会校验，错了直接拒绝并给 `arch-mismatch`）：
 
@@ -245,17 +256,17 @@ manifest 必须成对声明（安装期会校验，错了直接拒绝并给 `arc
 { "name": "my-py-ext", "version": "1.0.0", "main": "./index.js", "arch": "x64", "python": "3.13" }
 ```
 
-脚本会用与安装器**同源**的限额常量检查体积，超限直接退出码 1，并写 `python-package.json`
+任务会用与安装器**同源**的限额常量检查体积（超限即断言失败），并写 `python-package.json`
 （文件数 / 总字节 / 树指纹）便于复现与留痕。
 
 **体积预期**（实测，CPython 3.13.16 + release 20261003）：
 
-| 形态                                                 | 体积 / 条目         |
-| ---------------------------------------------------- | ------------------- |
-| `install_only`（未裁剪）                             | 145.0 MB / 3350     |
-| `install_only_stripped`（脚本用的基线，已去 `.pdb`） | 59.7 MB / 3309      |
-| 再按脚本裁剪 `include`/`libs`/`idlelib`/`turtledemo` | ≈56 MB / ≈3000      |
-| 再预置 matplotlib（+numpy/Pillow/fontTools…）        | **+119 MB / +3385** |
+| 形态                                                     | 体积 / 条目         |
+| -------------------------------------------------------- | ------------------- |
+| `install_only`（未裁剪）                                 | 145.0 MB / 3350     |
+| `install_only_stripped`（打包任务用的基线，已去 `.pdb`） | 59.7 MB / 3309      |
+| 再按任务裁剪 `include`/`libs`/`idlelib`/`turtledemo`     | **56.3 MB / 2931**  |
+| 再预置 matplotlib（+numpy/Pillow/fontTools…）            | **+119 MB / +3385** |
 
 **不要**手工再删这些（逐项实测过的不可删清单，见 ADR-0018）：`tkinter`/`tcl`（交互式绘图）、
 `Lib/ensurepip`/`Lib/venv`/`Lib/tomllib`（pip 与 venv）、`python3.dll`（abi3 轮子）、
@@ -281,9 +292,10 @@ node scripts/collect-python-licenses.mts --ext extensions/my-py-ext --check   # 
 **真机自检（建议做一次）**：用真实解释器验证整条链路（而不是用 Node 冒充）：
 
 ```powershell
-# 取一份运行时并裁剪（--skip-wheels 表示先不预置依赖）
-node scripts/build-python-runtime.mts --arch x64 --python 3.13.16 --release 20261003 `
-  --out $env:TEMP\py-check --skip-wheels
+# 用打包任务在临时目录里做一份运行时（不预置依赖）
+$env:OBOX_PACK_RUNTIME_OUT = "$env:TEMP\py-check"
+$env:OBOX_PYTHON_ARCHIVE   = "$env:TEMP\cpython-3.13.16-x64.tar.gz"
+npx vitest run test/python-runtime-task.test.ts
 
 # 让 vitest 额外跑真实 Python 用例（未设置时这 4 项自动跳过，CI 不依赖下载）
 $env:OBOX_PYTHON_EXE = "$env:TEMP\py-check\python\python.exe"; npm test
