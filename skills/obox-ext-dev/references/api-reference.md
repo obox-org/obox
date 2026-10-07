@@ -201,7 +201,7 @@ page.dispose() // 注销设置页
 ```ts
 // 当前 obox 版本号
 const version = await api.update.getVersion()
-// 解析 GitHub 仓库"最后一次编译"的 release 更新源（按创建时间最新，不依赖 latest 标记）
+// 解析 GitHub 仓库的更新源（取最近若干 release 中第一个含 latest.yml 的正式版）
 const feed = await api.update.resolveFeed('obox-org/obox')
 // feed = { ok, tag: 'v1.1.0', feedUrl: 'https://github.com/obox-org/obox/releases/download/v1.1.0/', publishedAt }
 // 检查更新（feedUrl 为更新源；无默认源，未配置 feed 或未选中时报错）
@@ -220,7 +220,7 @@ api.update.onEvent((e) => {
 
 > 更新执行由宿主 electron-updater 完成；扩展提供更新源与触发时机。未在设置-更新选中的扩展调用 update API 会抛错。
 >
-> **更新源解析**：`resolveFeed(repo)` 走主进程调 GitHub REST API 取该仓库最新创建的 release（draft 除外），返回该 tag 的 `releases/download/<tag>/` 作为 feedUrl——**不依赖 GitHub 的 latest 标记**，保证拿到的是"最后一次编译"的产物。Windows 上 electron-builder 生成的更新元数据固定叫 `latest.yml`（无架构后缀），files 含全部架构安装包，electron-updater 按机器架构自动选匹配的安装包，扩展无需关心架构。
+> **更新源解析**：`resolveFeed(repo)` 走主进程调 GitHub REST API，取最近若干 release 中**第一个可用项**——非 draft、非 prerelease，且资产里含 `latest.yml`（即"确实编译出了更新元数据"），返回该 tag 的 `releases/download/<tag>/` 作为 feedUrl；**不依赖 GitHub 的 latest 标记**（latest 可能指向未完成编译或预发布的 release）。无可用项时返回 `ok:false`，**扩展应自行回落** `https://github.com/<owner>/<repo>/releases/latest/download/`。Windows 上 electron-builder 生成的更新元数据固定叫 `latest.yml`（无架构后缀），files 含全部架构安装包，electron-updater 按机器架构自动选匹配的安装包，扩展无需关心架构。
 
 ### proxy（代理配置）
 
@@ -292,7 +292,9 @@ const r = await api.notification.show({
 
 ### net（网络请求）
 
-渲染进程 CSP（`default-src 'self' app:`）**禁止扩展直接 fetch 外部网络**——联网必须走 `api.net.fetch`（主进程发请求，**自动应用设置-网络代理**，默认 30s 超时）：
+渲染进程 CSP（`default-src 'self' app:`）**禁止扩展直接 fetch 外部网络**——联网必须走 `api.net.fetch`（主进程经 **Chromium session** 发请求，**自动应用设置-网络代理**，默认 30s 超时，响应体上限 8MB）：
+
+> 代理如何生效：宿主在扩展联网专用 session（`obox-net`）上调用 `setProxy` / `setCertificateVerifyProc`，因此代理与 `ignoreSSL` **真实作用于请求**。反例（早期实现的缺陷）：写 `HTTP_PROXY` 之类的环境变量**不会**生效——Node 的 `fetch`（undici）与 Electron `net.request`（Chromium）都不读这些变量，看起来配了代理其实在直连。
 
 > 代理实现说明：主进程经**进程级 env**（`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`/`NODE_TLS_REJECT_UNAUTHORIZED`）应用代理，配置未变化时不重复改写（避免并发请求互相覆盖）。限制：运行中修改代理设置会同时影响在途请求；`ignoreSSL` 等价于全局放开证书校验（`NODE_TLS_REJECT_UNAUTHORIZED=0`），仅在确实需要时开启。
 

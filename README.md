@@ -99,10 +99,10 @@ git push origin v1.0.0
 ```
 
 - 工作流：[.github/workflows/release.yml](.github/workflows/release.yml)（`on.push.tags: v*`）
-- 流程：checkout tag → 装依赖 → 校验 tag 版本与 package.json 一致 → typecheck → `electron-builder --win nsis --x64 --arm64 --publish never`（输出到 runner 临时目录）→ `gh release create` 上传 `obox-<version>-x64-setup.exe` + `obox-<version>-arm64-setup.exe` + `latest.yml` + `latest-arm64.yml`（release 已存在则删除重建，幂等）
+- 流程：checkout tag → 装依赖 → 校验 tag 版本与 package.json 一致 → typecheck + lint + 单元测试 → electron-vite 构建 → `electron-builder --win nsis --x64 --arm64 --publish never`（输出到 runner 临时目录）→ `gh release` 上传 `obox-<version>-x64-setup.exe` + `obox-<version>-arm64-setup.exe` + `latest.yml` + `*.blockmap`（release 不存在则创建、已存在则覆盖上传；**不改动 git tag**）
 - **安装器**：NSIS 向导式（`oneClick: false`）——安装时可**选择安装目录**与**“所有用户/当前用户”**（默认当前用户，选所有用户自动提权）；快捷方式、卸载入口由向导生成
-- **架构**：Windows 出 **x64 + arm64** 两个安装包（Electron 已移除 ia32 32 位构建）；`latest.yml` 内 files 含全部架构安装包，electron-updater 按机器架构自动选对应安装包
-- 更新源：更新提供者扩展（如 `extensions/obox-updater/`）先经 `api.update.resolveFeed('obox-org/obox')` **动态解析最后一次编译的 release**（GitHub API 按创建时间最新，不依赖 latest 标记），再从中拉取 `latest.yml` + 对应架构的 `setup.exe` 安装包（兜底源为 `releases/latest/download/`）
+- **架构**：Windows 出 **x64 + arm64** 两个安装包（Electron 已移除 ia32 32 位构建）；`latest.yml` 内 files 含全部架构安装包，electron-updater 按机器架构自动选对应安装包。**Windows 下更新元数据只有单一 `latest.yml`**（electron-builder 不生成 `latest-arm64.yml`），`*.blockmap` 供差分更新
+- 更新源：更新提供者扩展（如 `extensions/obox-updater/`）先经 `api.update.resolveFeed('obox-org/obox')` **动态解析**——取最近若干 release 中第一个「非 draft、非预发布、且资产含 `latest.yml`」的正式版，返回其 `releases/download/<tag>/` 作为 feedUrl（不依赖 GitHub 的 latest 标记，避免它指向未完成编译的 release）；解析失败时扩展回落 `releases/latest/download/`
 
 ## 快速上手（新会话必读）
 
