@@ -100,6 +100,40 @@ async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+/**
+ * 读取扩展元数据（`.obox-meta.json`）。
+ * 缺失、损坏、非对象一律返回空对象——**旧安装没有钩子字段也照常工作**（issue #52）。
+ */
+export async function readExtensionMeta(extensionDir: string): Promise<ExtensionMeta> {
+  try {
+    const raw = await fs.readFile(join(extensionDir, '.obox-meta.json'), 'utf8')
+    const parsed: unknown = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? (parsed as ExtensionMeta) : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 记录一次 install 钩子的执行结果并**清除 `pendingInstall`**。
+ *
+ * 调用方（`oix.ts`）只在"请求确实送达渲染进程且不是 deferred"时才调用，否则保留
+ * `pendingInstall` 待下次启动补跑；钩子失败也记录（`ok:false`），以免"每次安装只跑一次"
+ * 被破坏后无限重跑（判定见 `renderer/src/core/hookState.ts` 的 `decideInstallHook`）。
+ */
+export async function recordInstallHookResult(
+  extensionDir: string,
+  version: string,
+  ok: boolean,
+  at: number = Date.now()
+): Promise<ExtensionMeta> {
+  const current = await readExtensionMeta(extensionDir)
+  const next: ExtensionMeta = { ...current, install: { version, at, ok } }
+  delete next.pendingInstall
+  await fs.writeFile(join(extensionDir, '.obox-meta.json'), JSON.stringify(next), 'utf8')
+  return next
+}
+
 /** 解压阶段进入暂存目录：所有校验通过前不碰目标目录 */
 async function extractToStage(
   zip: AdmZip,

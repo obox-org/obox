@@ -8,6 +8,7 @@ import type { Component } from 'vue'
 // 直接用裸 `Disposable` 会解析到 Node 全局的 Symbol.dispose 形状，导致返回对象被判为多余属性
 import type { Disposable } from '../../../api/runtime'
 import { registry } from './registry'
+import { deferredHookResult, executeExtensionHook, hookFailureForActivation } from './hookRuntime'
 import { makeExtensionInfo, topoSort } from './manifest'
 import { stateStore } from './state'
 import { appStore } from './appStore'
@@ -765,6 +766,25 @@ class ExtensionHost {
             error: err instanceof Error ? err.message : String(err)
           })
         )
+    })
+    // 生命周期钩子（issue #52）：主进程请宿主执行入口导出的 install / uninstall。
+    // 扩展尚未加载到宿主时（刚安装完还没被扫描到）回 deferred —— 主进程据此保留 pendingInstall，
+    // 下次启动扫描期补跑，而不是把"没跑"记成"跑过了"。
+    window.events.on('extension:hook-request', (e) => {
+      const load = this.loaders.get(e.extId)
+      if (!load) {
+        window.api.hookResult(deferredHookResult(e.requestId))
+        return
+      }
+      void executeExtensionHook(e, { load }).then((result) => {
+        // 只有"真的执行过且失败"才标激活失败（deferred 与成功都不算）
+        const failure = hookFailureForActivation(result)
+        if (failure) {
+          const info = this.extensions.get(e.extId)
+          if (info) info.activationError = failure
+        }
+        window.api.hookResult(result)
+      })
     })
     // ---- 1. 汇总扩展（内置 + 用户），跳过禁用项 ----
     const all: ExtensionInfo[] = []

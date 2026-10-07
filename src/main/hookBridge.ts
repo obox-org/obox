@@ -35,6 +35,8 @@ export interface HookRunResult {
   ok: boolean
   /** 入口未导出该钩子（可选、可为空，属正常） */
   skipped?: boolean
+  /** 这次没能执行（如扩展尚未加载到宿主）：主进程必须保留 `pendingInstall` 待下次启动补跑 */
+  deferred?: boolean
   error?: string
 }
 
@@ -44,7 +46,7 @@ export interface HookRunResult {
  */
 export type HookRunOutcome =
   | { delivered: false; reason: 'renderer-unavailable'; error?: string }
-  | { delivered: true; ok: boolean; skipped?: boolean; error?: string }
+  | { delivered: true; ok: boolean; skipped?: boolean; deferred?: boolean; error?: string }
 
 export interface HookBridgeOptions {
   /** 把请求送出去；抛错即视为渲染进程不可用 */
@@ -116,8 +118,8 @@ export function createHookBridge(options: HookBridgeOptions): HookBridge {
     },
 
     settle(result: HookRunResult): boolean {
-      const { requestId, ok, skipped, error } = result
-      return finish(requestId, { delivered: true, ok, skipped, error })
+      const { requestId, ok, skipped, deferred, error } = result
+      return finish(requestId, { delivered: true, ok, skipped, deferred, error })
     },
 
     pendingCount(): number {
