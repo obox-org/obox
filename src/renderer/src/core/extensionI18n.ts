@@ -34,7 +34,10 @@ export function translateExtension(
   const messages = stores.get(extensionId)
   if (!messages) return key
   const locale = i18n.global.locale.value as 'zh' | 'en'
-  const dict = messages[locale] ?? messages.zh
+  // registerExtensionMessages 会为未提供的语言建**空对象**，因此不能简单用 `?? messages.zh`
+  // （空对象不是 nullish），要按"该语言是否有条目"判断，才能真正回退到 zh
+  const localized = messages[locale]
+  const dict = localized && Object.keys(localized).length > 0 ? localized : messages.zh
   let text = dict?.[key]
   if (text === undefined) return key
   // 简单 {param} 替换

@@ -169,6 +169,8 @@ const locale = api.i18n.locale // 'zh' | 'en'
 api.i18n.onLocaleChanged((locale) => { /* 重新渲染 */ })
 ```
 
+> 取值顺序：当前语言 → **回退 `zh`**（当前语言没有条目时）→ 都没有则返回 key 本身。因此只提供 `zh` 语言包不会在英文界面下变成裸 key。
+
 ### settings（扩展设置项）
 
 扩展设置页显示在"设置"左侧树的"扩展"节点下（按扩展名展开）：
