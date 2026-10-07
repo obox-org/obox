@@ -1,0 +1,12 @@
+# 行尾统一为 LF：仓库内容本就是 LF，Windows 上被 core.autocrlf 检出成 CRLF 会触发
+# prettier/eslint 的 "Delete ␍" 噪音（8300+ 条）并制造无谓 diff
+* text=auto eol=lf
+
+# 二进制资源不做行尾转换
+*.png binary
+*.ico binary
+*.jpg binary
+*.exe binary
+*.dll binary
+*.oix binary
+*.db binary
