@@ -70,6 +70,12 @@ class ExtensionHost {
   private root: Context
   private extensions = new Map<string, ExtensionInfo>()
   private loaders = new Map<string, () => Promise<ExtensionModule>>()
+  /**
+   * 钩子专用加载器：登记**所有清单有效的条目**（与启用/禁用无关）。
+   * 理由：卸载一个**禁用态**扩展时也要能跑它入口导出的 `uninstall`（issue #52 的验收项）；
+   * 而 `loaders` 只登记"启用且有效"的扩展，因为那决定是否激活。
+   */
+  private hookLoaders = new Map<string, () => Promise<ExtensionModule>>()
   private cleanups = new Map<string, () => void>()
   private activated = new Set<string>()
   private barrierWaiters: Array<() => void> = []
@@ -774,8 +780,10 @@ class ExtensionHost {
     // 生命周期钩子（issue #52）：主进程请宿主执行入口导出的 install / uninstall。
     // 扩展尚未加载到宿主时（刚安装完还没被扫描到）回 deferred —— 主进程据此保留 pendingInstall，
     // 下次启动扫描期补跑，而不是把"没跑"记成"跑过了"。
+    // 加载器取值顺序：**所有有效条目** → 已激活扩展的加载器：这样**禁用态扩展**也能跑钩子
+    // （规格要求"禁用态临时加载入口仅为跑钩子"），而它平时不会被激活。
     window.events.on('extension:hook-request', (e) => {
-      const load = this.loaders.get(e.extId)
+      const load = this.hookLoaders.get(e.extId) ?? this.loaders.get(e.extId)
       if (!load) {
         window.api.hookResult(deferredHookResult(e.requestId))
         return
@@ -805,6 +813,8 @@ class ExtensionHost {
       })
       all.push(info)
       if (enabled && info.isValid) this.loaders.set(entry.id, entry.load)
+      // 钩子专用：清单有效即登记，**与是否启用无关**（禁用态的 install/uninstall 钩子也要能跑）
+      if (info.isValid) this.hookLoaders.set(entry.id, entry.load)
     }
 
     for (const ext of all) this.extensions.set(ext.id, ext)

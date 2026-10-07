@@ -26,7 +26,7 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 
 1. **读现状**：先读 `src/api/`（扩展 API 类型；`src/renderer/src/core/types.ts` 为再导出兼容入口）、`CONTEXT.md`（术语表）、已有的 `src/renderer/src/extensions/*/`（示例扩展：`ext-manager`、`app`）。
 2. **定扩展 id**：`name` 字段（manifest），`^[a-z0-9][a-z0-9._-]*$`，建议短前缀如 `my-ext`；命令 id 用 `<扩展名>.<动作>`，导航/状态栏/App 卡片 id 建议含扩展名前缀。
-3. **写 manifest**：`src/renderer/src/extensions/<id>/manifest.json`（内置）——必填 `name`/`version`/`main`，可选 `contributes`（navItems/statusBarItems/commands）、`extensionDependencies`、`uninstall`。
+3. **写 manifest**：`src/renderer/src/extensions/<id>/manifest.json`（内置）——必填 `name`/`version`/`main`，可选 `contributes`（navItems/statusBarItems/commands）、`extensionDependencies`。**不要把 `uninstall` 写进 manifest**（宿主不读该字段，写了静默失效）；生命周期钩子是**入口具名导出**，见下方规则与 `references/api-reference.md`。
 4. **写入口**：同目录 `index.ts`——`default` 导出插件函数 `(api) => cleanup`，具名导出视图组件（导航项 `view` 字段引用）。所有注册（命令/事件/App 卡片）返回的 Disposable 或 cleanup 函数要能统一释放。
 5. **注册贡献点**：导航项 `view` 引用具名导出组件；状态栏项/命令在 manifest 声明即可，实现（命令 handler）在插件函数里用 `api.registerCommand` 绑定；**未在 manifest 声明的命令会被宿主警告**。
 6. **（可选）注册到 App**：`api.app.register({ id, name, version, author, description, icon, url | html, multiOpen, width, height })`，点击卡片弹出独立子窗口。详见 `references/guides.md` 的 App 部分。
@@ -41,6 +41,7 @@ description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中�
 - **内置扩展只读**：`src/renderer/src/extensions/` 下是内置扩展（随应用打包，不可卸载）；用户扩展放 `userData/extensions/<name>_<author>/`（经 `app://extensions/<id>/` 加载），可卸载，经 .oix 安装（扩展管理器按钮/拖拽）。开发用户扩展建议建独立项目 `extensions/<id>/`（自带 package.json/tsconfig/构建，仅依赖扩展 API），**入口 main 须为纯 ESM JavaScript**（用户扩展无 Vite 转换）。**纯 JS 扩展零 npm 依赖**（运行时只有宿主注入的 `api`；测试 `node --test`、打包系统 zip，无需 `npm install`，见 guides.md）。
 - **子窗口内容**：`html` 用于 srcdoc 渲染，`url` 优先（app:// 或 https）。用户扩展富界面建议用 `url: app://extensions/<id>/<page>.html` 加载自建静态资源（Vue 编译产物）。**iframe 内联 `onclick` 会被 CSP 阻止**——用外部 `<script>` 或事件绑定；`app://` 页面本身无 CSP 头可执行脚本，但 srcdoc 页面内联脚本同样被 `script-src 'self'` 拦截。窗口控制用 postMessage（`parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`）。
 - **依赖与环**：`extensionDependencies` 声明依赖；宿主按拓扑序激活，检测到环会跳过并标记。缺失依赖不阻塞激活。热安装（.oix 装完即激活）按同一语义先激活依赖。
+- **生命周期钩子**：入口可**具名导出** `install(ctx)` / `uninstall(ctx)`，两者**都可选、可为空**。`install` 在 .oix 安装完成后**立刻执行一次**（覆盖安装会重跑，`ctx.upgraded === true`）；`uninstall` 在**删除目录之前**执行（禁用态扩展也会临时加载入口来跑）。安装时若宿主还没加载到该扩展，钩子**留待下次启动、激活之前补跑一次**。`install` 失败归为激活失败（标红 + `activationError`）；`uninstall` 失败只告警但**仍继续删除目录**。钩子需自行保证幂等；固定文件 `.uninstall.cjs` 仅作为回退。详见 `references/api-reference.md` 的「生命周期钩子」。
 - **只在主窗口激活**：`plugin(api)` 只在主窗口执行一次——App 子窗口（`?obox-window=app`）只注册贡献点、**不跑扩展代码**（否则定时器 / DB 连接 / 文件监听会在每个子窗口重复注册）。子窗口内的交互请经 `api.app.onMessage` 消息桥，不要假设那里存在激活的扩展实例。
 - **命令归属**：命令 id 全局唯一，`api.registerCommand(id, handler)` 只能绑定**本扩展 manifest 声明**的命令，跨扩展同名会被宿主拒绝并 `warn`；扩展热移除/覆盖安装时其命令从注册表物理移除，同 id 可重新声明。
 - **扩展是受信代码（无沙箱）**：扩展入口被动态 `import` 进宿主渲染进程，与宿主**同进程同上下文**——`ExtensionActivationApi` 是能力封装、**不是安全边界**：扩展可直接访问 `window.api` / `window.events`，`app://extensions/<任意id>/…` 也能读到其他已安装扩展目录内的文件。**不要用扩展承载不可信第三方代码**；需要强隔离时应改用独立进程/子窗口等更强边界（决策见 `docs/adr/0015-extension-trust-model-and-guard.md`）。

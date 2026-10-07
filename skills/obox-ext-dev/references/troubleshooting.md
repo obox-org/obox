@@ -157,13 +157,30 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **原因**：混淆了安装态。调试扩展（`--debug-extension`）**不会**写 userData/extensions；若扩展管理器里出现可卸载项，那是以前 .oix 安装的同名扩展——先卸载安装态，再用调试参数加载。
 
-## 20. manifest 里写 uninstall 卸载钩子不生效
+## 20. 生命周期钩子（install/uninstall）怎么写才生效
 
-**症状**：manifest 声明 `"uninstall": "./scripts/clean.js"` 后卸载扩展，脚本从未执行，也没有任何报错。
+**症状**：在 manifest 里声明 `"uninstall": "./scripts/clean.js"`，卸载后脚本从未执行，也没有任何报错。
 
-**原因**：`uninstall` 字段是**保留字段，当前未实现**——主进程卸载流程只找扩展目录下的**固定文件 `.uninstall.cjs`**（`src/main/capabilities.ts`），全仓库没有代码读取 `manifest.uninstall`。写了不会报错，只是静默失效。
+**原因**：`manifest.uninstall` **不是**钩子机制——宿主从不读取它，写了静默失效。钩子是扩展**入口的具名导出**：
 
-**修复（扩展侧）**：把钩子命名为扩展根目录下的 **`.uninstall.cjs`**（CommonJS，由 `spawn(process.execPath, [hookPath])` 直接执行，5 秒超时后强杀；失败不影响删除目录）。钩子内可用 `process.env` 等，但**拿不到**扩展目录参数，需要路径时用 `__dirname`。
+```js
+// 扩展入口（manifest.main 指向的文件）
+export function install(ctx) {
+  /* .oix 安装完成后立刻执行一次；覆盖安装会重跑，ctx.upgraded === true */
+}
+export function uninstall(ctx) {
+  /* 删除目录之前执行 */
+}
+```
+
+- `ctx` 形如 `{ extensionId, upgraded, previousVersion }`，并含 `api`（完整能力面；**钩子期 UI 注册类能力不生效**）。
+- 两个函数**都可选、可为空**：不需要额外操作就不写（未导出即跳过，不报错）。
+
+**失败语义**：`install` 抛错 → 扩展在管理器标红（`activationError`），文件层不回滚；`uninstall` 抛错 → 只告警，**仍然删除目录**（否则写错的钩子会让扩展永远删不掉）。
+
+**兼容**：旧的固定文件 **`.uninstall.cjs`**（`spawn(process.execPath, [hookPath])`，5 秒超时）仍作为**回退**——仅当入口未导出 `uninstall` 时执行。
+
+**仍不会执行的几种情况**：入口没导出 `uninstall` 且没有 `.uninstall.cjs`；或卸载时主窗口不可用（此时走回退路径，同样不报错）。安装时若宿主还没加载到该扩展（窗口不可用/刚装完还没扫描到），钩子会**留待下次启动、激活之前补跑一次**。
 
 ## 21. sqlite 用嵌套相对路径在 Windows 报"数据库未打开"
 
