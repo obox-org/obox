@@ -13,8 +13,29 @@ interface NetRequest {
   json?: boolean
 }
 
-/** 应用代理 env（与 updater.ts 的 applyProxy 同策略；无配置时清空） */
-function applyProxyEnv(proxy?: { enabled?: boolean; host?: string; port?: number; username?: string; password?: string; ignoreSSL?: boolean; noProxy?: string[] }): void {
+interface ProxyLike {
+  enabled?: boolean
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  ignoreSSL?: boolean
+  noProxy?: string[]
+}
+
+/**
+ * 应用代理 env（与 updater.ts 的 applyProxy 同策略；无配置时清空）。
+ *
+ * 代理经**进程级 env** 生效，因此只在配置**真的变化时**才改写 env：
+ * 每次请求都无条件改写会让并发请求互相覆盖（后到的请求把前一个请求正在使用的代理/env 清掉）。
+ * 所有请求的代理配置都来自同一份应用级设置（渲染进程 stateStore 的 network.proxy），
+ * 故幂等写入后并发请求之间不再互相干扰；限制：运行中修改代理设置会同时影响在途请求。
+ */
+let appliedProxyKey: string | null = null
+function applyProxyEnv(proxy?: ProxyLike): void {
+  const key = JSON.stringify(proxy ?? null)
+  if (key === appliedProxyKey) return
+  appliedProxyKey = key
   if (!proxy?.enabled || !proxy.host) {
     delete process.env.HTTP_PROXY
     delete process.env.HTTPS_PROXY
@@ -39,7 +60,7 @@ export function registerNetIpc(): void {
     async (
       _e,
       req: NetRequest,
-      proxy?: { enabled?: boolean; host?: string; port?: number; username?: string; password?: string; ignoreSSL?: boolean; noProxy?: string[] }
+      proxy?: ProxyLike
     ): Promise<{ ok: boolean; status?: number; statusText?: string; data?: unknown; error?: string }> => {
       if (!req?.url || !/^https?:\/\//i.test(req.url)) {
         return { ok: false, error: 'url 必须是 http/https 地址' }
