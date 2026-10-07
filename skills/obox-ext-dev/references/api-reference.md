@@ -66,7 +66,7 @@ api.workspaceState.get<string>('key')            // 读
 api.workspaceState.get('key', 'default')         // 读带默认
 api.workspaceState.update('key', value)          // 写（undefined 删 key）
 api.workspaceState.keys()
-// globalState 同构（首版与 workspaceState 共用同一命名空间存储）
+// globalState 同构（当前与 workspaceState 共用同一命名空间存储：obox 无"工作区"概念，两者都是应用级）
 ```
 
 ### on(event, listener) → Disposable / emit(event, ...args)
@@ -167,7 +167,7 @@ const text = api.i18n.t('hello', { name: 'Obox' })  // 支持 {param} 插值
 const locale = api.i18n.locale // 'zh' | 'en'
 // 语言切换监听（返回 Disposable），扩展据此刷新自身 UI
 api.i18n.onLocaleChanged((locale) => { /* 重新渲染 */ })
-// 注意：实现复用设置变更通知，**任意设置项变化都会触发**该回调（不只是语言切换）
+// 注意：底层复用设置变更通知，但**只在语言真的变化时**才回调（设置变更通知的触发面远大于语言切换）
 ```
 
 > 取值顺序：当前语言 → **回退 `zh`**（当前语言没有条目时）→ 都没有则返回 key 本身。因此只提供 `zh` 语言包不会在英文界面下变成裸 key。
@@ -293,6 +293,8 @@ const r = await api.notification.show({
 ### net（网络请求）
 
 渲染进程 CSP（`default-src 'self' app:`）**禁止扩展直接 fetch 外部网络**——联网必须走 `api.net.fetch`（主进程发请求，**自动应用设置-网络代理**，默认 30s 超时）：
+
+> 代理实现说明：主进程经**进程级 env**（`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`/`NODE_TLS_REJECT_UNAUTHORIZED`）应用代理，配置未变化时不重复改写（避免并发请求互相覆盖）。限制：运行中修改代理设置会同时影响在途请求；`ignoreSSL` 等价于全局放开证书校验（`NODE_TLS_REJECT_UNAUTHORIZED=0`），仅在确实需要时开启。
 
 ```ts
 const r = await api.net.fetch('https://api.example.com/items', { method: 'POST', json: true, body: { page: 1 } })
@@ -439,7 +441,7 @@ const off = api.settings.onChanged(() => {
 off.dispose()
 ```
 
-> 注意：当前实现**不追踪变更的 key**，回调参数恒为**空字符串**（任何设置项变化都会通知你）。需要精确判断时，用 `api.settings.get` 自行比对缓存值。
+> 回调参数是**变更的设置项 key**（如 `my-ext.interval`）；无具体 key 的场景（如语言切换）传空字符串。监听者仍可用 `api.settings.get` 读取当前值。
 
 ### env.language / window 聚焦
 

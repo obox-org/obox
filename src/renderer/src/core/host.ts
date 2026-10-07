@@ -213,25 +213,31 @@ class ExtensionHost {
 
     const disposables: Array<() => void> = []
     const api: ExtensionActivationApi = this.buildApi(ext, disposables)
+    // 统一清理：遍历本次收集的副作用（事件订阅/App 卡片/设置页/树数据源/定时器回调/状态栏动态项等）
+    const disposeAll = (): void => {
+      for (const d of disposables) {
+        try {
+          d()
+        } catch (err) {
+          console.warn(`[host] cleanup ${ext.id} error`, err)
+        }
+      }
+      disposables.length = 0
+    }
     try {
       const result = plugin(api)
       if (typeof result === 'function') disposables.push(result)
       ext.isActive = true
       this.activated.add(ext.id)
       // 保存统一清理函数（热移除/停用时调用）
-      this.cleanups.set(ext.id, () => {
-        for (const d of disposables) {
-          try {
-            d()
-          } catch (err) {
-            console.warn(`[host] cleanup ${ext.id} error`, err)
-          }
-        }
-        disposables.length = 0
-      })
+      this.cleanups.set(ext.id, disposeAll)
     } catch (err) {
       ext.activationError = err instanceof Error ? err.message : String(err)
       ext.isActive = false
+      // 激活失败：**立即清理**本次已收集的副作用——此前只在成功分支保存清理函数，
+      // 失败时这些注册会残留在注册表与主进程资源里（事件监听泄漏、App 卡片/设置页残留）
+      this.cleanups.set(ext.id, disposeAll)
+      disposeAll()
       console.error(`[host] activate ${ext.id} failed`, err)
     }
   }
@@ -369,8 +375,15 @@ class ExtensionHost {
           return i18n.global.locale.value
         },
         onLocaleChanged: (callback) => {
-          // 复用 settings 变更通知（语言切换触发 emitSettingsChanged）
-          const listener = (): void => callback(i18n.global.locale.value as string)
+          // 复用 settings 变更通知（语言切换触发 emitSettingsChanged）。
+          // 该通知的触发面远大于语言切换（任何设置项变化都会通知），因此**只在语言真的变化时**回调
+          let last = i18n.global.locale.value as string
+          const listener = (): void => {
+            const now = i18n.global.locale.value as string
+            if (now === last) return
+            last = now
+            callback(now)
+          }
           const dispose = stateStore.onSettingsChanged(listener)
           disposables.push(dispose)
           return { dispose }
@@ -389,10 +402,8 @@ class ExtensionHost {
           stateStore.getSetting<T>(key, defaultValue),
         set: (key, value) => stateStore.setSetting(key, value),
         onChanged: (callback) => {
-          const dispose = stateStore.onSettingsChanged(() => {
-            /* 设置变更通知（key 粒度不追踪，通知全部监听者） */
-            callback('')
-          })
+          // 设置变更通知：回调带变更的设置项 key（无具体 key 的场景——如语言切换——传空串）
+          const dispose = stateStore.onSettingsChanged((key) => callback(key ?? ''))
           disposables.push(dispose)
           return { dispose }
         }
@@ -840,10 +851,10 @@ class ExtensionHost {
       return info
     }
 
-    // 激活
+    // 激活（先按 extensionDependencies 顺序激活依赖，与冷启动阶段二的拓扑序语义一致）
     try {
       const module = await entry.load()
-      await this.activateExtension(info, module)
+      await this.activateInDependencyOrder(info, module)
     } catch (err) {
       info.activationError = err instanceof Error ? err.message : String(err)
     }
@@ -852,6 +863,48 @@ class ExtensionHost {
       `[host] 热安装完成: ${id} ${info.isActive ? '已激活' : '激活失败'}（贡献项已注册，立即可用）`
     )
     return info
+  }
+
+  /**
+   * 激活扩展及其依赖（热安装用）：DFS 后序先激活依赖，再激活自身。
+   * 冷启动阶段二已对全量扩展做拓扑排序，热安装此前直接激活目标扩展、忽略 extensionDependencies——
+   * 依赖未激活时目标扩展的 `executeCommand(依赖命令)` 等会失败。
+   * 缺失 / 已禁用 / 清单无效 / 无加载器的依赖只告警不阻塞；环由 seen 集合兜底（不会无限递归）。
+   */
+  private async activateInDependencyOrder(
+    ext: ExtensionInfo,
+    module: ExtensionModule
+  ): Promise<void> {
+    const seen = new Set<string>()
+    const order: Array<{ ext: ExtensionInfo; module: ExtensionModule }> = []
+    const walk = async (cur: ExtensionInfo, curModule: ExtensionModule): Promise<void> => {
+      if (seen.has(cur.id)) return
+      seen.add(cur.id)
+      for (const depId of cur.manifest.extensionDependencies ?? []) {
+        const dep = this.extensions.get(depId)
+        if (!dep) {
+          console.warn(`[host] ${cur.id} 依赖的扩展 ${depId} 不存在（跳过）`)
+          continue
+        }
+        if (!dep.enabled || !dep.isValid) {
+          console.warn(`[host] ${cur.id} 依赖的扩展 ${depId} 未启用或清单无效（跳过）`)
+          continue
+        }
+        if (this.activated.has(depId)) continue
+        const load = this.loaders.get(depId)
+        if (!load) {
+          console.warn(`[host] ${cur.id} 依赖的扩展 ${depId} 无加载器（跳过）`)
+          continue
+        }
+        await walk(dep, await load())
+      }
+      order.push({ ext: cur, module: curModule })
+    }
+    await walk(ext, module)
+    for (const item of order) {
+      if (this.activated.has(item.ext.id)) continue
+      await this.activateExtension(item.ext, item.module)
+    }
   }
 
   /** 热移除：从宿主完全移除扩展（清理贡献项/视图/App 卡片/清理函数）。返回是否成功 */

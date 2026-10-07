@@ -62,8 +62,8 @@ function save(): void {
   }
 }
 
-/** 设置变更订阅（主题/语言/快捷键等变更时通知，供 UI 刷新） */
-type SettingsListener = () => void
+/** 设置变更订阅（主题/语言/快捷键等变更时通知，供 UI 刷新）；key = 变更的设置项（无具体 key 时为 undefined） */
+type SettingsListener = (key?: string) => void
 const settingsListeners = new Set<SettingsListener>()
 
 export const stateStore = {
@@ -108,19 +108,19 @@ export const stateStore = {
   getSetting<T>(key: string, defaultValue?: T): T | undefined {
     return key in state.settings ? (state.settings[key] as T) : defaultValue
   },
-  /** 统一设置存储：写入设置值（undefined 删除），并通知订阅者 */
+  /** 统一设置存储：写入设置值（undefined 删除），并通知订阅者（带变更的 key） */
   setSetting(key: string, value: unknown): void {
     if (value === undefined) delete state.settings[key]
     else state.settings[key] = value
     save()
-    settingsListeners.forEach((l) => l())
+    settingsListeners.forEach((l) => l(key))
   },
   /** 订阅设置变更，返回退订函数 */
   onSettingsChanged(listener: SettingsListener): () => void {
     settingsListeners.add(listener)
     return () => settingsListeners.delete(listener)
   },
-  /** 触发设置变更通知（语言切换等场景） */
+  /** 触发设置变更通知（语言切换等场景，无具体 key） */
   emitSettingsChanged(): void {
     settingsListeners.forEach((l) => l())
   },
