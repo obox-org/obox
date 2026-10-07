@@ -46,6 +46,10 @@ export interface ExtensionEntry {
   source: 'builtin' | 'user' | 'debug'
   /** 安装时间戳（用户扩展；.obox-meta.json 提供） */
   installedTimestamp?: number
+  /** 待补跑的 install 钩子（安装时渲染进程不可用，下次启动补跑；见 issue #52） */
+  pendingInstall?: { version: string; at: number }
+  /** 上次 install 钩子跑过的版本（用于判断本次是否属于升级） */
+  previousInstallVersion?: string
 }
 
 /** 宿主启动配置 */
@@ -811,6 +815,32 @@ class ExtensionHost {
     for (const orphan of orphans) {
       console.log(`[host] 清理孤儿 App 卡片: ${orphan.id}（扩展 ${orphan.extensionId} 已不在）`)
       appStore.deactivateExtension(orphan.extensionId)
+    }
+
+    // 补跑 install 钩子（#52）：上次安装时渲染进程不可用（或扩展尚未加载），元数据里留了
+    // pendingInstall。这里在**激活前**补上（放在汇总之后，才有 enabled/isValid 与加载器可判），
+    // 跑完回写元数据；失败归为激活失败；仍跑不了则保留 pending，下次启动再试。
+    for (const entry of entries) {
+      const pending = entry.pendingInstall
+      if (!pending) continue
+      const info = this.extensions.get(entry.id)
+      if (!info || !info.enabled || !info.isValid) continue
+      const previous = entry.previousInstallVersion
+      const result = await executeExtensionHook(
+        {
+          requestId: `startup:${entry.id}`,
+          extId: entry.id,
+          phase: 'install',
+          version: pending.version,
+          upgraded: previous !== undefined && previous !== pending.version,
+          previousVersion: previous
+        },
+        { load: entry.load }
+      )
+      if (result.deferred) continue
+      const failure = hookFailureForActivation(result)
+      if (failure) info.activationError = failure
+      await window.api.recordInstallHook(entry.id, pending.version, result.ok)
     }
 
     // ---- 2. 阶段一：注册贡献点（仅有效且启用的扩展）----

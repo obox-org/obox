@@ -351,6 +351,11 @@ export interface MainApi {
    * `deferred: true` 表示"这次跑不了，请留待下次启动补跑"（如扩展尚未加载到宿主）。
    */
   hookResult(result: ExtensionHookRunResult): void
+  /**
+   * 宿主**补跑** install 钩子后回写元数据（启动扫描期补跑 pending 时用；发起方向与 hookResult 相反）。
+   * 主进程会先校验 extId 是否为已知扩展，再落账。
+   */
+  recordInstallHook(extId: string, version: string, ok: boolean): Promise<void>
 }
 
 /** 生命周期钩子阶段（与 renderer/core/hookState.ts 的 HookPhase 一致） */

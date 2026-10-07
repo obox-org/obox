@@ -8,7 +8,11 @@
  * 主进程没有等价的加载路径（见 #52 的落点讨论）。
  */
 import { BrowserWindow, ipcMain } from 'electron'
+import { join } from 'path'
 import { createHookBridge, type HookRunOutcome } from './hookBridge'
+import { getUserExtensionsDir } from './capabilities'
+import { requireKnownExtension } from './extGuard'
+import { recordInstallHookResult } from './oixCore'
 import type { ExtensionHookRunResult } from '../shared/types'
 
 /** 主窗口（排除 App 子窗口）：钩子由主窗口的扩展宿主执行 */
@@ -26,11 +30,27 @@ const bridge = createHookBridge({
   }
 })
 
-/** 注册渲染进程的回包通道（幂等：重复注册只是多挂一个 listener，实际只注册一次） */
+/** 注册渲染进程的回包通道与"补跑后落账"通道（幂等：重复注册只是多挂一个 listener） */
 export function registerHookIpc(): void {
   ipcMain.on('extension:hook-result', (_e, result: ExtensionHookRunResult): void => {
     bridge.settle(result)
   })
+  // 启动扫描期补跑 install 钩子后，宿主回写元数据。
+  // extId 来自渲染进程，必须经成员校验（未知/非法一律忽略），否则 join 会变成路径穿越。
+  ipcMain.handle(
+    'extension:record-install-hook',
+    async (_e, extId: unknown, version: unknown, ok: unknown): Promise<void> => {
+      if (typeof extId !== 'string' || typeof version !== 'string' || typeof ok !== 'boolean')
+        return
+      let safeId: string
+      try {
+        safeId = requireKnownExtension(extId)
+      } catch {
+        return
+      }
+      await recordInstallHookResult(join(getUserExtensionsDir(), safeId), version, ok)
+    }
+  )
 }
 
 /**
