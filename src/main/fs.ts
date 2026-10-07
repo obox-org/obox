@@ -21,8 +21,19 @@ function resolvePath(extId: string, rel: string): string {
 /** 文件监听器表（key = <扩展id>:<watchId>） */
 const watchers = new Map<string, FSWatcher>()
 
+/** 单扩展并发监听上限（每个 watch 占一个 OS 句柄，无上限会被扩展耗尽） */
+const MAX_WATCHERS_PER_EXT = 16
+
 function keyOf(extId: string, watchId: string): string {
   return `${extId}:${watchId}`
+}
+
+function countWatchers(extId: string): number {
+  let n = 0
+  for (const key of watchers.keys()) {
+    if (key.startsWith(`${extId}:`)) n++
+  }
+  return n
 }
 
 function broadcast(channel: string, payload: unknown): void {
@@ -119,12 +130,26 @@ export function registerFsIpc(): void {
     (_e, extId: string, watchId: string, rel: string): { ok: boolean; error?: string } => {
       try {
         const key = keyOf(extId, watchId)
-        watchers.get(key)?.close()
+        const existing = watchers.get(key)
+        if (existing) {
+          existing.close()
+          watchers.delete(key)
+        } else if (countWatchers(extId) >= MAX_WATCHERS_PER_EXT) {
+          // 每个 watch 占一个 OS 句柄；不设上限会被扩展耗尽文件描述符
+          return { ok: false, error: `监听数量已达上限（${MAX_WATCHERS_PER_EXT}）` }
+        }
         const base = resolvePath(extId, rel)
         const watcher = watch(base, { recursive: true }, (_eventType, filename) => {
           if (!filename) return
           const relPath = relative(base, filename.toString()).split('\\').join('/')
           broadcast('fs:watch-event', { key, relPath })
+        })
+        // 目录被删 / 权限变化会触发 error 事件；不监听会变成未捕获异常（可能崩主进程）——
+        // 这里记录并关闭该监听，扩展侧下次操作会看到"监听已失效"
+        watcher.on('error', (err) => {
+          console.warn(`[fs] watch error ${key}:`, err instanceof Error ? err.message : err)
+          watcher.close()
+          watchers.delete(key)
         })
         watchers.set(key, watcher)
         return { ok: true }

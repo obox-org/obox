@@ -38,6 +38,77 @@ export function defaultTable(name: string): string {
   return base.replace(/\.[^.]+$/, '')
 }
 
+/**
+ * 归一化库相对路径为**规范形式**（统一用 `/`、去掉 `./`、折叠重复分隔符）。
+ * 句柄键与元数据文件名都基于它：否则 `a\b.db`、`a/b.db`、`./a.db` 会被当成不同库，
+ * 出现"open 成功但后续操作报数据库未打开"，或同一文件被双开。
+ */
+export function normalizeDbName(name: string): string {
+  return validateRelPath(name)
+    .split(/[\\/]/)
+    .filter((p) => p && p !== '.')
+    .join('/')
+}
+
+/** 剥掉 SQL 注释与字符串/标识符字面量，保留词边界（用于关键字检测，避免把内容里的词误判） */
+export function stripSqlLiterals(sql: string): string {
+  let out = ''
+  let i = 0
+  while (i < sql.length) {
+    const ch = sql[i]
+    const next = sql[i + 1]
+    if (ch === '-' && next === '-') {
+      while (i < sql.length && sql[i] !== '\n') i++
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      i += 2
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch
+      out += ' '
+      i++
+      while (i < sql.length) {
+        if (sql[i] === quote) {
+          if (sql[i + 1] === quote) {
+            i += 2
+            continue
+          }
+          i++
+          break
+        }
+        i++
+      }
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/** 扩展数据库禁止出现的关键字：可读写库外文件或加载外部代码 */
+const FORBIDDEN_SQL_KEYWORDS = ['attach', 'detach', 'vacuum', 'pragma', 'load_extension']
+
+/**
+ * 校验扩展传入的 SQL。
+ * 路径沙箱只保证"库文件落在扩展 data 目录"，但 `ATTACH DATABASE 'C:/x'`、`VACUUM INTO 'C:/x'`、
+ * `load_extension` 等语句能绕过它读写任意文件，因此在 SQL 层再挡一道。
+ */
+export function assertSafeSql(sql: string): void {
+  const stripped = stripSqlLiterals(String(sql ?? ''))
+  for (const kw of FORBIDDEN_SQL_KEYWORDS) {
+    if (new RegExp(`\\b${kw}\\b`, 'i').test(stripped)) {
+      throw new Error(
+        `不允许的 SQL 语句：${kw.toUpperCase()}（扩展数据库仅限自身 data 目录内的表操作）`
+      )
+    }
+  }
+}
+
 export function loadTableMeta(metaFile: string): TableMeta {
   try {
     return JSON.parse(readFileSync(metaFile, 'utf8')) as TableMeta

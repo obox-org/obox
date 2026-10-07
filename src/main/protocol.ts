@@ -1,4 +1,5 @@
 import { app, protocol, net } from 'electron'
+import { realpathSync } from 'node:fs'
 import { join, normalize, sep } from 'path'
 import { pathToFileURL } from 'url'
 import { getUserExtensionsDir } from './capabilities'
@@ -32,7 +33,14 @@ export function registerExtensionProtocol(debugExtensions?: DebugExtensionsMap):
     protocol.handle('app', (request) => {
       const url = new URL(request.url)
       const { hostname, pathname } = url
-      let rest = decodeURIComponent(pathname.replace(/^\/+/, ''))
+      // 非法百分号转义（如 app://extensions/id/%）会让 decodeURIComponent 抛 URIError —— 必须包住，
+      // 否则异常逃出协议处理器
+      let rest: string
+      try {
+        rest = decodeURIComponent(pathname.replace(/^\/+/, ''))
+      } catch {
+        return new Response('bad request', { status: 400 })
+      }
 
       let root: string | null = null
       if (hostname === 'extensions') root = getUserExtensionsDir()
@@ -57,6 +65,17 @@ export function registerExtensionProtocol(debugExtensions?: DebugExtensionsMap):
       // 二次防护：规范化后必须在 root 之下
       if (!filePath.startsWith(root + sep) && filePath !== root) {
         return new Response('forbidden', { status: 403 })
+      }
+
+      // 符号链接防护：若目标存在，解析真实路径后再校验仍在 root 内
+      // （data 目录内若有指向外部的链接，仅靠字符串校验挡不住）
+      try {
+        const real = realpathSync(filePath)
+        if (!real.startsWith(root + sep) && real !== root) {
+          return new Response('forbidden', { status: 403 })
+        }
+      } catch {
+        // 目标不存在：交给下面 file:// 的 fetch 返回 404
       }
 
       return net.fetch(pathToFileURL(filePath).toString())

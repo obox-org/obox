@@ -23,9 +23,15 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+/** 秒数上限（1 天）：`seconds*1000` 超过 2^31-1 时 Node 会把延时钳成 1ms，
+ *  setInterval 会退化成"每毫秒广播 timer:fire"的事件风暴，拖垮主进程 */
+const MAX_SECONDS = 86_400
 function validateSeconds(seconds: unknown): number {
   if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < 1) {
     throw new Error('定时器间隔必须是大于等于 1 的整数秒')
+  }
+  if (seconds > MAX_SECONDS) {
+    throw new Error(`定时器间隔不能超过 ${MAX_SECONDS} 秒（1 天）`)
   }
   return seconds
 }
@@ -45,7 +51,8 @@ function setTimer(extId: string, id: string, seconds: number, kind: 'timeout' | 
     broadcast('timer:fire', { key: k, kind })
     if (kind === 'timeout') timers.delete(k)
   }
-  const handle = kind === 'timeout' ? setTimeout(fire, seconds * 1000) : setInterval(fire, seconds * 1000)
+  const ms = Math.min(seconds * 1000, 2 ** 31 - 1)
+  const handle = kind === 'timeout' ? setTimeout(fire, ms) : setInterval(fire, ms)
   timers.set(k, { kind, handle })
 }
 
