@@ -7,6 +7,7 @@ import { ipcMain } from 'electron'
 import { existsSync } from 'fs'
 import { resolve } from 'path'
 import type { DebugExtensionEntry } from '../shared/types'
+import { addKnownExtension } from './extGuard'
 
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/i
 
@@ -39,6 +40,8 @@ export function parseDebugExtensions(argv: string[]): DebugExtensionsMap {
 }
 
 export function registerDebugIpc(debugExtensions: DebugExtensionsMap): void {
+  // 调试扩展 id 也进"已知扩展"集合（它们不在 userData，磁盘扫描发现不了）
+  for (const id of debugExtensions.keys()) addKnownExtension(id)
   ipcMain.handle('extensions:list-debug', (): DebugExtensionEntry[] =>
     [...debugExtensions.entries()].map(([id, path]) => ({ id, path }))
   )

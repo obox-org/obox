@@ -11,6 +11,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'path'
 import type { InstallOixOutcome } from '../shared/types'
 import { getUserExtensionsDir } from './capabilities'
+import { addKnownExtension } from './extGuard'
 import { installFromPackage, OixInstallError } from './oixCore'
 
 export { deriveDirName } from './oixCore'
@@ -34,6 +35,8 @@ export async function installOixFromPath(filePath: string): Promise<InstallOixOu
       // 暂存目录与安装根同一卷（userData/extensions/.tmp），rename 才是原子的
       tmpRoot: join(root, '.tmp')
     })
+    // 登记进"已知扩展"集合（成员校验的真值来源之一）
+    addKnownExtension(result.id)
     return { ok: true, result }
   } catch (err) {
     return toOutcome(err)
