@@ -68,6 +68,15 @@ export interface PythonDeclaration {
 }
 
 /**
+ * 把 Node 的 `process.arch` 映射成运行时架构声明；不支持的架构返回 null
+ * （调用方据此"无法比较时跳过校验"，而不是误判为不匹配）。
+ */
+export function toPythonArch(arch: string): PythonArch | null {
+  if (arch === 'x64' || arch === 'arm64') return arch
+  return null
+}
+
+/**
  * 校验 manifest 的 python 声明。
  *
  * - 架构不在支持列表 → `invalid-declaration`；架构与当前设备不符 → `arch-mismatch`（安装期即拦下）

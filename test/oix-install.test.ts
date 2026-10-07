@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32 } from 'node:zlib'
 import { installFromPackage, OixInstallError } from '../src/main/oixCore'
+import { toPythonArch } from '../src/main/pythonCore'
 
 let workDir = ''
 let targetRoot = ''
@@ -337,5 +338,66 @@ describe('oixCore · 错误码分类', () => {
     expect(err).toBeInstanceOf(OixInstallError)
     expect(err.name).toBe('OixInstallError')
     expect(err.code).toBe('path-invalid')
+  })
+})
+
+describe('oixCore · Python 运行时声明（安装期校验，issue #51）', () => {
+  /** 与当前设备相反的架构（CI 与开发机都是 x64，但这样写对任何宿主都成立） */
+  const otherArch = process.arch === 'x64' ? 'arm64' : 'x64'
+  const hostArch = toPythonArch(process.arch)
+
+  it('声明与本机架构一致 → 正常安装', async () => {
+    if (hostArch === null) return // 不支持的宿主架构：跳过（生产代码此时也不校验）
+    const file = await makeOix('py-ok.oix', [['index.js', 'x']], {
+      name: 'py-ext',
+      version: '1.0.0',
+      main: './index.js',
+      author: 'chenzhi',
+      arch: hostArch,
+      python: '3.13'
+    })
+    const r = await installFromPackage(file, opts())
+    expect(r.id).toBe('py-ext_chenzhi')
+    expect(existsSync(join(targetRoot, r.id, 'index.js'))).toBe(true)
+  })
+
+  it('声明的是另一架构 → arch-mismatch，且不留下安装目录', async () => {
+    const file = await makeOix('py-wrong-arch.oix', [['index.js', 'x']], {
+      name: 'py-ext2',
+      version: '1.0.0',
+      main: './index.js',
+      author: 'chenzhi',
+      arch: otherArch,
+      python: '3.13'
+    })
+    await expect(installFromPackage(file, opts())).rejects.toMatchObject({ code: 'arch-mismatch' })
+    expect(existsSync(join(targetRoot, 'py-ext2_chenzhi'))).toBe(false)
+  })
+
+  it('架构不在支持列表 / 版本号非法 / 只声明一半 → invalid-manifest', async () => {
+    const cases: Array<[string, Record<string, unknown>]> = [
+      ['arch: ia32', { arch: 'ia32', python: '3.13' }],
+      ['版本带补丁号', { arch: 'x64', python: '3.13.1' }],
+      ['缺 python', { arch: 'x64' }],
+      ['缺 arch', { python: '3.13' }]
+    ]
+    for (const [label, extra] of cases) {
+      const file = await makeOix(`py-bad-${label.replace(/[^\w]/g, '')}.oix`, [['index.js', 'x']], {
+        name: 'py-ext3',
+        version: '1.0.0',
+        main: './index.js',
+        author: 'chenzhi',
+        ...extra
+      })
+      await expect(installFromPackage(file, opts()), label).rejects.toMatchObject({
+        code: 'invalid-manifest'
+      })
+    }
+  })
+
+  it('没有声明 Python 的普通扩展不受影响', async () => {
+    const file = await makeOix('plain.oix', [['index.js', 'x']])
+    const r = await installFromPackage(file, opts())
+    expect(r.id).toBe('demo-ext_chenzhi')
   })
 })

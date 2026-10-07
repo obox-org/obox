@@ -80,6 +80,7 @@ export interface ExtensionMeta extends ExtensionHookState {
  * - too-large：条目数或解压总量超限
  * - path-invalid：传入的安装路径非法或不存在
  * - write-failed：暂存/替换/写盘失败（旧版本已回滚）
+ * - arch-mismatch：扩展自带的是另一架构的 Python 运行时（如 arm64 包在 x64 设备上安装，见 ADR-0018）
  */
 export type InstallOixErrorCode =
   | 'invalid-package'
@@ -89,6 +90,7 @@ export type InstallOixErrorCode =
   | 'too-large'
   | 'path-invalid'
   | 'write-failed'
+  | 'arch-mismatch'
 
 /**
  * .oix 安装结果：成功或失败都以**返回值**表达（不再靠 IPC 抛错传消息），

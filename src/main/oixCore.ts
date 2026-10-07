@@ -13,6 +13,7 @@ import AdmZip from 'adm-zip'
 import { promises as fs } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 import type { ExtensionMeta, InstallOixErrorCode, InstallOixResult } from '../shared/types'
+import { isPythonCoreError, toPythonArch, validatePythonDeclaration } from './pythonCore'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
 const SAFE_DIR_RE = /^[a-z0-9._-]+$/i
@@ -213,6 +214,25 @@ export async function installFromPackage(
   const id = deriveDirName(name, author)
   if (!SAFE_DIR_RE.test(id)) {
     throw new OixInstallError('invalid-manifest', `派生的安装目录名非法: ${id}`)
+  }
+
+  // Python 运行时声明（issue #51 / ADR-0018）：**安装期**就拒掉错架构的包，
+  // 别让用户装上之后才发现"运行时不匹配"。声明了 arch/python 就必须成对合法。
+  if (manifest.arch !== undefined || manifest.python !== undefined) {
+    const hostArch = toPythonArch(process.arch)
+    if (hostArch !== null) {
+      try {
+        validatePythonDeclaration({ arch: manifest.arch, python: manifest.python }, hostArch)
+      } catch (err) {
+        if (isPythonCoreError(err) && err.code === 'arch-mismatch') {
+          throw new OixInstallError('arch-mismatch', err.message)
+        }
+        throw new OixInstallError(
+          'invalid-manifest',
+          err instanceof Error ? err.message : String(err)
+        )
+      }
+    }
   }
 
   const limits = {

@@ -227,6 +227,7 @@ export function uninstall(ctx) {
 | `entry-missing`    | `manifest.main` 写的路径在包内不存在——注意 `./index.js` 与 `index.js` 的差别，以及是否漏打包入口                   |
 | `entry-invalid`    | 包内含非法条目路径（`../`、绝对路径、反斜杠、空段）——属 zip-slip 防护，换工具重新打包                              |
 | `too-large`        | 条目数 > 10000 或解压总量 > 512MB——检查是否误把 `node_modules/`、`dist/` 全打进包了                                |
+| `arch-mismatch`    | 声明的 `arch` 与当前设备不符（如 arm64 包在 x64 机器上装）——换对应架构的包；这是**安装期**校验，不会留下半安装目录 |
 | `path-invalid`     | 传入路径为空或文件不存在（拖拽场景取到的是空路径）                                                                 |
 | `write-failed`     | 暂存/替换/写盘失败（磁盘满、权限、目录被占用）——旧版本已回滚                                                       |
 
