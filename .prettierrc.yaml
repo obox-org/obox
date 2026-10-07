@@ -2,3 +2,7 @@ singleQuote: true
 semi: false
 printWidth: 100
 trailingComma: none
+# 行尾：auto = 保持文件现有行尾。
+# 仓库提交内容为 LF（见 .gitattributes / .editorconfig），但 Windows 上 core.autocrlf 会把工作区检出成 CRLF，
+# 此时 prettier 默认的 endOfLine: lf 会对每个文件报 "Delete ␍"（8000+ 条噪音，淹没真实告警）。
+endOfLine: auto

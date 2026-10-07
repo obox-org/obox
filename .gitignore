@@ -8,4 +8,6 @@ out
 vendor
 .gitoken
 # 用户扩展独立仓库托管（obox-org/<id>），本地保留但不纳入 obox 仓库
-extensions/
+# 注意：必须锚定根目录——写成 `extensions/` 会连**内置扩展目录** src/renderer/src/extensions/ 一并忽略，
+# 导致新建内置扩展时无法 git add（既有文件已跟踪，所以问题不易察觉）
+/extensions/

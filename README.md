@@ -19,11 +19,14 @@ src/
 │   ├── oix.ts       # .oix 扩展包安装（校验 + 防路径穿越解压 + 安装 IPC）
 │   ├── debug.ts     # 调试扩展（--debug-extension 解析 + IPC，不安装直接加载）
 │   ├── sqlite.ts    # 扩展数据库（node:sqlite 内置驱动，相对路径 → 扩展 data 目录，表集合 API）
+│   ├── sqliteCore.ts # 数据库核心逻辑（路径校验/自动建表/表集合/列类型元数据；不依赖 electron，可单测）
 │   ├── timer.ts     # 扩展全局定时器（主进程精确计时，秒粒度，按扩展隔离）
 │   ├── notification.ts # 扩展系统提醒（操作系统通知 + 点击事件）
 │   ├── net.ts       # 扩展网络请求（api.net.fetch，主进程 + 代理，绕渲染 CSP 禁外网）
 │   ├── fs.ts        # 扩展文件系统（api.fs，限定扩展 data 目录，相对路径 + watch）
 │   ├── ext.ts       # 扩展杂项能力（对话框/外链/剪贴板/任务栏进度）
+│   ├── ui.ts        # 应用内交互（api.ui：quickPick/inputBox/form 模态，按焦点窗口本地渲染或转发子窗口）
+│   ├── updater.ts   # 更新服务（electron-updater：解析更新源/检查/下载/安装 + 事件广播）
 │   ├── secrets.ts   # 扩展密钥存储（api.secrets，safeStorage 加密）
 │   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源 + app://debug）
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
@@ -54,6 +57,10 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 | `keybindings.ts` | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化 |
 | `extensionSettings.ts` | 扩展设置页注册表（api.settings.register / manifest 声明） |
 | `extensionI18n.ts` | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间） |
+| `uiStore.ts` | 应用内交互状态（模态/表单/quickPick/进度/toast），主窗口与 App 子窗口共用，驱动 `PromptHost`/`ToastHost` |
+| `outputStore.ts` | 输出面板通道（api.output.createChannel），底部 `OutputPanel` 渲染 |
+| `treeStore.ts` | 树视图数据源注册表（api.views.registerTreeProvider，按扩展 id 隔离） |
+| `updaterStore.ts` | 更新提供者注册表（`contributes.updater`，**仅一个生效**，设置-更新里选择） |
 
 ### i18n（`renderer/src/i18n/`）
 
@@ -118,10 +125,10 @@ git push origin v1.0.0
 |---|---|
 | [README.md](README.md) | 本文件：项目概览 / 快速上手（导航入口，不重复细节） |
 | [CONTEXT.md](CONTEXT.md) | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等） |
-| [AGENTS.md](AGENTS.md) | 开发者约定：obox-ext-dev 文档同步要求 + 强制提交流程（五步）+ 质量门槛 |
+| [AGENTS.md](AGENTS.md) | 开发者约定：提问约定 + obox-ext-dev 文档同步要求 + 强制提交流程（**分支 + PR**）+ 质量门槛 |
 | [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md) | 扩展开发完整指南（含 references/ 与 scripts/） |
 | [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装） |
-| [docs/adr/](docs/adr/) | 架构决策记录（渲染进程宿主/声明式贡献点/禁用重启生效/两阶段启动/oix 分发与安装/调试扩展/扩展 API 版本） |
+| [docs/adr/](docs/adr/) | 架构决策记录：0001 渲染进程宿主 / 0002 声明式贡献点 / 0003 禁用卸载重启生效 / 0004 两阶段启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009 调试扩展 / 0010 扩展 API 版本 / 0011–0013 扩展能力 / 0014 热安装与重启 |
 
 ## 技术栈
 
