@@ -12,6 +12,11 @@ on:
 permissions:
   contents: write # 创建 release 与上传产物需要
 
+# 同一 tag 的连续构建取消旧的（改 CI 后重推 tag 的常见场景），避免并发发布互相覆盖资产
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release:
     runs-on: windows-latest
@@ -22,7 +27,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 26
+          # 版本单一来源：本地与 CI 都读 .nvmrc，避免两处硬编码漂移
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies

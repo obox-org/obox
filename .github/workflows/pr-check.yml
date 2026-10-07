@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# 同一 PR 连续推送时取消旧运行：避免排队占用 runner，也让状态检查只反映最新提交
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: windows-latest
@@ -20,7 +25,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 26
+          # 版本单一来源：本地与 CI 都读 .nvmrc，避免两处硬编码漂移
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
