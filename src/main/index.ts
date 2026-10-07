@@ -9,7 +9,7 @@ import { registerUpdateIpc, onUpdateEvent } from './updater'
 import { parseDebugExtensions, registerDebugIpc } from './debug'
 import { registerSqliteIpc, closeExtensionDbs } from './sqlite'
 import { registerTimerIpc, closeExtensionTimers } from './timer'
-import { registerNotificationIpc } from './notification'
+import { registerNotificationIpc, closeExtensionNotifications } from './notification'
 import { registerNetIpc } from './net'
 import { registerFsIpc, closeExtensionWatchers } from './fs'
 import { registerExtIpc } from './ext'
@@ -41,11 +41,12 @@ app.whenReady().then(() => {
   registerSecretsIpc()
   registerUiIpc()
 
-  // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接 + 文件监听）
+  // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接 + 文件监听 + 系统通知）
   ipcMain.handle('extension:cleanup', (_e, extId: string): void => {
     closeExtensionTimers(String(extId))
     closeExtensionDbs(String(extId))
     closeExtensionWatchers(String(extId))
+    closeExtensionNotifications(String(extId))
   })
 
   // 更新事件广播到所有窗口（渲染进程扩展订阅）

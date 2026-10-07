@@ -234,7 +234,7 @@ obox 主进程的网络请求（更新下载等）自动使用该代理；内置
 
 ### timer（全局定时器，主进程精确计时）
 
-宿主级定时器跑在**主进程**，不受渲染进程后台节流影响（窗口最小化/不可见时渲染进程 `setTimeout` 会被节流到 1s 粒度）。**间隔为整数秒（≥1s）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器。
+宿主级定时器跑在**主进程**，不受渲染进程后台节流影响（窗口最小化/不可见时渲染进程 `setTimeout` 会被节流到 1s 粒度）。**间隔为整数秒（≥1s，上限 86400 秒 = 1 天）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器。
 
 ```ts
 // 一次性：5 秒后执行一次
@@ -251,7 +251,9 @@ api.timer.clearInterval('tick')
 
 ### sqlite（数据库，node:sqlite 内置驱动）
 
-宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。相对路径可含子目录（如 `sub/a.db`，Windows 上写 `/` 亦可，宿主自动建目录）。
+宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。相对路径可含子目录（如 `sub/a.db`，Windows 上写 `/` 亦可）；**不同子目录下的同名库互不干扰**（列类型元数据按库路径隔离）。
+
+> **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`（返回 `{ok:false, error:'不允许的 SQL 语句：…'}`）——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的沙箱。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
 
 ```ts
 const db = await api.sqlite.open('todo.db')   // → userData/extensions/todo_chenzhi/data/todo.db
@@ -413,6 +415,8 @@ log.dispose()    // 关闭并移除通道
 
 token/凭据安全存储（主进程 safeStorage 加密存 userData；**不要**用 Memento 存密钥）：
 
+> 系统加密不可用（或 Linux 上后端回落为明文 `basic_text`）时，`api.secrets.*` 会**直接返回错误**而不是明文落盘（fail-closed）——扩展应把这种返回值当作功能不可用处理。
+
 ```ts
 await api.secrets.set('github_token', 'ghp_xxx')
 const token = await api.secrets.get('github_token')   // undefined = 未设置
@@ -421,7 +425,7 @@ await api.secrets.delete('github_token')
 
 ### fs.watch（文件监听）
 
-监听扩展 data 目录内变化（相对路径事件）：
+监听扩展 data 目录内变化（相对路径事件）。**单扩展并发监听上限 16 个**（超限返回 `{ok:false, error:'监听数量已达上限（16）'}`）；监听目录被删除或权限变化时，宿主会记录并自动关闭该监听（不会崩主进程，扩展侧此后收不到事件）。
 
 ```ts
 await api.fs.watch('watch-1', '.', (e) => {

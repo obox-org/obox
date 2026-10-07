@@ -35,6 +35,23 @@ async function resolveIcon(icon?: string): Promise<Electron.NativeImage | undefi
 
 let notifSeq = 0
 
+/**
+ * 存活通知引用表。
+ * 两点原因必须持有强引用：① 若 Notification 对象被 GC 回收，点击回调可能丢失（Windows 上尤其明显）；
+ * ② 扩展停用/卸载时需要关闭并清理它的通知——否则旧通知被点击后仍会广播到已停用的 extId。
+ */
+const liveNotifications = new Map<number, { notification: Notification; extId: string }>()
+
+/** 关闭并清理某扩展的全部通知（扩展停用/卸载/重启时调用） */
+export function closeExtensionNotifications(extId: string): void {
+  for (const [id, entry] of [...liveNotifications]) {
+    if (entry.extId === extId) {
+      entry.notification.close()
+      liveNotifications.delete(id)
+    }
+  }
+}
+
 export function registerNotificationIpc(): void {
   ipcMain.handle(
     'notification:show',
@@ -54,6 +71,8 @@ export function registerNotificationIpc(): void {
         })
         const notifId = ++notifSeq
         notification.on('click', () => {
+          // 已被清理（扩展停用/卸载）→ 忽略点击，不再向已停用的扩展广播
+          if (!liveNotifications.has(notifId)) return
           // 点击通知：聚焦主窗口（URL 无 obox-window=app 参数的即主窗口），并把点击事件交给扩展
           const main = BrowserWindow.getAllWindows().find(
             (w) => !w.isDestroyed() && !w.webContents.getURL().includes('obox-window=app')
@@ -64,7 +83,11 @@ export function registerNotificationIpc(): void {
           }
           broadcast('notification:click', { notifId, extId, title: String(opts.title) })
         })
+        notification.on('close', () => {
+          liveNotifications.delete(notifId)
+        })
         notification.show()
+        liveNotifications.set(notifId, { notification, extId })
         return { ok: true, id: notifId }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }

@@ -31,6 +31,27 @@ function keyOf(extId: string, key: string): string {
   return `${extId}:${key}`
 }
 
+/**
+ * 系统加密是否**真**可用。
+ * Linux 上 `isEncryptionAvailable()` 可能为 true 而后端回落 `basic_text`（明文存储），
+ * 因此额外检查 `getSelectedStorageBackend()`（仅 Linux 提供）；查到 basic_text 视为不可用——
+ * fail-closed：宁可报错，也不把密钥明文落盘。
+ */
+function encryptionUsable(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false
+  const backend = (
+    safeStorage as unknown as { getSelectedStorageBackend?: () => string }
+  ).getSelectedStorageBackend
+  if (typeof backend === 'function') {
+    try {
+      if (backend.call(safeStorage) === 'basic_text') return false
+    } catch {
+      /* 非 Linux 平台无此 API 或调用失败：按 isEncryptionAvailable 的结果处理 */
+    }
+  }
+  return true
+}
+
 function encrypt(value: string): string {
   return safeStorage.encryptString(value).toString('base64')
 }
@@ -40,14 +61,14 @@ function decrypt(enc: string): string {
 }
 
 export function registerSecretsIpc(): void {
-  if (!safeStorage.isEncryptionAvailable()) {
-    console.warn('[secrets] 系统加密不可用（safeStorage），secrets 存储将不可用')
+  if (!encryptionUsable()) {
+    console.warn('[secrets] 系统加密不可用（safeStorage / 后端为明文），secrets 存储将不可用')
   }
   ipcMain.handle(
     'secrets:get',
     (_e, extId: string, key: string): { ok: boolean; value?: string; error?: string } => {
       try {
-        if (!safeStorage.isEncryptionAvailable()) {
+        if (!encryptionUsable()) {
           return { ok: false, error: '系统加密不可用（safeStorage）' }
         }
         const enc = load()[keyOf(extId, key)]
@@ -63,7 +84,7 @@ export function registerSecretsIpc(): void {
     'secrets:set',
     (_e, extId: string, key: string, value: string): { ok: boolean; error?: string } => {
       try {
-        if (!safeStorage.isEncryptionAvailable()) {
+        if (!encryptionUsable()) {
           return { ok: false, error: '系统加密不可用（safeStorage）' }
         }
         const data = load()
