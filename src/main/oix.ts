@@ -45,22 +45,19 @@ export async function installOixFromPath(filePath: string): Promise<InstallOixOu
 
 export function registerOixIpc(): void {
   // 对话框选 .oix 并安装；取消返回 null
-  ipcMain.handle(
-    'extensions:install-oix-dialog',
-    async (e): Promise<InstallOixOutcome | null> => {
-      const win = BrowserWindow.fromWebContents(e.sender)
-      const options: Electron.OpenDialogOptions = {
-        title: '安装扩展',
-        filters: [{ name: 'Obox 扩展包', extensions: ['oix'] }],
-        properties: ['openFile']
-      }
-      const picked = win
-        ? await dialog.showOpenDialog(win, options)
-        : await dialog.showOpenDialog(options)
-      if (picked.canceled || picked.filePaths.length === 0) return null
-      return installOixFromPath(picked.filePaths[0])
+  ipcMain.handle('extensions:install-oix-dialog', async (e): Promise<InstallOixOutcome | null> => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const options: Electron.OpenDialogOptions = {
+      title: '安装扩展',
+      filters: [{ name: 'Obox 扩展包', extensions: ['oix'] }],
+      properties: ['openFile']
     }
-  )
+    const picked = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    if (picked.canceled || picked.filePaths.length === 0) return null
+    return installOixFromPath(picked.filePaths[0])
+  })
 
   // 按路径安装（拖拽场景：渲染进程经 webUtils.getPathForFile 取得真实路径）
   ipcMain.handle(

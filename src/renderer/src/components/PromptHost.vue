@@ -65,7 +65,7 @@ function submitForm(): void {
   for (const f of form.fields) {
     if (f.required) {
       const v = form.values[f.key]
-      const empty = f.type === 'checkbox' ? (Array.isArray(v) && v.length === 0) : !v
+      const empty = f.type === 'checkbox' ? Array.isArray(v) && v.length === 0 : !v
       if (empty) return
     }
   }
@@ -186,9 +186,9 @@ function submitForm(): void {
           <div v-else-if="field.type === 'checkbox'" class="form-checks">
             <label v-for="opt in field.options ?? []" :key="opt.value" class="form-check">
               <input
+                v-model="uiState.form.values[field.key] as string[]"
                 type="checkbox"
                 :value="opt.value"
-                v-model="uiState.form.values[field.key] as string[]"
               />
               {{ opt.label }}
             </label>

@@ -18,7 +18,8 @@ import type { RegisteredSettingsPage } from '../../core/extensionSettings'
 
 const { t } = useI18n()
 
-type TreeKey = 'appearance' | 'language' | 'keyboard' | 'update' | 'network' | 'notification' | 'extension'
+type TreeKey =
+  'appearance' | 'language' | 'keyboard' | 'update' | 'network' | 'notification' | 'extension'
 
 const active = ref<TreeKey>('appearance')
 const activeExt = ref<string | null>(null)

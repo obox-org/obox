@@ -56,7 +56,11 @@ export function closeExtensionWatchers(extId: string): void {
 export function registerFsIpc(): void {
   ipcMain.handle(
     'fs:read-file',
-    async (_e, extId: string, rel: string): Promise<{ ok: boolean; content?: string; error?: string }> => {
+    async (
+      _e,
+      extId: string,
+      rel: string
+    ): Promise<{ ok: boolean; content?: string; error?: string }> => {
       try {
         const content = await fs.readFile(resolvePath(extId, rel), 'utf8')
         return { ok: true, content }
@@ -68,7 +72,12 @@ export function registerFsIpc(): void {
 
   ipcMain.handle(
     'fs:write-file',
-    async (_e, extId: string, rel: string, content: string): Promise<{ ok: boolean; error?: string }> => {
+    async (
+      _e,
+      extId: string,
+      rel: string,
+      content: string
+    ): Promise<{ ok: boolean; error?: string }> => {
       try {
         const p = resolvePath(extId, rel)
         await fs.mkdir(dirname(p), { recursive: true })
@@ -86,7 +95,11 @@ export function registerFsIpc(): void {
       _e,
       extId: string,
       rel: string
-    ): Promise<{ ok: boolean; entries?: Array<{ name: string; isDir: boolean }>; error?: string }> => {
+    ): Promise<{
+      ok: boolean
+      entries?: Array<{ name: string; isDir: boolean }>
+      error?: string
+    }> => {
       try {
         const p = resolvePath(extId, rel)
         const dirents = await fs.readdir(p, { withFileTypes: true })
@@ -102,7 +115,11 @@ export function registerFsIpc(): void {
 
   ipcMain.handle(
     'fs:exists',
-    async (_e, extId: string, rel: string): Promise<{ ok: boolean; exists?: boolean; error?: string }> => {
+    async (
+      _e,
+      extId: string,
+      rel: string
+    ): Promise<{ ok: boolean; exists?: boolean; error?: string }> => {
       try {
         await fs.access(resolvePath(extId, rel))
         return { ok: true, exists: true }

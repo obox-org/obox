@@ -30,7 +30,13 @@ export function registerNetIpc(): void {
       _e,
       req: NetRequest,
       proxy?: ProxyConfig
-    ): Promise<{ ok: boolean; status?: number; statusText?: string; data?: unknown; error?: string }> => {
+    ): Promise<{
+      ok: boolean
+      status?: number
+      statusText?: string
+      data?: unknown
+      error?: string
+    }> => {
       if (!req?.url || !/^https?:\/\//i.test(req.url)) {
         return { ok: false, error: 'url 必须是 http/https 地址' }
       }
@@ -59,11 +65,21 @@ export function registerNetIpc(): void {
 
         const declared = Number(res.headers.get('content-length') ?? '0')
         if (declared > MAX_BODY_BYTES) {
-          return { ok: false, status, statusText, error: `响应体过大（${declared} 字节，上限 ${MAX_BODY_BYTES}）` }
+          return {
+            ok: false,
+            status,
+            statusText,
+            error: `响应体过大（${declared} 字节，上限 ${MAX_BODY_BYTES}）`
+          }
         }
         const buf = await res.arrayBuffer()
         if (buf.byteLength > MAX_BODY_BYTES) {
-          return { ok: false, status, statusText, error: `响应体过大（上限 ${MAX_BODY_BYTES} 字节）` }
+          return {
+            ok: false,
+            status,
+            statusText,
+            error: `响应体过大（上限 ${MAX_BODY_BYTES} 字节）`
+          }
         }
         const text = new TextDecoder().decode(buf)
 
@@ -79,7 +95,8 @@ export function registerNetIpc(): void {
         }
         return { ok: true, status, statusText, data }
       } catch (err) {
-        const aborted = err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')
+        const aborted =
+          err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')
         return {
           ok: false,
           error: aborted ? '请求超时（30s）' : err instanceof Error ? err.message : String(err)

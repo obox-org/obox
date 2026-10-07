@@ -5,9 +5,7 @@
 import { computed } from 'vue'
 import { outputState, outputStore } from '../core/outputStore'
 
-const active = computed(() =>
-  outputState.channels.find((c) => c.id === outputState.activeId)
-)
+const active = computed(() => outputState.channels.find((c) => c.id === outputState.activeId))
 const activeLines = computed(() => active.value?.lines ?? [])
 </script>
 

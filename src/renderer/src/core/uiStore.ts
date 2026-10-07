@@ -154,7 +154,11 @@ export const uiStore = {
   },
 
   /** 应用内 toast（非模态，自动消失） */
-  showToast(message: string, type: 'info' | 'warning' | 'error' | 'success' = 'info', duration = 3000): void {
+  showToast(
+    message: string,
+    type: 'info' | 'warning' | 'error' | 'success' = 'info',
+    duration = 3000
+  ): void {
     const toast: ToastItem = { id: ++toastSeq, type, message, duration }
     uiState.toasts.push(toast)
     if (duration > 0) {

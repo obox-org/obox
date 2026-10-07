@@ -44,17 +44,17 @@ const result = await api.executeCommand('other-ext.act', payload)
 操作 manifest 声明的状态栏项（`id` 对应 `statusBarItems[].id`）：
 
 ```ts
-api.statusBar.setText('my-ext.status', '运行中')   // 更新文本（支持 $(icon)）
+api.statusBar.setText('my-ext.status', '运行中') // 更新文本（支持 $(icon)）
 api.statusBar.setTooltip('my-ext.status', '提示')
-api.statusBar.show('my-ext.status')                // 显示
-api.statusBar.hide('my-ext.status')                // 隐藏
+api.statusBar.show('my-ext.status') // 显示
+api.statusBar.hide('my-ext.status') // 隐藏
 ```
 
 ### navbar
 
 ```ts
-api.navbar.setBadge('my-ext.home', 5)   // 设数字徽标（>999 显示 1K+）
-api.navbar.setBadge('my-ext.home', undefined)  // 清除
+api.navbar.setBadge('my-ext.home', 5) // 设数字徽标（>999 显示 1K+）
+api.navbar.setBadge('my-ext.home', undefined) // 清除
 ```
 
 ### workspaceState / globalState（Memento）
@@ -62,9 +62,9 @@ api.navbar.setBadge('my-ext.home', undefined)  // 清除
 每扩展独立命名空间的键值存储（JSON 值，底层 userData JSON）：
 
 ```ts
-api.workspaceState.get<string>('key')            // 读
-api.workspaceState.get('key', 'default')         // 读带默认
-api.workspaceState.update('key', value)          // 写（undefined 删 key）
+api.workspaceState.get<string>('key') // 读
+api.workspaceState.get('key', 'default') // 读带默认
+api.workspaceState.update('key', value) // 写（undefined 删 key）
 api.workspaceState.keys()
 // globalState 同构（当前与 workspaceState 共用同一命名空间存储：obox 无"工作区"概念，两者都是应用级）
 ```
@@ -74,7 +74,9 @@ api.workspaceState.keys()
 Cordis 事件总线（跨扩展广播；`emit` 同名事件所有 `on` 监听者收到）：
 
 ```ts
-const off = api.on('my-ext:changed', (payload) => { /* ... */ })
+const off = api.on('my-ext:changed', (payload) => {
+  /* ... */
+})
 api.emit('my-ext:changed', { some: 'data' })
 // 注意：事件名建议含扩展前缀，避免与其他扩展冲突
 ```
@@ -100,17 +102,17 @@ const { name, version } = await api.appInfo.get()
 
 ```ts
 const d = api.app.register({
-  id: 'my-ext.calculator',     // 唯一，建议含扩展前缀
-  name: '计算器',               // 卡片标题 + 子窗口标题
+  id: 'my-ext.calculator', // 唯一，建议含扩展前缀
+  name: '计算器', // 卡片标题 + 子窗口标题
   version: '1.0.0',
   author: 'Obox',
   description: '一个计算器',
-  icon: '<svg .../>',          // SVG 字符串或图片 URL
+  icon: '<svg .../>', // SVG 字符串或图片 URL
   url: 'app://extensions/...', // 子窗口内容 URL（优先）
   // 或 html: '<!doctype html>...',   // 无 url 时用 srcdoc 渲染
-  multiOpen: false,            // true=每次点击新建窗口(标题加序号)；false=重复点击聚焦
-  width: 900,                  // 子窗口宽（默认 900）
-  height: 640                  // 子窗口高（默认 640）
+  multiOpen: false, // true=每次点击新建窗口(标题加序号)；false=重复点击聚焦
+  width: 900, // 子窗口宽（默认 900）
+  height: 640 // 子窗口高（默认 640）
 })
 ```
 
@@ -142,7 +144,14 @@ off.dispose()
 ```ts
 // 子应用（iframe 内）
 window.parent.postMessage(
-  { source: 'obox-app', action: 'obox-extension', requestId: 1, appId: 'todo.main', channel: 'todos:list', payload: undefined },
+  {
+    source: 'obox-app',
+    action: 'obox-extension',
+    requestId: 1,
+    appId: 'todo.main',
+    channel: 'todos:list',
+    payload: undefined
+  },
   '*'
 )
 // 结果回传：parent 收到后 postMessage { source:'obox-app', action:'obox-extension-reply', requestId, result:{ok,data|error} }
@@ -162,11 +171,13 @@ api.i18n.registerMessages({
   en: { hello: 'Hello' }
 })
 // 按当前语言取文案（缺省返回 key）
-const text = api.i18n.t('hello', { name: 'Obox' })  // 支持 {param} 插值
+const text = api.i18n.t('hello', { name: 'Obox' }) // 支持 {param} 插值
 // 当前语言代码
 const locale = api.i18n.locale // 'zh' | 'en'
 // 语言切换监听（返回 Disposable），扩展据此刷新自身 UI
-api.i18n.onLocaleChanged((locale) => { /* 重新渲染 */ })
+api.i18n.onLocaleChanged((locale) => {
+  /* 重新渲染 */
+})
 // 注意：底层复用设置变更通知，但**只在语言真的变化时**才回调（设置变更通知的触发面远大于语言切换）
 ```
 
@@ -183,7 +194,13 @@ const page = api.settings.register({
   title: '我的扩展设置',
   fields: [
     { key: 'my-ext.interval', label: '刷新间隔', type: 'number', default: 30 },
-    { key: 'my-ext.mode', label: '模式', type: 'select', options: [{ value: 'a', label: 'A' }], default: 'a' }
+    {
+      key: 'my-ext.mode',
+      label: '模式',
+      type: 'select',
+      options: [{ value: 'a', label: 'A' }],
+      default: 'a'
+    }
   ]
 })
 // 读写设置值（统一设置存储，key 建议含扩展前缀；set 立即持久化并通知）
@@ -216,9 +233,15 @@ const forced = await api.update.install({ force: true, feedUrl: feed.feedUrl })
 // forced = { ok, version?, error? }；feedUrl 省略时用提供者 manifest 里的 contributes.updater.feedUrl
 // 订阅更新事件（发现新版本/下载进度/下载完成/错误），返回注销函数
 api.update.onEvent((e) => {
-  if (e.type === 'update-available') { /* e.version */ }
-  if (e.type === 'download-progress') { /* e.percent */ }
-  if (e.type === 'update-downloaded') { /* e.version */ }
+  if (e.type === 'update-available') {
+    /* e.version */
+  }
+  if (e.type === 'download-progress') {
+    /* e.percent */
+  }
+  if (e.type === 'update-downloaded') {
+    /* e.version */
+  }
 })
 ```
 
@@ -242,9 +265,13 @@ obox 主进程的网络请求（更新下载等）自动使用该代理；内置
 
 ```ts
 // 一次性：5 秒后执行一次
-api.timer.setTimeout('sync', 5, () => { /* ... */ })
+api.timer.setTimeout('sync', 5, () => {
+  /* ... */
+})
 // 重复：每 60 秒执行一次
-api.timer.setInterval('tick', 60, () => { /* ... */ })
+api.timer.setInterval('tick', 60, () => {
+  /* ... */
+})
 // 取消（无此 id 时无操作）
 api.timer.clearTimeout('sync')
 api.timer.clearInterval('tick')
@@ -260,19 +287,19 @@ api.timer.clearInterval('tick')
 > **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`（返回 `{ok:false, error:'不允许的 SQL 语句：…'}`）——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的沙箱。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
 
 ```ts
-const db = await api.sqlite.open('todo.db')   // → userData/extensions/todo_chenzhi/data/todo.db
+const db = await api.sqlite.open('todo.db') // → userData/extensions/todo_chenzhi/data/todo.db
 // 首次写入自动建表（id 主键自增；列按 JS 类型声明：number/boolean→INTEGER，string→TEXT；boolean 读写自动 0/1 还原）
-await db.insert({ title: '买菜', done: false })          // → 新行（含 id）
-await db.insert({ id: 1, title: '买菜改', done: true })  // 含 id = upsert
-await db.get(1)                                          // → { id:1, title:'…', done:true }
-await db.get_all()                                       // → 全部行
-await db.get_by({ done: false })                         // 结构体匹配：等值多键 AND → 数组
-await db.update({ done: false }, { done: true })         // 等值条件更新 → 受影响行数
-await db.del(1)                                          // 按 id 删除 → 受影响行数
-await db.del_by({ done: false })                         // 等值条件删除
-await db.clear()                                         // 清空表
-await db.exec('CREATE INDEX idx_t ON todo(title)')       // 任意 SQL 脚本（不返回结果集）
-await db.query('SELECT title, COUNT(*) AS n FROM todo GROUP BY title')  // 复杂查询 → 对象数组
+await db.insert({ title: '买菜', done: false }) // → 新行（含 id）
+await db.insert({ id: 1, title: '买菜改', done: true }) // 含 id = upsert
+await db.get(1) // → { id:1, title:'…', done:true }
+await db.get_all() // → 全部行
+await db.get_by({ done: false }) // 结构体匹配：等值多键 AND → 数组
+await db.update({ done: false }, { done: true }) // 等值条件更新 → 受影响行数
+await db.del(1) // 按 id 删除 → 受影响行数
+await db.del_by({ done: false }) // 等值条件删除
+await db.clear() // 清空表
+await db.exec('CREATE INDEX idx_t ON todo(title)') // 任意 SQL 脚本（不返回结果集）
+await db.query('SELECT title, COUNT(*) AS n FROM todo GROUP BY title') // 复杂查询 → 对象数组
 await db.close()
 ```
 
@@ -289,7 +316,9 @@ const r = await api.notification.show({
   title: '任务到期',
   body: '「买菜」已到期',
   icon: 'app://extensions/todo/icon.png', // 可选：app:// URL / http(s) / data: URI / 本地路径
-  onClick: () => { /* 点击通知时执行（宿主自动聚焦主窗口） */ }
+  onClick: () => {
+    /* 点击通知时执行（宿主自动聚焦主窗口） */
+  }
 })
 ```
 
@@ -305,8 +334,14 @@ const r = await api.notification.show({
 > 代理实现说明：主进程经**进程级 env**（`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`/`NODE_TLS_REJECT_UNAUTHORIZED`）应用代理，配置未变化时不重复改写（避免并发请求互相覆盖）。限制：运行中修改代理设置会同时影响在途请求；`ignoreSSL` 等价于全局放开证书校验（`NODE_TLS_REJECT_UNAUTHORIZED=0`），仅在确实需要时开启。
 
 ```ts
-const r = await api.net.fetch('https://api.example.com/items', { method: 'POST', json: true, body: { page: 1 } })
-if (r.ok) { /* r.status, r.data（JSON 已解析或文本） */ }
+const r = await api.net.fetch('https://api.example.com/items', {
+  method: 'POST',
+  json: true,
+  body: { page: 1 }
+})
+if (r.ok) {
+  /* r.status, r.data（JSON 已解析或文本） */
+}
 // GET 默认；data 按响应 Content-Type 自动解析 JSON/文本；opts.json=true 强制 JSON
 // 失败：r.ok=false, r.error（含超时/网络错误）
 ```
@@ -315,11 +350,18 @@ if (r.ok) { /* r.status, r.data（JSON 已解析或文本） */ }
 
 ```ts
 // 文件选择（返回路径数组；拿到路径后可配合 api.fs 只能读自己的 data 目录——外部路径仅作展示/传给 api.shell）
-const { ok, filePaths, canceled } = await api.dialog.showOpenDialog({ filters: [{ name: 'JSON', extensions: ['json'] }], multiSelect: false })
+const { ok, filePaths, canceled } = await api.dialog.showOpenDialog({
+  filters: [{ name: 'JSON', extensions: ['json'] }],
+  multiSelect: false
+})
 const { filePath } = await api.dialog.showSaveDialog({ defaultName: 'export.json' })
-const { response } = await api.dialog.showMessageBox({ type: 'question', message: '确定？', buttons: ['是', '否'] })
+const { response } = await api.dialog.showMessageBox({
+  type: 'question',
+  message: '确定？',
+  buttons: ['是', '否']
+})
 // 打开外部链接/路径（系统默认程序）
-await api.shell.openExternal('https://example.com')   // 仅 http/https
+await api.shell.openExternal('https://example.com') // 仅 http/https
 await api.shell.openPath('C:\\path\\to\\file.txt')
 // 剪贴板
 await api.clipboard.writeText('hello')
@@ -329,17 +371,19 @@ const text = await api.clipboard.readText()
 ### env（运行环境）
 
 ```ts
-api.env.platform      // 'win32' | 'darwin' | 'linux'
-api.env.arch          // 'x64' | 'arm64'
-api.env.nodeVersion   // 宿主内置 Node 版本
-await api.env.getOboxVersion()  // obox 版本号
+api.env.platform // 'win32' | 'darwin' | 'linux'
+api.env.arch // 'x64' | 'arm64'
+api.env.nodeVersion // 宿主内置 Node 版本
+await api.env.getOboxVersion() // obox 版本号
 ```
 
 ### theme（主题）
 
 ```ts
-api.theme.getCurrent()                    // 当前主题 id（如 'theme-dark'）
-const off = api.theme.onChanged((id) => { /* 主题切换时刷新自身 UI */ })
+api.theme.getCurrent() // 当前主题 id（如 'theme-dark'）
+const off = api.theme.onChanged((id) => {
+  /* 主题切换时刷新自身 UI */
+})
 off.dispose()
 ```
 
@@ -348,11 +392,11 @@ off.dispose()
 与 sqlite 同安全模型：**相对路径**解析到 `userData/extensions/<扩展id>/data/`，拒绝绝对路径/`..`/盘符；自动建目录：
 
 ```ts
-await api.fs.writeFile('export/data.json', JSON.stringify(rows))   // 写（自动建目录）
-const content = await api.fs.readFile('export/data.json')          // 读
-const entries = await api.fs.readDir('.')                          // [{ name, isDir }]
+await api.fs.writeFile('export/data.json', JSON.stringify(rows)) // 写（自动建目录）
+const content = await api.fs.readFile('export/data.json') // 读
+const entries = await api.fs.readDir('.') // [{ name, isDir }]
 const exists = await api.fs.exists('export/data.json')
-await api.fs.remove('export')                                       // 删除文件/目录（递归）
+await api.fs.remove('export') // 删除文件/目录（递归）
 ```
 
 > 注意：`api.fs` 只能读写扩展自己的 data 目录；`api.dialog` 选到的外部路径**不能**用 `api.fs` 读写（安全边界）。
@@ -360,8 +404,8 @@ await api.fs.remove('export')                                       // 删除文
 ### window.setProgressBar（任务栏进度）
 
 ```ts
-await api.window.setProgressBar(0.5)   // 0~1 主窗口任务栏进度
-await api.window.setProgressBar(null)  // 清除进度
+await api.window.setProgressBar(0.5) // 0~1 主窗口任务栏进度
+await api.window.setProgressBar(null) // 清除进度
 ```
 
 ### ui（交互输入：QuickPick / InputBox / toast / 进度）
@@ -378,7 +422,7 @@ const choice = await api.ui.showQuickPick(
 const name = await api.ui.showInputBox({ title: '新建待办', placeHolder: '任务名称', value: '' })
 const token = await api.ui.showInputBox({ title: '输入 Token', password: true })
 // 应用内 toast（非模态，自动消失；区别于 dialog 阻塞框与系统 notification）
-api.ui.showMessage('已保存', 'success')   // 'info' | 'warning' | 'error' | 'success'
+api.ui.showMessage('已保存', 'success') // 'info' | 'warning' | 'error' | 'success'
 // 多字段表单模态框（返回 {field: value}；取消或必填未过 → undefined）
 const form = await api.ui.showForm({
   title: '添加待办',
@@ -388,7 +432,13 @@ const form = await api.ui.showForm({
     { key: 'notes', label: '备注', type: 'textarea' },
     { key: 'dueDate', label: '截止日期', type: 'date' },
     { key: 'dueTime', label: '截止时间', type: 'time' },
-    { key: 'priority', label: '优先级', type: 'select', default: 'medium', options: [{ value: 'high', label: '高' }] },
+    {
+      key: 'priority',
+      label: '优先级',
+      type: 'select',
+      default: 'medium',
+      options: [{ value: 'high', label: '高' }]
+    },
     { key: 'tags', label: '标签', type: 'checkbox', options: [{ value: 't1', label: '工作' }] }
   ]
 })
@@ -412,9 +462,9 @@ await api.ui.withProgress('正在同步…', async (report) => {
 const log = api.output.createChannel('我的扩展日志')
 log.appendLine('开始处理…')
 log.append('进度 30%')
-log.show()       // 打开底部面板并切到该通道
-log.clear()      // 清空
-log.dispose()    // 关闭并移除通道
+log.show() // 打开底部面板并切到该通道
+log.clear() // 清空
+log.dispose() // 关闭并移除通道
 ```
 
 ### secrets（密钥存储，safeStorage 加密）
@@ -425,7 +475,7 @@ token/凭据安全存储（主进程 safeStorage 加密存 userData；**不要**
 
 ```ts
 await api.secrets.set('github_token', 'ghp_xxx')
-const token = await api.secrets.get('github_token')   // undefined = 未设置
+const token = await api.secrets.get('github_token') // undefined = 未设置
 await api.secrets.delete('github_token')
 ```
 
@@ -435,7 +485,7 @@ await api.secrets.delete('github_token')
 
 ```ts
 await api.fs.watch('watch-1', '.', (e) => {
-  console.log('文件变化:', e.relPath)   // 相对监听目录
+  console.log('文件变化:', e.relPath) // 相对监听目录
 })
 // 停止监听
 await api.fs.unwatch('watch-1')
@@ -456,9 +506,11 @@ off.dispose()
 ### env.language / window 聚焦
 
 ```ts
-api.env.language              // 当前 UI 语言 'zh' | 'en'
-await api.window.isFocused()  // 主窗口是否聚焦
-const off = api.window.onFocusChanged((focused) => { /* 聚焦/失焦 */ })
+api.env.language // 当前 UI 语言 'zh' | 'en'
+await api.window.isFocused() // 主窗口是否聚焦
+const off = api.window.onFocusChanged((focused) => {
+  /* 聚焦/失焦 */
+})
 off.dispose()
 ```
 
@@ -468,11 +520,11 @@ off.dispose()
 
 ```ts
 const item = api.statusBar.createItem({ text: '同步中…', alignment: 'right', priority: 10 })
-item.text = '完成 ✓'        // 更新文本（支持 $(icon)）
+item.text = '完成 ✓' // 更新文本（支持 $(icon)）
 item.tooltip = '点击打开'
-item.hide()                 // 隐藏
-item.show()                 // 显示
-item.dispose()              // 销毁（扩展停用宿主自动清理）
+item.hide() // 隐藏
+item.show() // 显示
+item.dispose() // 销毁（扩展停用宿主自动清理）
 ```
 
 ### views（树视图，contributes.views 声明 + 数据源注册）
@@ -484,14 +536,12 @@ const off = api.views.registerTreeProvider('my-ext.tree', {
   async getChildren(element) {
     if (!element) return [{ id: 'root-1', label: '分组 1', collapsible: true }]
     if (element.id === 'root-1') {
-      return [
-        { id: 'item-1', label: '任务 A', command: 'my-ext.open', args: ['item-1'] }
-      ]
+      return [{ id: 'item-1', label: '任务 A', command: 'my-ext.open', args: ['item-1'] }]
     }
     return []
   }
 })
-off.dispose()   // 注销数据源
+off.dispose() // 注销数据源
 ```
 
 - 节点 `collapsible: true` 展开时才调用 `getChildren(element)` 加载子节点

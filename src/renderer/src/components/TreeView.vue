@@ -53,9 +53,9 @@ onMounted(() => {
 /** 点击节点：执行其命令 */
 function runNode(item: TreeItem): void {
   if (!item.command) return
-  void host.executeCommand(item.command, ...(item.args ?? [])).catch((err) =>
-    console.error('[tree]', item.command, err)
-  )
+  void host
+    .executeCommand(item.command, ...(item.args ?? []))
+    .catch((err) => console.error('[tree]', item.command, err))
 }
 </script>
 

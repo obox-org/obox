@@ -99,7 +99,9 @@ export function parseUpdateFeed(text: string): UpdateFeed {
 
 /** 版本归一化：去掉 v 前缀，便于展示与比较（不做完整 semver 语义） */
 export function normalizeVersion(version: string): string {
-  return String(version ?? '').replace(/^v/i, '').trim()
+  return String(version ?? '')
+    .replace(/^v/i, '')
+    .trim()
 }
 
 /**

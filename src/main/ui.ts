@@ -22,7 +22,9 @@ export function registerUiIpc(): void {
     ): Promise<{ local: boolean; canceled?: boolean; value?: unknown }> => {
       const focused = BrowserWindow.getFocusedWindow()
       const isChild =
-        focused && !focused.isDestroyed() && focused.webContents.getURL().includes('obox-window=app')
+        focused &&
+        !focused.isDestroyed() &&
+        focused.webContents.getURL().includes('obox-window=app')
       if (!isChild) {
         // 主窗口（或无可聚焦子窗口）：主窗口宿主本地渲染
         return Promise.resolve({ local: true })

@@ -82,6 +82,7 @@ function isSvgIcon(icon: string): boolean {
       >
         <div class="card-icon">
           <img v-if="!isSvgIcon(item.icon)" :src="item.icon" alt="" />
+          <!-- eslint-disable-next-line vue/no-v-html -- SVG 图标由扩展提供（同进程受信代码，见 ADR-0015） -->
           <span v-else class="card-icon-svg" v-html="item.icon" />
         </div>
         <div class="card-header">
@@ -100,7 +101,12 @@ function isSvgIcon(icon: string): boolean {
 
     <!-- 右键菜单 -->
     <Teleport to="body">
-      <div v-if="menuState" class="ctx-overlay" @click="menuState = null" @contextmenu.prevent="menuState = null">
+      <div
+        v-if="menuState"
+        class="ctx-overlay"
+        @click="menuState = null"
+        @contextmenu.prevent="menuState = null"
+      >
         <div class="ctx-menu" :style="{ left: menuState.x + 'px', top: menuState.y + 'px' }">
           <div
             v-for="item in menuItems"

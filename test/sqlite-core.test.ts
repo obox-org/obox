@@ -118,16 +118,20 @@ describe('读取与条件查询', () => {
     const hit = rowsOf(
       db,
       'todo',
-      db.raw.prepare(buildWhere({ done: false }).sql ? `SELECT * FROM "todo" WHERE ${buildWhere({ done: false }).sql}` : 'SELECT * FROM "todo"').all(...buildWhere({ done: false }).params) as unknown[]
+      db.raw
+        .prepare(
+          buildWhere({ done: false }).sql
+            ? `SELECT * FROM "todo" WHERE ${buildWhere({ done: false }).sql}`
+            : 'SELECT * FROM "todo"'
+        )
+        .all(...buildWhere({ done: false }).params) as unknown[]
     )
     expect(hit).toHaveLength(2)
   })
 
   it('update 按条件更新（boolean 值）', () => {
     const w = buildWhere({ title: 'a' })
-    const info = db.raw
-      .prepare(`UPDATE "todo" SET done = ? WHERE ${w.sql}`)
-      .run(1, ...w.params)
+    const info = db.raw.prepare(`UPDATE "todo" SET done = ? WHERE ${w.sql}`).run(1, ...w.params)
     expect(Number(info.changes)).toBe(1)
     const after = rowsOf(db, 'todo', db.raw.prepare(`SELECT * FROM "todo"`).all() as unknown[])
     expect(after.find((r) => (r as { title: string }).title === 'a')).toMatchObject({ done: true })
@@ -149,7 +153,9 @@ describe('删除与清空', () => {
 
   it('按条件删除 + 清空', () => {
     const w = buildWhere({ title: 'a' })
-    expect(Number(db.raw.prepare(`DELETE FROM "todo" WHERE ${w.sql}`).run(...w.params).changes)).toBe(1)
+    expect(
+      Number(db.raw.prepare(`DELETE FROM "todo" WHERE ${w.sql}`).run(...w.params).changes)
+    ).toBe(1)
     expect(Number(db.raw.prepare(`DELETE FROM "todo"`).run().changes)).toBe(2)
   })
 })

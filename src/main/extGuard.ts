@@ -102,7 +102,9 @@ export function removeKnownExtension(id: string): void {
 
 export function isKnownExtension(id: string): boolean {
   const normalized = tryNormalize(id)
-  return normalized !== null && (scannedExtensions.has(normalized) || extraExtensions.has(normalized))
+  return (
+    normalized !== null && (scannedExtensions.has(normalized) || extraExtensions.has(normalized))
+  )
 }
 
 /** 当前已知扩展 id 快照（诊断用） */

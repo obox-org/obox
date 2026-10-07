@@ -14,11 +14,11 @@ node skills/obox-ext-dev/scripts/create-extension.mjs my-hello \
 
 参数：
 
-| 参数 | 说明 |
-|---|---|
-| `<id>` | 扩展 id（必填），匹配 `^[a-z0-9][a-z0-9._-]*$` |
-| `--title` | 显示名（默认 = id） |
-| `--desc` | 简介 |
+| 参数      | 说明                                           |
+| --------- | ---------------------------------------------- |
+| `<id>`    | 扩展 id（必填），匹配 `^[a-z0-9][a-z0-9._-]*$` |
+| `--title` | 显示名（默认 = id）                            |
+| `--desc`  | 简介                                           |
 
 目录已存在时中止，不覆盖。生成后按 `references/guides.md` 编辑 manifest 与入口。
 

@@ -26,14 +26,17 @@ const api: MainApi = {
   installUpdate: () => ipcRenderer.invoke('update:install'),
   forceInstallUpdate: (opts) => ipcRenderer.invoke('update:force-install', opts),
   // 扩展能力：定时器
-  setTimerTimeout: (extId, id, seconds) => ipcRenderer.invoke('timer:set-timeout', extId, id, seconds),
-  setTimerInterval: (extId, id, seconds) => ipcRenderer.invoke('timer:set-interval', extId, id, seconds),
+  setTimerTimeout: (extId, id, seconds) =>
+    ipcRenderer.invoke('timer:set-timeout', extId, id, seconds),
+  setTimerInterval: (extId, id, seconds) =>
+    ipcRenderer.invoke('timer:set-interval', extId, id, seconds),
   clearTimer: (extId, id) => ipcRenderer.invoke('timer:clear', extId, id),
   // 扩展能力：sqlite
   sqliteOpen: (extId, name) => ipcRenderer.invoke('sqlite:open', extId, name),
   sqliteClose: (extId, name) => ipcRenderer.invoke('sqlite:close', extId, name),
   sqliteExec: (extId, name, sql) => ipcRenderer.invoke('sqlite:exec', extId, name, sql),
-  sqliteQuery: (extId, name, sql, params) => ipcRenderer.invoke('sqlite:query', extId, name, sql, params),
+  sqliteQuery: (extId, name, sql, params) =>
+    ipcRenderer.invoke('sqlite:query', extId, name, sql, params),
   sqliteInsert: (extId, name, row) => ipcRenderer.invoke('sqlite:insert', extId, name, row),
   sqliteUpdate: (extId, name, where, patch) =>
     ipcRenderer.invoke('sqlite:update', extId, name, where, patch),
@@ -79,7 +82,8 @@ const api: MainApi = {
   // App 子窗口 ↔ 扩展消息桥
   extensionMessage: (appId, channel, payload) =>
     ipcRenderer.invoke('app:extension-message', { appId, channel, payload }),
-  extensionReply: (requestId, result) => ipcRenderer.send('extension:reply', { requestId, ...result }),
+  extensionReply: (requestId, result) =>
+    ipcRenderer.send('extension:reply', { requestId, ...result }),
   // 窗口化 ui 模态框（按焦点窗口显示）
   uiShow: (kind, payload) => ipcRenderer.invoke('ui:show', { kind, payload }),
   uiResult: (requestId, r) => ipcRenderer.send('ui:result', { requestId, ...r })

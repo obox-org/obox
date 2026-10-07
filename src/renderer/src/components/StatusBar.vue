@@ -29,6 +29,9 @@ async function onItemClick(command?: string): Promise<void> {
   <footer class="statusbar">
     <div class="statusbar-left">
       <span class="status-item">{{ activeTitle }}</span>
+      <!-- 文本由扩展提供（同进程受信代码，见 ADR-0015），需要 v-html 渲染扩展给出的富文本；
+           元素跨多行，故用块级豁免（下一行式豁免只覆盖 `<span` 那一行） -->
+      <!-- eslint-disable vue/no-v-html -->
       <span
         v-for="item in leftItems"
         :key="item.id"
@@ -37,8 +40,10 @@ async function onItemClick(command?: string): Promise<void> {
         @click="onItemClick(item.command)"
         v-html="item.text"
       />
+      <!-- eslint-enable vue/no-v-html -->
     </div>
     <div class="statusbar-right">
+      <!-- eslint-disable vue/no-v-html -- 同上（右侧状态项，元素跨多行） -->
       <span
         v-for="item in rightItems"
         :key="item.id"
@@ -47,6 +52,7 @@ async function onItemClick(command?: string): Promise<void> {
         @click="onItemClick(item.command)"
         v-html="item.text"
       />
+      <!-- eslint-enable vue/no-v-html -->
       <span class="status-item version">Obox</span>
     </div>
   </footer>

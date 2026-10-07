@@ -2,13 +2,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  buildWhere,
-  closeHandle,
-  insertRow,
-  openSqlite,
-  readRows
-} from '../src/main/sqliteCore.ts'
+import { buildWhere, closeHandle, insertRow, openSqlite, readRows } from '../src/main/sqliteCore.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'obox-smoke-'))
 const db = openSqlite('ext', 'todo.db', dir)
@@ -19,7 +13,11 @@ insertRow(db, meta, { title: '交费', done: true })
 const upserted = insertRow(db, meta, { id: 1, title: '买菜（改）', done: true })
 const all = readRows(meta, 'todo', db.raw.prepare('SELECT * FROM "todo"').all())
 const w = buildWhere({ done: true })
-const filtered = readRows(meta, 'todo', db.raw.prepare(`SELECT * FROM "todo" WHERE ${w.sql}`).all(...w.params))
+const filtered = readRows(
+  meta,
+  'todo',
+  db.raw.prepare(`SELECT * FROM "todo" WHERE ${w.sql}`).all(...w.params)
+)
 const upd = db.raw.prepare(`UPDATE "todo" SET done = ? WHERE ${w.sql}`).run(0, ...w.params)
 
 console.log('rows:', JSON.stringify(all))
