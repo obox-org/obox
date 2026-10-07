@@ -79,19 +79,27 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 | 下载中断后重试                     | 【运行期未验证】 | `update:check` / `update:download` 已加进行中互斥；中断后的续传/重试行为依赖 electron-updater 语义 |
 | Darwin/Linux 发行                  | 不适用           | 当前发布仅 Windows（`release.yml` 只构建 win nsis）                                                |
 
-## 7. 构建期工具链依赖：8 项 moderate 的处置结论
+## 7. 依赖安全：sprintf-js 告警的处置（已修复）
 
-`npm audit` 剩余 **8 项 moderate**，**唯一直接依赖是 `electron-builder`**（devDependency）：
+**现状：`npm audit` 0 漏洞；Dependabot 开放告警 0。**
 
-```
-@electron/get, app-builder-lib, dmg-builder, electron-builder,
-electron-builder-squirrel-windows, global-agent, roarr, sprintf-js  —— 均 moderate
-```
+- **告警**：Dependabot #56 —— `sprintf-js`（medium，**development** 作用域），GHSA-hp3w-g68c-fv3c / CVE-2026-97058（precision 说明符无界导致 DoS）。受影响范围 `<= 1.1.3`，而 sprintf-js 上游最新就是 1.1.3 → **没有可升级的修复版本**。
+- **来源链**：`electron-builder → app-builder-lib → @electron/get@3（嵌套） → global-agent@3 → roarr@2 → sprintf-js`。顶层那份 `@electron/get` 已是 5.x（不含 global-agent），问题只在 app-builder-lib 要求的 v3 那一份。
+- **处置**：`package.json` 加 `overrides: { "roarr": "^7.21.7" }`。roarr 7 改用 `fast-printf`，**sprintf-js 从依赖树中消失**；`npm audit` 由 8 项 moderate 变为 **0 项**（那 8 项其实是同一根因在依赖路径上被逐环标记）。
+- **验证（均已实际执行）**：
+  - `npm run typecheck` / `npm test`（130 项）/ `npm run lint` 全部通过；
+  - `npm run build` 通过；
+  - **本地真实打包** `electron-builder --win nsis --x64 --publish never` 成功：Electron 44.6.0 正常下载（走的正是 @electron/get 链路）→ NSIS 产出 + blockmap，退出码 0。
+- **残余风险（如实记录）**：`overrides` 覆盖的是**传递依赖**，上游 global-agent@3 并未针对 roarr 7 做过兼容测试；已知受影响面仅为"构建期下载时的代理/日志路径"，且**未在真实代理环境验证**。
+- **退场条件**：electron-builder 27 稳定后升级并**移除该 override**（27 采用 `@electron/get` ≥ 4/5，该链路自然消失）；升级后需重跑 `npm audit` 与一次本地/CI 打包确认。
 
-**结论：接受现状，不降级、不打补丁，等 electron-builder 27 稳定后统一升级。** 理由：
+## 8. 本地打包产物膨胀（已修复）
 
-- 全部位于**构建/打包工具链**，只在开发机与 CI runner 上执行，**不随应用分发**（应用运行时依赖里没有这些包）；
-- 触发条件为"解析恶意构造的构建输入/代理配置"，威胁模型要求攻击者已能控制构建机或 CI 环境——此时风险已不止这些包；
-- `npm audit fix --force` 会把 electron-builder 降到不兼容的主版本（破坏打包含签名/NSIS 流程），代价高于收益。
-
-**何时复查**：electron-builder 27 发布稳定版并支持当前 Electron 44 后升级；升级后本结论作废，需重跑 `npm audit` 与 `npm run release`（含双架构产物）确认。
+- **现象**（本次依赖验证时发现）：本地 `electron-builder --win nsis --x64` 产出 **820 MB** 安装包，而 CI 同类产物为 115 MB。
+- **根因（实测定位，两步）**：
+  1. `release/` 是 `directories.output` 指定的**打包输出目录**，却**未在 `files` 中排除** → 本工具把"上一次的安装包"打进新安装包：`app.asar` 实测膨胀到 **1105 MB**；
+  2. `vendor/`（VS Code 源码参考目录，本地 506 MB，`.gitignore` 未入库）同样未被排除。
+  - CI 因干净 checkout 里没有这两个目录，所以 CI 产物一直正常——**这是只有本地打包才会踩的坑**。
+- **风险**：不只体积。若有人在本地打包后上传，用户会拿到含 VS Code 源码与旧安装包的臃肿包（分发与许可都不合适）。
+- **修复**：`files` 增加 `!vendor/*` 与 `!release/*`（含注释说明原因）。
+- **复核（已执行）**：修复后本地重新打包 → **115.9 MB**（与 CI 的 115.8 MB 齐平），`app.asar` **1105 MB → 6.5 MB**。
