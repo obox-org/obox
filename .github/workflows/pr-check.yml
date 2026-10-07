@@ -32,6 +32,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 依赖安全门槛：任何 moderate 及以上的 npm 告警都阻断合并
+      # （与 Dependabot 告警同源：npm audit 用的就是 GitHub Advisory 数据）
+      # 若确实无可修复版本：先用 overrides 消除；确实无法消除时，在
+      # docs/update-and-release-verification.md 记录并在 Dependabot 处标注，不要直接放开这一步
+      - name: Dependency audit
+        run: npm run security:audit
+
       - name: Typecheck
         run: npm run typecheck
 

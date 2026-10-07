@@ -83,6 +83,31 @@
 - 文档类冲突（`troubleshooting.md` 条目编号、`README.md` 表格、ADR 索引）优先"两边都保留 + 重新编号/合并成一行"，不丢任何一侧内容
 - 合并后用 `git status` 与两个门槛复核；`lint` 等缓存（`.eslintcache`）在复测前删除，避免掩盖真实结果
 
+### 依赖安全（强制，每次合并后必查）
+
+**每次合并 PR 之后**，必须做两件事并留下结论：
+
+1. **本地/CI 同款检查**：`npm run security:audit`（`npm audit --audit-level=moderate`）必须 **0 告警**；
+2. **Dependabot 开放告警**必须为 **0**。查询方式（`npm audit` 与 Dependabot 同源，但 Dependabot 可能另有条目）：
+
+   ```powershell
+   $t = (Get-Content .gitoken -Raw).Trim()
+   Invoke-RestMethod -Uri "https://api.github.com/repos/obox-org/obox/dependabot/alerts?state=open&per_page=50" `
+     -Headers @{ Authorization = "Bearer $t"; "User-Agent" = "obox"; Accept = "application/vnd.github+json" }
+   ```
+
+**发现告警必须处置，顺序如下**（不得"看到但不动"）：
+
+1. **升级依赖**消除（含直接依赖与其传递链上的新版本）；
+2. 传递依赖无新版本时，用 **`package.json` 的 `overrides`** 覆盖到已修复版本（先例：`sprintf-js` 告警通过 `overrides: { "roarr": "^7.21.7" }` 消除）；
+3. 确实**没有可修复版本**时：在 `docs/update-and-release-verification.md` 写清告警内容、来源链、为何不可达/为何可接受、残余风险与退场条件，并在 Dependabot 侧对该条告警做出标注；**不得**直接放开 CI 门槛或删掉检查步骤。
+
+**机制（已有，不要绕过）**：
+
+- `.github/workflows/pr-check.yml` 与 `release.yml` 都有 `Dependency audit` 步骤 → 新告警会**阻断合并与发版**；
+- `.github/workflows/dependency-audit.yml` 每周一 01:00 UTC 巡检**未改动依赖**新暴露的告警，发现即自动开/更新 issue；
+- 覆盖用的 `overrides` 属"临时补丁"，升级到上游已修复的版本后应移除（例：electron-builder 27 稳定后移除 roarr override）。
+
 ### 提交前质量门槛
 
 - 改动涉及 `src/` 代码时：先跑 `npm run typecheck`（必须通过）、`npm run lint`（0 errors）与 `npm test`（vitest）；PR 的 CI（`.github/workflows/pr-check.yml`）会强制三者通过才能合并

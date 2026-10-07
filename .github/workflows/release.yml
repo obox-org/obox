@@ -56,6 +56,10 @@ jobs:
       - name: Test
         run: npm test
 
+      # 依赖安全：发版同样要求无 moderate 及以上告警（与 pr-check.yml 的门槛一致）
+      - name: Dependency audit
+        run: npm run security:audit
+
       # 构建主进程/preload/renderer 到 out/（electron-builder 打包 app.asar 的入口依赖 out/main/index.js）
       - name: Build
         run: npm run build

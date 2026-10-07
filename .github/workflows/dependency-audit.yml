@@ -1,0 +1,75 @@
+# 依赖安全巡检
+#
+# 目的：PR 的 `npm audit` 只能拦住"改动引入的新告警"；本工作流按周巡检
+# **未改动的依赖**在拿到新 advisory 后暴露出的告警，发现即在 issue 里留痕。
+#
+# 数据源说明：npm audit 与 Dependabot 告警同源（GitHub Advisory 数据库）。
+# 之所以用 npm audit 而不是直接调 Dependabot alerts API，是因为 GITHUB_TOKEN
+# 没有读取 Dependabot 告警的权限（需要 security_events 权限的 PAT）。
+# 需要看 Dependabot 侧原始告警时，用仓库的 .gitoken 手动查询（见 AGENTS.md）。
+name: Dependency audit
+
+on:
+  schedule:
+    # 每周一 01:00 UTC（北京 09:00）
+    - cron: '0 1 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # --ignore-scripts：巡检只需依赖树，不必下载 Electron 二进制
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: npm audit
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --audit-level=moderate > audit-report.txt 2>&1
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          cat audit-report.txt
+          exit 0
+
+      - name: Open or update tracking issue
+        if: steps.audit.outputs.exit_code != '0'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="依赖安全：npm audit 发现新告警（自动巡检）"
+          {
+            echo "自动巡检发现依赖安全告警（每周一 01:00 UTC 运行，也可手动触发 workflow_dispatch）。"
+            echo
+            echo "运行：[#${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo
+            echo '```'
+            cat audit-report.txt
+            echo '```'
+            echo
+            echo "处置要求（见 AGENTS.md「依赖安全」）：先用升级或 \`overrides\` 消除；"
+            echo "确实没有可修复版本时，在 \`docs/update-and-release-verification.md\` 记录理由与残余风险，"
+            echo "并在 Dependabot 侧对该条告警做出标注，不要直接放开 CI 门槛。"
+          } > issue-body.md
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+          else
+            gh issue create --title "$title" --body-file issue-body.md
+          fi
