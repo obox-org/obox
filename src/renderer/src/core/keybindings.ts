@@ -93,6 +93,9 @@ function normalizeKey(key: string): string {
 
 /** 主键规范化：'p' → 'P'（修饰键组合的主键统一大写） */
 function normalizeMainKey(key: string): string {
+  // 空格必须先判断：' ' 长度为 1，会被下面的单字符分支提前返回成 ' '，
+  // 导致绑定 "Space" 的快捷键永远匹配不上（用户按空格得到的是 ' '）
+  if (key === ' ') return 'Space'
   if (key.length === 1) return key.toUpperCase()
   const map: Record<string, string> = {
     ' ': 'Space',
