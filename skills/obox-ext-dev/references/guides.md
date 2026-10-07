@@ -266,6 +266,18 @@ manifest 必须成对声明（安装期会校验，错了直接拒绝并给 `arc
 需要与宿主双向通信时传 `opts.channel`（该进程会注册成一条 `api.ipc` 通道，Python 侧自行实现协议）；
 宿主的代理设置**不会**传给 Python（详见 api-reference 的 `api.python`）。
 
+**第三方许可（必做）**：Python 运行时与 wheel 里带着各自的许可文本，分发时必须随包给出（PSF License v2
+第 2 条要求保留许可证与版权声明，第 3 条要求附"对 Python 的修改摘要"——我们裁剪过运行时）。一条命令搞定：
+
+```powershell
+node scripts/collect-python-licenses.mts --ext extensions/my-py-ext          # 生成 THIRD-PARTY-NOTICES.txt
+node scripts/collect-python-licenses.mts --ext extensions/my-py-ext --check   # CI 里防漂移（退出码 1 = 需重新生成）
+```
+
+它会挑出 `LICENSE*`/`COPYING*`/`NOTICE*`/`license.terms` 以及 `*.dist-info/licenses/**` 下的全部文本，
+拼成一份 `THIRD-PARTY-NOTICES.txt`（含上面那份修改摘要），并写 `license-notices.json` 记录指纹；
+`--check` 对比指纹，**包内容一变就报错**，避免声明与内容长期不符。
+
 ## 教程：更新提供者扩展（参考 `extensions/obox-updater/`）
 
 obox 没有内置默认更新源——更新由**用户扩展**提供（声明 `contributes.updater` 后成为"更新提供者扩展"，在**设置-更新**中只能选一个生效，选中后才可调用 `api.update.*`）。参考实例：`extensions/obox-updater/`（独立仓库 [obox-org/obox-updater](https://github.com/obox-org/obox-updater)）。
