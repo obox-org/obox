@@ -31,6 +31,19 @@ afterEach(async () => {
   await fs.rm(workDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 60 })
 })
 
+/**
+ * 轮询等待条件成立（最长 timeoutMs）。
+ * 别用固定 `setTimeout` 等子进程的输出——机器一忙就会偶发失败（本地已复现过一次）。
+ */
+async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<boolean> {
+  const startedAt = Date.now()
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) return false
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  return true
+}
+
 /** 对端脚本：content-length 分帧的 JSON-RPC；支持 sum / 不回包的 slow；启动后主动发通知与请求 */
 const ECHO_CHILD = `
 let buf = Buffer.alloc(0)
@@ -123,17 +136,18 @@ describe('stdio 传输（宿主拉起子进程）', () => {
       cwd: workDir
     })
     cleanups.push(() => transport.dispose())
-    await transport.ready
-
+    // 监听与处理器都在 await ready **之前**注册：对端启动瞬间就会发 ready 通知与请求，
+    // 晚注册会真的丢掉它们（这不只是"慢"，是竞态）
     const notifications: Array<[string, unknown]> = []
     transport.channel.onNotification((method, params) => notifications.push([method, params]))
     // 宿主处理对端请求：证明"对端 → 宿主"方向
     transport.channel.handle('hostPing', () => 'pong')
+    await transport.ready
 
     await expect(transport.channel.request('sum', { a: 2, b: 3 })).resolves.toBe(5)
 
     // 对端收到宿主回包后会回一条 gotReply 通知（端到端双向证据）
-    await new Promise((r) => setTimeout(r, 100))
+    await waitFor(() => notifications.some(([m]) => m === 'gotReply'))
     expect(notifications.map(([m]) => m)).toContain('ready')
     const gotReply = notifications.find(([m]) => m === 'gotReply')
     expect(gotReply?.[1]).toEqual({ result: 'pong' })
@@ -147,10 +161,11 @@ describe('stdio 传输（宿主拉起子进程）', () => {
       cwd: workDir
     })
     cleanups.push(() => transport.dispose())
-    await transport.ready
+    // 监听要在 await ready **之前**注册：子进程启动瞬间就会写 stderr，晚注册会真的丢掉这批数据
     const logs: string[] = []
     transport.onStderr((text) => logs.push(text))
-    await new Promise((r) => setTimeout(r, 120))
+    await transport.ready
+    await waitFor(() => logs.join('').includes('child-started'))
     expect(logs.join('')).toContain('child-started')
   })
 
