@@ -72,7 +72,16 @@
   - base = `master`，head = 当前 feature 分支；正文简述改动
   - **中文编码坑（已踩）**：PR 标题/正文含中文时，**不要**把中文写进 pwsh 命令行（`-Body` 字符串会被破坏成乱码）。正确姿势：用 write 工具把标题/正文写成 UTF-8 文件 → pwsh 里 `[System.IO.File]::ReadAllText(path, [System.Text.Encoding]::UTF8)` 读取 → `$bytes = [System.Text.Encoding]::UTF8.GetBytes($json)` 以 **UTF-8 字节**发送（`-ContentType 'application/json; charset=utf-8' -Body $bytes`）。开完 PR 后回读 `$r.title` 验证中文无损
 - 不做本地 squash/整理（tmp 方案已否决）：分支上保留中间 commit，由 GitHub 的 **Squash and merge** 压成 1 条
-- 等用户 approve → 用户手动 squash merge → 分支自动删除
+- **合并由 AI 自行执行**：`master` 保护已把 approve 门槛设为 0（见 `docs/adr/0008`），因此 AI 在 **CI（`check`）通过后自行 squash merge 并删除分支**，不必等待人为 approve
+  - 合并前必须确认：PR 的 `check` 为 `success`、`mergeable=true`；有冲突则先 rebase 解冲突（见下方冲突处理）
+  - 人仍可随时 review/评论/要求改动；需要真正独立评审时，把 approve 门槛临时调回 1（`docs/adr/0008` 修订有说明）
+  - 合并用 API：`PUT /repos/<owner>/<repo>/pulls/<n>/merge`，`{"merge_method":"squash"}`；成功后 `DELETE /repos/<owner>/<repo>/git/refs/heads/<branch>` 删源分支
+
+### 冲突处理（合并前后）
+
+- 栈式 PR（分支基于另一未合并分支）在**基础分支 squash 合并后**会出现"重放整个基础提交"式的全面冲突：此时**不要**硬 rebase，改为 `git cherry-pick <本 PR 自己的提交>` 到最新 master
+- 文档类冲突（`troubleshooting.md` 条目编号、`README.md` 表格、ADR 索引）优先"两边都保留 + 重新编号/合并成一行"，不丢任何一侧内容
+- 合并后用 `git status` 与两个门槛复核；`lint` 等缓存（`.eslintcache`）在复测前删除，避免掩盖真实结果
 
 ### 提交前质量门槛
 
