@@ -278,6 +278,21 @@ node scripts/collect-python-licenses.mts --ext extensions/my-py-ext --check   # 
 拼成一份 `THIRD-PARTY-NOTICES.txt`（含上面那份修改摘要），并写 `license-notices.json` 记录指纹；
 `--check` 对比指纹，**包内容一变就报错**，避免声明与内容长期不符。
 
+**真机自检（建议做一次）**：用真实解释器验证整条链路（而不是用 Node 冒充）：
+
+```powershell
+# 取一份运行时并裁剪（--skip-wheels 表示先不预置依赖）
+node scripts/build-python-runtime.mts --arch x64 --python 3.13.16 --release 20261003 `
+  --out $env:TEMP\py-check --skip-wheels
+
+# 让 vitest 额外跑真实 Python 用例（未设置时这 4 项自动跳过，CI 不依赖下载）
+$env:OBOX_PYTHON_EXE = "$env:TEMP\py-check\python\python.exe"; npm test
+```
+
+设置 `OBOX_PYTHON_EXE` 后，`test/python-real.test.ts` 会验证：真实解释器跑脚本的退出码与输出、
+**不可删清单在真机上可用**（tkinter/ssl/sqlite3/unicodedata/ctypes/venv/ensurepip/tomllib/pip）、
+含空格与元字符的参数经 shell 后逐项相等、以及**双向 JSON-RPC 通道**与 `kill()` 的进程树终止。
+
 ## 教程：更新提供者扩展（参考 `extensions/obox-updater/`）
 
 obox 没有内置默认更新源——更新由**用户扩展**提供（声明 `contributes.updater` 后成为"更新提供者扩展"，在**设置-更新**中只能选一个生效，选中后才可调用 `api.update.*`）。参考实例：`extensions/obox-updater/`（独立仓库 [obox-org/obox-updater](https://github.com/obox-org/obox-updater)）。
