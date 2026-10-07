@@ -240,6 +240,31 @@
 
 - 声明即注册为导航项（内容区渲染内置树组件）；节点点击执行 `command`（TreeItem 上声明，`args` 作参数）
 
+### ipcChannels（静态声明 IPC 通道，issue #45）
+
+```json
+{
+  "contributes": {
+    "ipcChannels": [
+      { "id": "worker", "transport": "stdio", "program": "bin/worker.exe", "args": ["--serve"] },
+      { "id": "bus", "transport": "pipe", "framing": "ndjson" }
+    ]
+  }
+}
+```
+
+| 字段        | 必填     | 说明                                                              |
+| ----------- | -------- | ----------------------------------------------------------------- |
+| `id`        | ✅       | 通道名（同扩展内唯一；只允许字母/数字/`._-`）                     |
+| `transport` | ✅       | `stdio`（宿主拉起）/ `pipe`（连接已在运行的进程）；**不支持 TCP** |
+| `program`   | stdio ✅ | 相对**扩展目录**的路径（禁止绝对路径与 `..`）                     |
+| `args`      | ❌       | 字符串数组；其中相对路径按 cwd = `<扩展>/data` 算                 |
+| `framing`   | ❌       | `content-length`（默认）或 `ndjson`                               |
+
+- 声明后代码里只写 `api.ipc.connect('<id>')`（**不自动连接**：避免启动被对端拖慢）
+- 校验与运行时声明**同一套规则**（`src/shared/ipcDeclaration.ts`）：非法声明 → **清单无效**（扩展标红 + 明确错误），而不是等到 `connect()` 才炸
+- 同名冲突以**运行时声明优先**；声明本身不占用"每扩展 4 条通道"的额度（只有真正 `connect()` 才占用）
+
 ## 校验规则（`core/manifest.ts`）
 
 - `name` 必填且匹配 `^[a-z0-9][a-z0-9._-]*$` → 否则 **error**，不加载

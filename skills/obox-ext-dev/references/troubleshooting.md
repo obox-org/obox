@@ -295,6 +295,12 @@ export function uninstall(ctx) {
 
 **调试建议**：先用 `api.ipc.onStderr()` 打印对端日志；对端可先用最简单的"回声"实现（读一行、回一行）验证分帧，再接入真实逻辑。
 
+**清单声明的通道（`contributes.ipcChannels`，issue #45）**：
+
+- `connect('<id>')` 报 `invalid-declaration 清单里没有声明通道 x` → 检查 manifest 的 `contributes.ipcChannels`（名字、拼写）；非法声明会让**清单无效**（扩展标红），先看扩展管理器详情页的 `activationError`/校验信息
+- **`connect()` 成功但请求立刻报 `not-connected`** → 十有八九是**对端一启动就退出了**，最常见原因是 `args` 里的相对路径写错：stdio 对端的 **cwd 是 `<扩展>/data`**，而 `program` 相对**扩展目录**解析。脚本在 `<扩展>/scripts/x.py` 时应写 `args: ['../scripts/x.py']`（写成 `scripts/x.py` 会让对端找不到文件后退出）。用 `api.ipc.onStderr()` 能看到对端报错文本
+- 宿主旧实例被强杀后，它拉起的对端可能成为**孤儿进程**并占着同名端点，新实例会连到"没人应答"的旧连接上 → 先清掉残留子进程再重试
+
 ## 29. 生命周期钩子（install / uninstall）没执行、或执行了两次
 
 **先分清是"哪种没执行"**——宿主日志里有直接线索：
