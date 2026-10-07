@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import TitleBar from './components/TitleBar.vue'
 import NavBar from './components/NavBar.vue'
 import ContentArea from './components/ContentArea.vue'
@@ -9,33 +9,16 @@ import PromptHost from './components/PromptHost.vue'
 import ToastHost from './components/ToastHost.vue'
 import OutputPanel from './components/OutputPanel.vue'
 import { registry } from './core/registry'
-import { stateStore } from './core/state'
 import { host } from './core/host'
 import { keybindingStore } from './core/keybindings'
+import { pickStartupNavId } from './core/startupView'
 import oboxIcon from './assets/icons/obox.svg?raw'
 
 const activeNavId = ref<string | null>(null)
 const paletteOpen = ref(false)
 
-// 默认导航项：扩展管理器（其贡献的导航项 id 约定为 ext-manager.main），
-// 否则回退到第一个已注册导航项；再回退 null
-const defaultNavId = computed(() => {
-  const items = registry.getNavItems('bottom')
-  const extManager = items.find((i) => i.id === 'ext-manager.main')
-  if (extManager) return extManager.id
-  const all = [...registry.getNavItems('top'), ...items]
-  return all[0]?.id ?? null
-})
-
-const initialNavId = computed(() => {
-  const saved = stateStore.lastActiveNavId
-  if (saved && registry.navItems.some((i) => i.id === saved && i.active)) return saved
-  return defaultNavId.value
-})
-
 function selectNav(id: string): void {
   activeNavId.value = id
-  stateStore.setLastActiveNavId(id)
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
@@ -53,7 +36,8 @@ function onGlobalKeydown(e: KeyboardEvent): void {
 
 onMounted(() => {
   void host.ready.then(() => {
-    activeNavId.value = initialNavId.value
+    // 启动视图固定为"应用"扩展（不恢复上次选择）——策略与回退链见 core/startupView.ts
+    activeNavId.value = pickStartupNavId(registry.navItems)
   })
   window.addEventListener('keydown', onGlobalKeydown)
 })
