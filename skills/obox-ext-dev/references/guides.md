@@ -223,6 +223,49 @@ extensions/todo/
 | `path-invalid`     | 传入的安装路径非法或不存在                                         |
 | `write-failed`     | 暂存 / 替换 / 写盘失败（旧版本已回滚）                             |
 
+### 5. 把 Python 运行时打进扩展包（ADR-0018）
+
+想把 Python 生态（如 matplotlib）带进扩展时，运行时**随扩展包分发**、按架构各发一个包。作者侧只需三步：
+
+```powershell
+# 1) 准备运行时：下载 install_only_stripped 归档 → 解压 → 裁剪 → 用 uv 预置 wheel
+node scripts/build-python-runtime.mts --arch x64 --python 3.13.16 --release 20261003 `
+  --out extensions/my-py-ext --requirements matplotlib==3.11.2
+
+# 2) 若目标还有 Windows on ARM：换架构再来一次（wheel 会交叉取到 win_arm64）
+node scripts/build-python-runtime.mts --arch arm64 --python 3.13.16 --release 20261003 `
+  --out extensions/my-py-ext-arm64 --requirements matplotlib==3.11.2
+
+# 3) 打包 .oix：manifest.json + 入口 + python/ 压平到 zip 根
+```
+
+manifest 必须成对声明（安装期会校验，错了直接拒绝并给 `arch-mismatch`）：
+
+```json
+{ "name": "my-py-ext", "version": "1.0.0", "main": "./index.js", "arch": "x64", "python": "3.13" }
+```
+
+脚本会用与安装器**同源**的限额常量检查体积，超限直接退出码 1，并写 `python-package.json`
+（文件数 / 总字节 / 树指纹）便于复现与留痕。
+
+**体积预期**（实测，CPython 3.13.16 + release 20261003）：
+
+| 形态                                                 | 体积 / 条目         |
+| ---------------------------------------------------- | ------------------- |
+| `install_only`（未裁剪）                             | 145.0 MB / 3350     |
+| `install_only_stripped`（脚本用的基线，已去 `.pdb`） | 59.7 MB / 3309      |
+| 再按脚本裁剪 `include`/`libs`/`idlelib`/`turtledemo` | ≈56 MB / ≈3000      |
+| 再预置 matplotlib（+numpy/Pillow/fontTools…）        | **+119 MB / +3385** |
+
+**不要**手工再删这些（逐项实测过的不可删清单，见 ADR-0018）：`tkinter`/`tcl`（交互式绘图）、
+`Lib/ensurepip`/`Lib/venv`/`Lib/tomllib`（pip 与 venv）、`python3.dll`（abi3 轮子）、
+`_ssl`/`libssl`/`libcrypto`（HTTPS 与 hashlib）、`unicodedata`、`sqlite3` 三件套；
+也**不要**删 `Lib/__pycache__`——省下的体积在可写目录里会被运行时重新生成。
+
+**运行期注意**：`api.python.run` 默认不超时（交互式脚本等用户关窗）、脚本失败返回非零 `code` 而非抛错、
+需要与宿主双向通信时传 `opts.channel`（该进程会注册成一条 `api.ipc` 通道，Python 侧自行实现协议）；
+宿主的代理设置**不会**传给 Python（详见 api-reference 的 `api.python`）。
+
 ## 教程：更新提供者扩展（参考 `extensions/obox-updater/`）
 
 obox 没有内置默认更新源——更新由**用户扩展**提供（声明 `contributes.updater` 后成为"更新提供者扩展"，在**设置-更新**中只能选一个生效，选中后才可调用 `api.update.*`）。参考实例：`extensions/obox-updater/`（独立仓库 [obox-org/obox-updater](https://github.com/obox-org/obox-updater)）。
