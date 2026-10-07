@@ -20,7 +20,7 @@
 | `description` | ❌ | string | 简介 |
 | `contributes` | ❌ | object | 贡献点声明（见下） |
 | `extensionDependencies` | ❌ | string[] | 依赖的其他扩展 id；宿主按拓扑序激活，检测环并跳过 |
-| `uninstall` | ❌ | string | 卸载钩子脚本（相对路径）；卸载时先执行再删目录（5 秒超时） |
+| `uninstall` | ❌ | string | **保留字段，当前未实现（写了不生效）**。卸载钩子的真实机制：扩展目录下放固定文件 **`.uninstall.cjs`**，卸载时先执行它再删目录（5 秒超时，尽力而为，失败仍继续删除） |
 
 ## contributes 贡献点
 

@@ -150,3 +150,27 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **原因**：混淆了安装态。调试扩展（`--debug-extension`）**不会**写 userData/extensions；若扩展管理器里出现可卸载项，那是以前 .oix 安装的同名扩展——先卸载安装态，再用调试参数加载。
 
+## 20. manifest 里写 uninstall 卸载钩子不生效
+
+**症状**：manifest 声明 `"uninstall": "./scripts/clean.js"` 后卸载扩展，脚本从未执行，也没有任何报错。
+
+**原因**：`uninstall` 字段是**保留字段，当前未实现**——主进程卸载流程只找扩展目录下的**固定文件 `.uninstall.cjs`**（`src/main/capabilities.ts`），全仓库没有代码读取 `manifest.uninstall`。写了不会报错，只是静默失效。
+
+**修复（扩展侧）**：把钩子命名为扩展根目录下的 **`.uninstall.cjs`**（CommonJS，由 `spawn(process.execPath, [hookPath])` 直接执行，5 秒超时后强杀；失败不影响删除目录）。钩子内可用 `process.env` 等，但**拿不到**扩展目录参数，需要路径时用 `__dirname`。
+
+## 21. sqlite 用嵌套相对路径在 Windows 报"数据库未打开"
+
+**症状**：`api.sqlite.open('sub/a.db')` 返回 `{ok:true}`（看似成功），随后 `query/insert` 等操作报"数据库未打开"（`requireHandle` 抛错）。仅 Windows 复现，Linux/macOS 正常。
+
+**原因**（宿主 bug，已修复）：`sqlite:open` 曾以**规范化后的路径**（Windows 上是 `sub\a.db`）为句柄 key，而其余操作以**调用方传入的原始路径**（`sub/a.db`）查找，两者不匹配。
+
+**扩展侧注意事项**：升级到包含该修复的版本后，`open('sub/a.db')` 与后续操作传**同一个字符串**即可正常使用；若仍异常，确认 open 与后续调用传入的 name 完全一致（不要一处写 `sub/a.db`、另一处写 `sub\a.db`）。
+
+## 22. window.eval / window.capture 在生产构建不可用
+
+**症状**：用 `window.api.eval(...)` 或 `window.api.capture(...)` 做 UI 验证时，开发模式正常，**打包后报"没有注册处理器"**（`No handler registered for 'window:eval'`）。
+
+**原因**：这两个能力是**开发辅助**（渲染进程任意 JS 执行 + 截图写任意路径），只在开发构建（`is.dev`，即未打包）注册到主进程；打包构建**不注册**，属于有意的安全门控。
+
+**建议**：不要在扩展里依赖它们；需要截图/自检请在 `npm run dev` 下做，或改用正式的 `api.output` / `api.fs` 等能力。
+
