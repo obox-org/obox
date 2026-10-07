@@ -7,6 +7,7 @@ import { registerAppWindowIpc, closeAllAppWindowsOnMainClose } from './appWindow
 import { registerOixIpc } from './oix'
 import { registerUpdateIpc, onUpdateEvent } from './updater'
 import { parseDebugExtensions, registerDebugIpc } from './debug'
+import { registerDebugExtensionDirs } from './extensionDirs'
 import { registerSqliteIpc, closeExtensionDbs } from './sqlite'
 import { registerTimerIpc, closeExtensionTimers } from './timer'
 import { registerNotificationIpc, closeExtensionNotifications } from './notification'
@@ -23,6 +24,8 @@ app.whenReady().then(() => {
 
   // 调试扩展（--debug-extension <id>@<path>，可重复）：不做 .oix 安装，经 app://debug/<id>/ 加载
   const debugExtensions = parseDebugExtensions(process.argv)
+  // 供 api.python / api.ipc 解析“扩展自己的文件在哪”（调试扩展优先于 userData）
+  registerDebugExtensionDirs(debugExtensions)
 
   // 注册 app:// 自定义协议：供渲染进程加载用户扩展入口（app://extensions/<id>/...）
   registerExtensionProtocol(debugExtensions)

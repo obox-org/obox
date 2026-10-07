@@ -25,10 +25,29 @@ async function listDirectories(root: string): Promise<string[]> {
   }
 }
 
-/** 用户扩展目录清单（过滤 `.` 开头的内部目录，如安装暂存目录 `.tmp`） */
+/**
+ * 用户扩展目录清单。
+ *
+ * 过滤两类目录：
+ * 1. `.` 开头的内部目录（如安装暂存目录 `.tmp`）；
+ * 2. **没有 `manifest.json` 的目录**——扩展运行时会用 `extensions/<id>/data` 存数据，调试扩展
+ *    （`--debug-extension`）的 id 也会在这里出现；不过滤的话渲染进程会把数据目录当扩展去读清单，
+ *    打出 `manifest 读取失败或缺失` 的噪音（GUI 级端到端验证时看到的）。这类目录记一条日志，
+ *    真正损坏的安装仍能被发现。
+ */
 async function listUserExtensionIds(): Promise<string[]> {
   const root = getUserExtensionsDir()
-  return (await listDirectories(root)).filter((id) => !id.startsWith('.'))
+  const ids = (await listDirectories(root)).filter((id) => !id.startsWith('.'))
+  const valid: string[] = []
+  for (const id of ids) {
+    try {
+      await fs.access(join(root, id, 'manifest.json'))
+      valid.push(id)
+    } catch {
+      console.warn(`[capabilities] 跳过没有 manifest.json 的目录: ${id}（扩展数据目录或调试扩展）`)
+    }
+  }
+  return valid
 }
 
 /** 刷新"已知扩展"的磁盘扫描部分（启动与每次列目录时调用；不影响调试扩展与安装登记） */

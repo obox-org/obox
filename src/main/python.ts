@@ -20,7 +20,7 @@ import type { PythonRunInput, PythonRunOutcome } from '../shared/types'
 import { closeExtensionChannel, registerStreamChannel } from './ipc'
 import { isIpcCoreError } from './ipcCore'
 import { resolveProgramInExtension } from './ipcTransport'
-import { getUserExtensionsDir } from './paths'
+import { extensionSourceDir } from './paths'
 import {
   PythonCoreError,
   buildPythonEnv,
@@ -85,7 +85,7 @@ export async function runPython(extId: string, input: PythonRunInput): Promise<P
   let channelName: string | undefined
   let untrack: (() => void) | undefined
   try {
-    const extensionDir = join(getUserExtensionsDir(), extId)
+    const extensionDir = extensionSourceDir(extId)
     const pythonExe = pythonExecutablePath(extensionDir)
     if (!(await pathExists(pythonExe))) {
       throw new PythonCoreError('python-missing', `扩展未自带该架构的 Python 运行时：${pythonExe}`)

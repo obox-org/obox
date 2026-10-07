@@ -141,9 +141,15 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **排查**：
 
-- 参数格式：`--debug-extension <id>@<绝对路径>`，路径必须存在、id 须匹配 `^[a-z0-9][a-z0-9._-]*$`（非法/路径缺失会被主进程静默忽略并打 warn）
+- **先看这一行**：主进程启动时会打印 `[debug] 调试扩展 N 个: id@路径`；若打印的是
+  `[debug] 未提供 --debug-extension`，说明**参数没传进来**（不是清单或入口的问题）。开发版要注意
+  `npm run dev -- -- --debug-extension ...` 需要两个 `--`（第一个给 npm、第二个给 electron-vite；
+  electron-vite 会用自己的 `--` 之后的参数覆盖 `ELECTRON_CLI_ARGS`，直接设环境变量无效）
+- 参数格式：`--debug-extension <id>@<绝对路径>`，路径必须存在、id 须匹配 `^[a-z0-9][a-z0-9._-]*$`（非法/路径缺失会被主进程忽略并打 warn）
 - manifest 必须能经 `app://debug/<id>/manifest.json` 读到（协议只服务已声明的 id）
 - 看宿主日志 `[host] 启动完成: N 个扩展...` 是否包含调试扩展；激活失败看扩展管理器详情页 `activationError`（调试扩展同样受声明式贡献点校验）
+- 调试扩展的**数据目录**在 `userData/extensions/<id>/data`；主进程会为这类没有 `manifest.json` 的目录打
+  `[capabilities] 跳过没有 manifest.json 的目录: <id>`，属正常提示（它们不会被当成扩展加载）
 
 ## 18. VS Code 断点不命中（app://debug）
 

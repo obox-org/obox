@@ -42,6 +42,15 @@ export function parseDebugExtensions(argv: string[]): DebugExtensionsMap {
 export function registerDebugIpc(debugExtensions: DebugExtensionsMap): void {
   // 调试扩展 id 也进"已知扩展"集合（它们不在 userData，磁盘扫描发现不了）
   for (const id of debugExtensions.keys()) addKnownExtension(id)
+  // 明确列出解析到的调试扩展：命令行给了 --debug-extension 却没生效时，这一行能立刻分清
+  // "参数没传进来"与"传进来了但清单/入口有问题"
+  console.log(
+    debugExtensions.size > 0
+      ? `[debug] 调试扩展 ${debugExtensions.size} 个: ${[...debugExtensions.entries()]
+          .map(([id, path]) => `${id}@${path}`)
+          .join(', ')}`
+      : '[debug] 未提供 --debug-extension（仅加载内置/已安装扩展）'
+  )
   ipcMain.handle('extensions:list-debug', (): DebugExtensionEntry[] =>
     [...debugExtensions.entries()].map(([id, path]) => ({ id, path }))
   )
