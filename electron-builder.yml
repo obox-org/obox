@@ -8,6 +8,11 @@ files:
   - '!**/.vscode/*'
   - '!src/*'
   - '!extensions/*'
+  # vendor/ 是 VS Code 源码参考目录（.gitignore 未入库，本地 500MB+）：不排除会被塞进安装包
+  - '!vendor/*'
+  # release/ 是**本工具的打包输出目录**（directories.output）：不排除会把上一次的安装包打进新安装包
+  # （实测 app.asar 膨胀到 1105MB、安装包 647MB；CI 因干净 checkout 无此目录而不受影响）
+  - '!release/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
