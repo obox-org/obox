@@ -356,10 +356,37 @@ export interface MainApi {
    * 主进程会先校验 extId 是否为已知扩展，再落账。
    */
   recordInstallHook(extId: string, version: string, ok: boolean): Promise<void>
+  // ---- 扩展自带的 Python 运行时（issue #51 / ADR-0018）----
+  /** 跑一个随扩展分发的脚本；**默认不超时**（交互式脚本会等用户关窗）。宿主故障才 ok:false */
+  pythonRun(extId: string, input: PythonRunInput): Promise<PythonRunOutcome>
 }
 
 /** 生命周期钩子阶段（与 renderer/core/hookState.ts 的 HookPhase 一致） */
 export type ExtensionHookPhase = 'install' | 'uninstall'
+
+/** `api.python.run` 的入参（issue #51 / ADR-0018） */
+export interface PythonRunInput {
+  /** 脚本路径：**扩展目录内相对路径**（如 `scripts/run.py`），越界一律拒绝 */
+  script: string
+  args?: string[]
+  /**
+   * 是否把该进程注册成一条 `api.ipc` 通道（可选）：
+   * - 省略 / `false`：**不建通道**（脚本可自由 print，输出走返回值）；
+   * - `true`：建通道并用缺省名 `python`；
+   * - 字符串：建通道并用该名字（计入"每扩展 4 条通道"限额）。
+   * Python 侧需自行实现 JSON-RPC 与 `Content-Length` 分帧。
+   */
+  channel?: string | boolean
+}
+
+/** `api.python.run` 的结果：跑完后的退出码与输出（脚本失败也走这里，宿主故障才抛错） */
+export interface PythonRunOutcome {
+  ok: boolean
+  /** 仅宿主侧失败时出现：`python-missing` / `arch-mismatch` / `launch-failed` / `invalid-declaration` */
+  code?: string
+  error?: string
+  result?: { code: number | null; stdout: string; stderr: string }
+}
 
 /** 主进程 → 渲染进程：请执行某扩展的钩子（钩子在渲染进程执行，因为扩展入口只在这里被 import） */
 export interface ExtensionHookRunRequest {

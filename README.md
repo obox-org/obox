@@ -34,7 +34,13 @@ src/
 │   ├── secrets.ts   # 扩展密钥存储（api.secrets，safeStorage 加密）
 │   ├── ipc.ts       # 扩展 ↔ 外部进程 IPC 薄壳（通道注册表/限额/生命周期/Electron 接线）
 │   ├── ipcCore.ts   # IPC 协议核心（JSON-RPC 2.0 + 两种分帧 + 通道状态机 + 平台命名；不依赖 electron，可单测）
-│   ├── ipcTransport.ts # IPC 传输层（stdio 子进程 / 命名管道·Unix 域套接字；**不使用 TCP 端口**）
+│   ├── ipcTransport.ts # IPC 传输层（stdio 子进程 / 命名管道·Unix 域套接字 / 已有流；**不使用 TCP 端口**）
+│   ├── hookBridge.ts # 生命周期钩子的请求/应答桥（10s 超时 + 送达/未送达三态；不依赖 electron，可单测）
+│   ├── hookRunner.ts # 钩子执行的主进程接线（找主窗口发请求、结算回包、补跑后落账）
+│   ├── paths.ts     # 主进程路径约定（扩展目录等；独立成模块以打破 capabilities ↔ hookRunner 的循环依赖）
+│   ├── python.ts    # 扩展自带 Python 运行时的薄壳（api.python.run：环境准备/启动/通道注册/进程树清理）
+│   ├── pythonCore.ts # Python 接入核心（声明校验/路径/环境白名单与注入/cmd 转义/通道名/进程树命令；可单测）
+│   ├── pythonRun.ts # 解释器脚本启动与收尾（shell 调用 + 进程树终止 + 输出上限；真实子进程测试）
 │   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源 + app://debug）
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
 ├── shared/          # 三端共享类型（IPC 契约）
