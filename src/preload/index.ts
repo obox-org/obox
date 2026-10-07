@@ -25,6 +25,15 @@ const api: MainApi = {
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   forceInstallUpdate: (opts) => ipcRenderer.invoke('update:force-install', opts),
+  // 扩展能力：与外部进程的端口无关 IPC（stdio / 命名管道）
+  ipcConnect: (extId, declaration) => ipcRenderer.invoke('ipc:connect', extId, declaration),
+  ipcClose: (extId, name) => ipcRenderer.invoke('ipc:close', extId, name),
+  ipcList: (extId) => ipcRenderer.invoke('ipc:list', extId),
+  ipcRequest: (extId, name, method, params, timeoutMs) =>
+    ipcRenderer.invoke('ipc:request', extId, name, method, params, timeoutMs),
+  ipcNotify: (extId, name, method, params) =>
+    ipcRenderer.invoke('ipc:notify', extId, name, method, params),
+  ipcReply: (requestId, outcome) => ipcRenderer.invoke('ipc:reply', requestId, outcome),
   // 扩展能力：定时器
   setTimerTimeout: (extId, id, seconds) =>
     ipcRenderer.invoke('timer:set-timeout', extId, id, seconds),

@@ -298,7 +298,66 @@ export interface MainApi {
   ): Promise<{ local: boolean; canceled?: boolean; value?: unknown }>
   /** 子窗口把模态框结果回传主进程（ui:show 的回复侧） */
   uiResult(requestId: number, r: { canceled: boolean; value?: unknown }): void
+  // ---- 扩展能力：与外部进程的端口无关 IPC（stdio / 命名管道；见 issue #40） ----
+  /** 打开一条通道（stdio：宿主拉起子进程；pipe：连接已在运行的进程） */
+  ipcConnect(
+    extId: string,
+    declaration: IpcChannelDeclaration
+  ): Promise<{ ok: boolean; code?: string; error?: string }>
+  /** 关闭一条通道（幂等） */
+  ipcClose(extId: string, name: string): Promise<void>
+  /** 列出已打开的通道名 */
+  ipcList(extId: string): Promise<string[]>
+  /** 发请求并等响应（超时/取消/断开以稳定错误码返回） */
+  ipcRequest(
+    extId: string,
+    name: string,
+    method: string,
+    params?: unknown,
+    timeoutMs?: number
+  ): Promise<{ ok: boolean; result?: unknown; code?: string; error?: string }>
+  /** 发通知（无应答） */
+  ipcNotify(
+    extId: string,
+    name: string,
+    method: string,
+    params?: unknown
+  ): Promise<{ ok: boolean; code?: string; error?: string }>
+  /** 渲染进程里扩展处理器对"对端请求"的回包 */
+  ipcReply(requestId: string, outcome: IpcReplyOutcome): Promise<void>
 }
+
+/** 通道声明（与主进程 ipcCore 的契约形状一致；传输**不含 TCP/端口**） */
+export interface IpcChannelDeclaration {
+  /** 通道名（同一扩展内唯一，只允许字母数字与 . _ -） */
+  id: string
+  transport: 'stdio' | 'pipe'
+  /** stdio 必填：扩展目录内的相对路径 */
+  program?: string
+  args?: string[]
+  framing?: 'content-length' | 'ndjson'
+}
+
+/** 渲染进程回包（对端请求的响应） */
+export interface IpcReplyOutcome {
+  ok: boolean
+  result?: unknown
+  error?: string
+}
+
+/** 主进程 → 渲染进程的 IPC 通道事件 */
+export type IpcEvent =
+  | { extId: string; name: string; type: 'notification'; method: string; params?: unknown }
+  | {
+      extId: string
+      name: string
+      type: 'request'
+      requestId: string
+      method: string
+      params?: unknown
+    }
+  | { extId: string; name: string; type: 'stderr'; text: string }
+  | { extId: string; name: string; type: 'close'; code: string; message: string }
 
 /** 主进程 → 渲染进程 的事件（on） */
 export interface MainEvents {
@@ -329,4 +388,6 @@ export interface MainEvents {
   }) => void
   /** 主进程把扩展 ui 模态框显示指令发给目标窗口（App 子窗口渲染，结果经 uiResult 回传） */
   'ui:show': (e: { requestId: number; kind: string; payload: unknown }) => void
+  /** 扩展 IPC 通道事件（通知 / 对端请求 / 对端日志 / 通道关闭） */
+  'ipc:event': (e: IpcEvent) => void
 }

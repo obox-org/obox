@@ -32,6 +32,9 @@ src/
 │   ├── updateFeed.ts # 更新元数据 latest.yml 解析与按架构挑产物（强制重装/降级用；不依赖 electron，可单测）
 │   ├── proxy.ts     # 代理与证书的 session 级应用（扩展联网 obox-net 与更新下载 electron-updater 共用）
 │   ├── secrets.ts   # 扩展密钥存储（api.secrets，safeStorage 加密）
+│   ├── ipc.ts       # 扩展 ↔ 外部进程 IPC 薄壳（通道注册表/限额/生命周期/Electron 接线）
+│   ├── ipcCore.ts   # IPC 协议核心（JSON-RPC 2.0 + 两种分帧 + 通道状态机 + 平台命名；不依赖 electron，可单测）
+│   ├── ipcTransport.ts # IPC 传输层（stdio 子进程 / 命名管道·Unix 域套接字；**不使用 TCP 端口**）
 │   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源 + app://debug）
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
 ├── shared/          # 三端共享类型（IPC 契约）
@@ -87,18 +90,18 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ## 常用命令
 
-| 命令                                                           | 说明                                                |
-| -------------------------------------------------------------- | --------------------------------------------------- |
-| `npm run dev`                                                  | 开发模式（HMR，Electron 窗口自动打开）              |
-| `npm test`                                                     | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具） |
-| `npm run typecheck`                                            | 类型检查（node 主进程 + web 渲染进程）              |
-| `npm run lint`                                                 | ESLint 检查（0 errors 为门槛）                      |
+| 命令                                                           | 说明                                                                                |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `npm run dev`                                                  | 开发模式（HMR，Electron 窗口自动打开）                                              |
+| `npm test`                                                     | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具）                                 |
+| `npm run typecheck`                                            | 类型检查（node 主进程 + web 渲染进程）                                              |
+| `npm run lint`                                                 | ESLint 检查（0 errors 为门槛）                                                      |
 | `npm run security:audit`                                       | 依赖安全审计（`npm audit --audit-level=moderate`，0 告警为门槛；CI 与发版同样强制） |
-| `npm run build`                                                | typecheck + electron-vite 构建到 `out/`             |
-| `npm run build:win`                                            | 打包 Windows 安装包（electron-builder）             |
-| `npm run format`                                               | Prettier 格式化                                     |
-| `node skills/obox-ext-dev/scripts/create-extension.mjs <id>`   | 生成新内置扩展骨架                                  |
-| `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all` | 校验全部内置扩展 manifest                           |
+| `npm run build`                                                | typecheck + electron-vite 构建到 `out/`                                             |
+| `npm run build:win`                                            | 打包 Windows 安装包（electron-builder）                                             |
+| `npm run format`                                               | Prettier 格式化                                                                     |
+| `node skills/obox-ext-dev/scripts/create-extension.mjs <id>`   | 生成新内置扩展骨架                                                                  |
+| `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all` | 校验全部内置扩展 manifest                                                           |
 
 ## 发布（GitHub CI + Releases）
 

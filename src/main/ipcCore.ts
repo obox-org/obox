@@ -287,6 +287,8 @@ export class JsonRpcChannel {
   private readonly maxPendingRequests: number
   private readonly pending = new Map<JsonRpcId, PendingCall>()
   private readonly requestHandlers = new Map<string, (params: unknown) => unknown>()
+  /** 未命中具体方法时的兜底处理器（薄壳用它把对端请求整体转发给扩展） */
+  private defaultHandler: ((method: string, params: unknown) => unknown) | null = null
   private readonly notificationListeners = new Set<(method: string, params: unknown) => void>()
   private readonly closeListeners = new Set<(err: IpcCoreError | null) => void>()
   private nextId = 1
@@ -380,6 +382,14 @@ export class JsonRpcChannel {
     }
   }
 
+  /**
+   * 设置兜底处理器：对端请求未命中已注册方法时调用（能拿到 method 自行分发）。
+   * 传 null 取消。薄壳用它把"对端请求"整体转发到渲染进程里的扩展处理器。
+   */
+  setDefaultHandler(handler: ((method: string, params: unknown) => unknown) | null): void {
+    this.defaultHandler = handler
+  }
+
   /** 订阅对端通知 */
   onNotification(listener: (method: string, params: unknown) => void): Disposable {
     this.notificationListeners.add(listener)
@@ -429,6 +439,7 @@ export class JsonRpcChannel {
     this.closeListeners.clear()
     this.notificationListeners.clear()
     this.requestHandlers.clear()
+    this.defaultHandler = null
   }
 
   // ---- 内部 ----
@@ -533,13 +544,13 @@ export class JsonRpcChannel {
     method: string,
     params: unknown
   ): Promise<void> {
-    const handler = this.requestHandlers.get(method)
-    if (!handler) {
+    const specific = this.requestHandlers.get(method)
+    if (!specific && !this.defaultHandler) {
       this.replyError(id, RPC_METHOD_NOT_FOUND, `未注册的方法: ${method}`)
       return
     }
     try {
-      const result = await handler(params)
+      const result = specific ? await specific(params) : await this.defaultHandler?.(method, params)
       this.replyResult(id, result)
     } catch (err) {
       this.replyError(id, RPC_INTERNAL_ERROR, err instanceof Error ? err.message : String(err))
