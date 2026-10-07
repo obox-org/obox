@@ -125,6 +125,54 @@ export function openStdioTransport(options: StdioTransportOptions): IpcTransport
   }
 }
 
+export interface StreamTransportOptions {
+  /** 协议输入（对端 → 宿主） */
+  readable: NodeJS.ReadableStream
+  /** 协议输出（宿主 → 对端） */
+  writable: NodeJS.WritableStream
+  framing?: Framing
+  maxMessageBytes?: number
+  defaultTimeoutMs?: number
+  /** 主动关闭时的清理回调（如杀进程树、销毁套接字）；应当幂等 */
+  onDispose?: () => void
+}
+
+/**
+ * 用**调用方已建立的流**承载协议（issue #51：宿主以 shell 方式拉起的解释器进程）。
+ *
+ * 与 `openStdioTransport` 的区别：这里不 spawn、也不管 stderr——流从哪来、日志怎么收由调用方决定。
+ * 对端结束/退出时，由调用方 `channel.close(new IpcCoreError('peer-crashed', …))` 收尾
+ * （`ipc.ts` 注册通道时会挂 onClose 做广播与注销）。
+ */
+export function openStreamTransport(options: StreamTransportOptions): IpcTransportHandles {
+  const channel = new JsonRpcChannel({
+    framing: options.framing,
+    maxMessageBytes: options.maxMessageBytes,
+    defaultTimeoutMs: options.defaultTimeoutMs,
+    sendFrame: (frame) => {
+      if (!options.writable.writable) {
+        throw new IpcCoreError('not-connected', '对端输入流不可写（进程可能已退出）')
+      }
+      options.writable.write(frame)
+    }
+  })
+
+  options.readable.on('data', (chunk: Buffer) => channel.accept(chunk))
+
+  return {
+    channel,
+    // 流已经建立，无需等待连接
+    ready: Promise.resolve(),
+    // 没有独立的 stderr 流：对端日志请由调用方自行转发（如解释器的 stderr 收集）
+    onStderr: () => ({ dispose: (): void => {} }),
+    onClose: (listener) => channel.onClose(listener),
+    dispose: (): void => {
+      channel.close()
+      options.onDispose?.()
+    }
+  }
+}
+
 export interface PipeClientTransportOptions {
   /** 端点：Windows `\\.\pipe\…`；POSIX `<dir>/….sock` */
   endpoint: string
