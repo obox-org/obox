@@ -4,6 +4,9 @@
  */
 import { Context } from '@cordisjs/core'
 import type { Component } from 'vue'
+// 注意：必须用 api/runtime 的 Disposable（{ dispose(): void }），
+// 直接用裸 `Disposable` 会解析到 Node 全局的 Symbol.dispose 形状，导致返回对象被判为多余属性
+import type { Disposable } from '../../../api/runtime'
 import { registry } from './registry'
 import { makeExtensionInfo, topoSort } from './manifest'
 import { stateStore } from './state'
@@ -409,6 +412,7 @@ class ExtensionHost {
         }
       },
       update: this.buildUpdateApi(ext, disposables),
+      ipc: this.buildIpcApi(ext, disposables),
       proxy: {
         get: (): ProxyConfig => {
           const p = stateStore.getSetting<ProxyConfig>('network.proxy')
@@ -1005,6 +1009,109 @@ class ExtensionHost {
     ext.enabled = false
     ext.requiresRestart = true
     return { hot: false, needsRestart: true }
+  }
+
+  /**
+   * 扩展 IPC 能力：与外部进程的**端口无关**双向通道（issue #40）。
+   * 宿主只做"按扩展绑定 + 事件分发 + 对端请求回包"；协议与传输在主进程（ipcCore / ipcTransport）。
+   */
+  private buildIpcApi(
+    ext: ExtensionInfo,
+    disposables: Array<() => void>
+  ): ExtensionActivationApi['ipc'] {
+    type ChannelListeners = {
+      requests: Set<(method: string, params: unknown) => unknown>
+      notifications: Set<(method: string, params: unknown) => void>
+      closes: Set<(err: { code: string; message: string }) => void>
+      stderrs: Set<(text: string) => void>
+    }
+    const listeners = new Map<string, ChannelListeners>()
+    const forChannel = (name: string): ChannelListeners => {
+      const existing = listeners.get(name)
+      if (existing) return existing
+      const created: ChannelListeners = {
+        requests: new Set(),
+        notifications: new Set(),
+        closes: new Set(),
+        stderrs: new Set()
+      }
+      listeners.set(name, created)
+      return created
+    }
+
+    const off = window.events.on('ipc:event', (e): void => {
+      if (e.extId !== ext.id) return
+      const target = listeners.get(e.name)
+      if (!target) return
+      if (e.type === 'notification') {
+        for (const cb of [...target.notifications]) cb(e.method, e.params)
+        return
+      }
+      if (e.type === 'stderr') {
+        for (const cb of [...target.stderrs]) cb(e.text)
+        return
+      }
+      if (e.type === 'close') {
+        for (const cb of [...target.closes]) cb({ code: e.code, message: e.message })
+        return
+      }
+      // 对端发来的请求：交给扩展处理器，并把结果回传给主进程（再由主进程回给对端）
+      const handler = [...target.requests][0]
+      Promise.resolve(
+        handler
+          ? handler(e.method, e.params)
+          : Promise.reject(new Error(`扩展未注册请求处理器（method=${e.method}）`))
+      )
+        .then((result) => window.api.ipcReply(e.requestId, { ok: true, result }))
+        .catch((err: unknown) =>
+          window.api.ipcReply(e.requestId, {
+            ok: false,
+            error: err instanceof Error ? err.message : String(err)
+          })
+        )
+    })
+    disposables.push(off)
+
+    return {
+      connect: async (declaration): Promise<void> => {
+        const r = await window.api.ipcConnect(ext.id, declaration)
+        if (!r.ok) throw new Error(`[${r.code ?? 'connect-failed'}] ${r.error ?? '打开通道失败'}`)
+      },
+      close: async (name: string): Promise<void> => {
+        listeners.delete(name)
+        await window.api.ipcClose(ext.id, name)
+      },
+      channels: (): Promise<string[]> => window.api.ipcList(ext.id),
+      request: async (name, method, params, opts): Promise<unknown> => {
+        const r = await window.api.ipcRequest(ext.id, name, method, params, opts?.timeoutMs)
+        if (!r.ok) throw new Error(`[${r.code ?? 'protocol-error'}] ${r.error ?? '请求失败'}`)
+        return r.result
+      },
+      notify: async (name, method, params): Promise<void> => {
+        const r = await window.api.ipcNotify(ext.id, name, method, params)
+        if (!r.ok) throw new Error(`[${r.code ?? 'protocol-error'}] ${r.error ?? '发送通知失败'}`)
+      },
+      onRequest: (name, handler): Disposable => {
+        const target = forChannel(name)
+        target.requests.add(handler)
+        return { dispose: (): void => void target.requests.delete(handler) }
+      },
+      onNotification: (name, cb): Disposable => {
+        const target = forChannel(name)
+        target.notifications.add(cb)
+        return { dispose: (): void => void target.notifications.delete(cb) }
+      },
+      onClose: (name, cb): Disposable => {
+        const target = forChannel(name)
+        target.closes.add(cb)
+        return { dispose: (): void => void target.closes.delete(cb) }
+      },
+      onStderr: (name, cb): Disposable => {
+        const target = forChannel(name)
+        target.stderrs.add(cb)
+        return { dispose: (): void => void target.stderrs.delete(cb) }
+      }
+    }
   }
 }
 

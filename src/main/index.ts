@@ -15,6 +15,7 @@ import { registerFsIpc, closeExtensionWatchers } from './fs'
 import { registerExtIpc } from './ext'
 import { registerSecretsIpc } from './secrets'
 import { registerUiIpc } from './ui'
+import { registerIpcBridge, closeExtensionIpc } from './ipc'
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.obox.app')
@@ -40,13 +41,15 @@ app.whenReady().then(() => {
   registerExtIpc()
   registerSecretsIpc()
   registerUiIpc()
+  registerIpcBridge()
 
-  // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接 + 文件监听 + 系统通知）
+  // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接 + 文件监听 + 系统通知 + IPC 通道）
   ipcMain.handle('extension:cleanup', (_e, extId: string): void => {
     closeExtensionTimers(String(extId))
     closeExtensionDbs(String(extId))
     closeExtensionWatchers(String(extId))
     closeExtensionNotifications(String(extId))
+    closeExtensionIpc(String(extId))
   })
 
   // 更新事件广播到所有窗口（渲染进程扩展订阅）

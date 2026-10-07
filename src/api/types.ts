@@ -6,7 +6,7 @@
 import type { SettingsPage } from './contributions'
 import type { AppRegistration } from './registration'
 import type { Disposable } from './runtime'
-import type { Memento, ProxyConfig, UpdateEvent } from './shared'
+import type { IpcChannelDeclaration, Memento, ProxyConfig, UpdateEvent } from './shared'
 
 /** 数据库行（对象，键=列名） */
 export type SqliteRow = Record<string, unknown>
@@ -370,6 +370,51 @@ export interface ExtensionActivationApi {
       title: string,
       task: (report: (percent: number) => void) => Promise<T>
     ): Promise<T>
+  }
+
+  /**
+   * 与外部进程的**端口无关**双向 IPC（stdio / 命名管道 / Unix 域套接字，不使用 TCP 端口）。
+   * 规格见 issue #40；协议为 JSON-RPC 2.0，两种分帧（content-length 默认 / ndjson）。
+   *
+   * ```ts
+   * await api.ipc.connect({ id: 'worker', transport: 'stdio', program: 'bin/worker.exe' })
+   * api.ipc.onRequest('worker', (method, params) => ({ echo: params })) // 对端也可调用宿主
+   * const sum = await api.ipc.request('worker', 'sum', { a: 1, b: 2 })
+   * api.ipc.onNotification('worker', (method, params) => {})
+   * api.ipc.onStderr('worker', (text) => api.output.append('worker', text))
+   * api.ipc.onClose('worker', (err) => {})
+   * await api.ipc.close('worker')
+   * ```
+   *
+   * 稳定错误码：`invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` /
+   * `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` /
+   * `peer-crashed` / `channel-closed`。
+   * 注意：本能力是**能力封装而非安全边界**（扩展与宿主同上下文，见 ADR-0015）。
+   */
+  ipc: {
+    /** 打开通道：`stdio` 由宿主拉起子进程（program 必须是扩展目录内相对路径）；`pipe` 连接已在运行的进程 */
+    connect(declaration: IpcChannelDeclaration): Promise<void>
+    /** 关闭通道（幂等） */
+    close(name: string): Promise<void>
+    /** 当前已打开的通道名 */
+    channels(): Promise<string[]>
+    /** 发请求并等响应；超时默认 30s，可逐请求覆盖 */
+    request(
+      name: string,
+      method: string,
+      params?: unknown,
+      opts?: { timeoutMs?: number }
+    ): Promise<unknown>
+    /** 发通知（无应答） */
+    notify(name: string, method: string, params?: unknown): Promise<void>
+    /** 处理**对端发来的请求**（双向）：返回值作为 JSON-RPC result 回给对端 */
+    onRequest(name: string, handler: (method: string, params: unknown) => unknown): Disposable
+    /** 订阅对端通知 */
+    onNotification(name: string, cb: (method: string, params: unknown) => void): Disposable
+    /** 订阅通道关闭（含对端崩溃） */
+    onClose(name: string, cb: (err: { code: string; message: string }) => void): Disposable
+    /** 订阅对端日志（stdio 的 stderr；pipe 传输没有独立日志流） */
+    onStderr(name: string, cb: (text: string) => void): Disposable
   }
   /** 输出通道（底部输出面板，多通道 tab） */
   output: {

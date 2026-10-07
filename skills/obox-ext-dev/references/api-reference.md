@@ -547,6 +547,52 @@ off.dispose() // 注销数据源
 - 节点 `collapsible: true` 展开时才调用 `getChildren(element)` 加载子节点
 - 节点 `command` 点击时执行（`args` 作为参数传给命令 handler）
 
+## api.ipc（与外部进程的端口无关 IPC，见 ADR-0016）
+
+与**其它语言写的进程**双向通信。**不使用任何 TCP 端口**（不会端口冲突、不触发防火墙），传输只有两种：
+
+- `stdio`：宿主**帮你拉起**子进程，用它的 stdin/stdout 通信、stderr 作日志；
+- `pipe`：连接**已在运行**的进程（Windows 命名管道 / POSIX Unix 域套接字），端点由宿主按「扩展 id + 通道名」推导。
+
+协议是 **JSON-RPC 2.0**（请求/响应/错误/通知），分帧默认 `Content-Length`（二进制安全），也可 `ndjson`。
+
+```ts
+// 1) stdio：把随扩展分发的程序跑起来（program 必须是扩展目录内的相对路径）
+//    `.js/.cjs/.mjs` 会由宿主自带的 Node 运行；其它（Rust/Python/Go 产物）直接执行
+await api.ipc.connect({
+  id: 'worker',
+  transport: 'stdio',
+  program: 'bin/worker.exe',
+  args: ['--serve']
+})
+
+// 2) pipe：连接已在运行的进程（对端需按同样的端点命名约定监听）
+await api.ipc.connect({ id: 'svc', transport: 'pipe' })
+
+// 3) 请求 / 通知
+const sum = await api.ipc.request('worker', 'sum', { a: 1, b: 2 }) // → 3
+await api.ipc.notify('worker', 'log', { text: 'hello' })
+
+// 4) 双向：对端也能调用宿主（返回值即 JSON-RPC result）
+api.ipc.onRequest('worker', (method, params) =>
+  method === 'hostInfo' ? { version: '1.0.4' } : undefined
+)
+api.ipc.onNotification('worker', (method, params) => console.log(method, params))
+api.ipc.onStderr('worker', (text) => api.output.append('worker', text)) // 对端 stderr
+api.ipc.onClose('worker', (err) => console.warn('通道关闭', err.code))
+
+// 5) 关闭（扩展停用/卸载时宿主也会自动清理）
+await api.ipc.close('worker')
+```
+
+| 项             | 说明                                                                                                                                                                                                                                              |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 限额           | 每扩展最多 **4 条通道**；每通道并发请求有上限；单条消息上限 **8MB**；请求默认 **30s** 超时（`request(..., { timeoutMs })` 可覆盖）                                                                                                                |
+| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起） |
+| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程）                                                                                                                                          |
+| 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                   |
+| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**（扩展与宿主同上下文，属受信代码）                                                                                                                                                                  |
+
 ## 宿主生命周期语义
 
 - **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表
