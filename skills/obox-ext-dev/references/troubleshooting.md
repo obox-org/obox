@@ -209,7 +209,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 | `invalid-manifest` | 缺**根目录** `manifest.json`，或 `name`/`version`/`main` 非法——常见是打包时把文件放进了子目录（必须扁平在 zip 根） |
 | `entry-missing`    | `manifest.main` 写的路径在包内不存在——注意 `./index.js` 与 `index.js` 的差别，以及是否漏打包入口                   |
 | `entry-invalid`    | 包内含非法条目路径（`../`、绝对路径、反斜杠、空段）——属 zip-slip 防护，换工具重新打包                              |
-| `too-large`        | 条目数 > 2000 或解压总量 > 64MB——检查是否误把 `node_modules/`、`dist/` 全打进包了                                  |
+| `too-large`        | 条目数 > 10000 或解压总量 > 512MB——检查是否误把 `node_modules/`、`dist/` 全打进包了                                |
 | `path-invalid`     | 传入路径为空或文件不存在（拖拽场景取到的是空路径）                                                                 |
 | `write-failed`     | 暂存/替换/写盘失败（磁盘满、权限、目录被占用）——旧版本已回滚                                                       |
 

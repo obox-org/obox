@@ -52,6 +52,26 @@ export interface InstallOixResult {
 }
 
 /**
+ * `.obox-meta.json` 里与**生命周期钩子**相关的字段（issue #52）。
+ *
+ * 安装时由主进程写入 `pendingInstall`（表示"待执行 install 钩子"）；渲染进程执行后回写
+ * `install` 并清除 `pendingInstall`。形状要与 `src/renderer/src/core/hookState.ts` 的
+ * `HookState` 保持一致（该文件直接引用本类型，且测试里有双向可赋值校验防漂移）。
+ */
+export interface ExtensionHookState {
+  /** install 钩子的执行记录（该版本跑过即记；失败也记，避免"只跑一次"被破坏后无限重跑） */
+  install?: { version: string; at: number; ok: boolean }
+  /** 待补跑：安装完成时渲染进程不可用，下次启动扫描期补跑一次 */
+  pendingInstall?: { version: string; at: number }
+}
+
+/** `.obox-meta.json` 的内容（缺失字段一律视为未设置，兼容旧文件） */
+export interface ExtensionMeta extends ExtensionHookState {
+  /** 安装时间戳（Last Updated 展示用） */
+  installedTimestamp?: number
+}
+
+/**
  * .oix 安装失败的错误码（渲染进程据此区分引导文案；不要依赖 message 文本做判断）。
  * - invalid-package：不是有效 zip / 无法读取
  * - invalid-manifest：缺根 manifest.json，或 name/version/main 非法

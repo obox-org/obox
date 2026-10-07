@@ -12,15 +12,20 @@
 import AdmZip from 'adm-zip'
 import { promises as fs } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
-import type { InstallOixErrorCode, InstallOixResult } from '../shared/types'
+import type { ExtensionMeta, InstallOixErrorCode, InstallOixResult } from '../shared/types'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
 const SAFE_DIR_RE = /^[a-z0-9._-]+$/i
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 
-/** 解压限额（可在 opts 覆盖，测试用小值） */
-export const DEFAULT_MAX_ENTRIES = 2000
-export const DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024
+/**
+ * 解压限额（可在 opts 覆盖，测试用小值）。
+ *
+ * 条目/总量因"运行时等大文件随扩展包分发"而放宽（issue #51 决策 12；残余风险见 ADR-0018），
+ * 但**仍是硬上限**：超限依旧以 `too-large` 拒绝并回滚，不是取消压缩炸弹防护。
+ */
+export const DEFAULT_MAX_ENTRIES = 10000
+export const DEFAULT_MAX_TOTAL_BYTES = 512 * 1024 * 1024
 
 export interface OixInstallOptions {
   /** 扩展安装根目录（electron 层传 userData/extensions） */
@@ -191,11 +196,14 @@ export async function installFromPackage(
     try {
       await fs.mkdir(stage, { recursive: true })
       await extractToStage(zip, stage, limits)
-      await fs.writeFile(
-        join(stage, '.obox-meta.json'),
-        JSON.stringify({ installedTimestamp: Date.now() }),
-        'utf8'
-      )
+      const now = Date.now()
+      const meta: ExtensionMeta = {
+        installedTimestamp: now,
+        // 安装完成即标记"待执行 install 钩子"：渲染进程执行后回写 install 并清除本字段；
+        // 若安装当时渲染进程不可用，则留待下次启动扫描期补跑（见 issue #52 / hookState.ts）
+        pendingInstall: { version, at: now }
+      }
+      await fs.writeFile(join(stage, '.obox-meta.json'), JSON.stringify(meta), 'utf8')
     } catch (err) {
       await fs.rm(stage, { recursive: true, force: true })
       throw err instanceof OixInstallError
