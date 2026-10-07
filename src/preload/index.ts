@@ -97,7 +97,10 @@ const api: MainApi = {
   uiShow: (kind, payload) => ipcRenderer.invoke('ui:show', { kind, payload }),
   uiResult: (requestId, r) => ipcRenderer.send('ui:result', { requestId, ...r }),
   // 生命周期钩子（issue #52）：宿主把入口导出的 install/uninstall 执行结果回传主进程
-  hookResult: (result) => ipcRenderer.send('extension:hook-result', result)
+  hookResult: (result) => ipcRenderer.send('extension:hook-result', result),
+  // 宿主补跑 install 钩子后回写元数据（发起方向与 hookResult 相反）
+  recordInstallHook: (extId, version, ok) =>
+    ipcRenderer.invoke('extension:record-install-hook', extId, version, ok)
 }
 
 // 主进程 → 渲染进程事件订阅

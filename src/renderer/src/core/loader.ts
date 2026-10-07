@@ -4,7 +4,7 @@
  * - 用户扩展：userData/extensions 目录，主进程扫描清单，经 app:// 协议运行时动态 import
  */
 import type { ExtensionInfo, ExtensionManifest, ExtensionModule } from './types'
-import type { DebugExtensionEntry } from '../../../shared/types'
+import type { DebugExtensionEntry, ExtensionMeta } from '../../../shared/types'
 import { validateManifest } from './manifest'
 import type { ExtensionEntry } from './host'
 
@@ -107,11 +107,14 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
       continue
     }
     if (validateManifest(manifest).some((v) => v.severity === 'error')) continue
+    const meta = await fetchExtensionMeta(entry.id)
     result.push({
       id: entry.id,
       manifest,
       source: 'user',
-      installedTimestamp: await fetchInstalledTimestamp(entry.id),
+      installedTimestamp: meta.installedTimestamp,
+      pendingInstall: meta.pendingInstall,
+      previousInstallVersion: meta.install?.version,
       load: () =>
         import(
           /* @vite-ignore */ `app://extensions/${encodeURIComponent(entry.id)}/${manifest.main}`
@@ -121,15 +124,18 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
   return result
 }
 
-/** 读取 .oix 安装时写入的 .obox-meta.json（Last Updated 展示；缺失返回 undefined） */
-async function fetchInstalledTimestamp(id: string): Promise<number | undefined> {
+/**
+ * 读取 .oix 安装时写入的 .obox-meta.json（安装时间戳 + 钩子状态；缺失返回空对象）。
+ * 解析失败一律当空处理——旧安装没有钩子字段也照常工作（issue #52）。
+ */
+async function fetchExtensionMeta(id: string): Promise<ExtensionMeta> {
   try {
     const res = await fetch(`app://extensions/${encodeURIComponent(id)}/.obox-meta.json`)
-    if (!res.ok) return undefined
-    const meta = (await res.json()) as { installedTimestamp?: number }
-    return typeof meta.installedTimestamp === 'number' ? meta.installedTimestamp : undefined
+    if (!res.ok) return {}
+    const meta = (await res.json()) as ExtensionMeta
+    return meta && typeof meta === 'object' ? meta : {}
   } catch {
-    return undefined
+    return {}
   }
 }
 
@@ -143,11 +149,14 @@ export async function buildUserExtensionEntry(id: string): Promise<ExtensionEntr
   const manifest = await fetchUserManifest(id)
   if (!manifest) return null
   if (validateManifest(manifest).some((v) => v.severity === 'error')) return null
+  const meta = await fetchExtensionMeta(id)
   return {
     id,
     manifest,
     source: 'user',
-    installedTimestamp: await fetchInstalledTimestamp(id),
+    installedTimestamp: meta.installedTimestamp,
+    pendingInstall: meta.pendingInstall,
+    previousInstallVersion: meta.install?.version,
     load: () =>
       import(/* @vite-ignore */ `app://extensions/${encodeURIComponent(id)}/${manifest.main}`)
   }
