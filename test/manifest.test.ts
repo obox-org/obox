@@ -66,7 +66,9 @@ describe('validateManifest apiVersion（ADR 0010）', () => {
 describe('validateManifest 依赖与贡献点', () => {
   it('extensionDependencies 非字符串数组 → error；依赖自身 → error', () => {
     expect(
-      errors({ ...valid, extensionDependencies: [1] }).some((e) => e.includes('extensionDependencies'))
+      errors({ ...valid, extensionDependencies: [1] }).some((e) =>
+        e.includes('extensionDependencies')
+      )
     ).toBe(true)
     expect(
       errors({ ...valid, extensionDependencies: ['my-ext'] }).some((e) => e.includes('依赖自身'))
@@ -79,7 +81,10 @@ describe('validateManifest 依赖与贡献点', () => {
 
   it('keybindings 合法数组 → 通过', () => {
     expect(
-      errors({ ...valid, contributes: { keybindings: [{ command: 'my-ext.do', key: 'Ctrl+Shift+K' }] } })
+      errors({
+        ...valid,
+        contributes: { keybindings: [{ command: 'my-ext.do', key: 'Ctrl+Shift+K' }] }
+      })
     ).toEqual([])
   })
 

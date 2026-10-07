@@ -39,9 +39,8 @@ function keyOf(extId: string, key: string): string {
  */
 function encryptionUsable(): boolean {
   if (!safeStorage.isEncryptionAvailable()) return false
-  const backend = (
-    safeStorage as unknown as { getSelectedStorageBackend?: () => string }
-  ).getSelectedStorageBackend
+  const backend = (safeStorage as unknown as { getSelectedStorageBackend?: () => string })
+    .getSelectedStorageBackend
   if (typeof backend === 'function') {
     try {
       if (backend.call(safeStorage) === 'basic_text') return false

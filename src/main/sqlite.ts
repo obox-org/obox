@@ -56,21 +56,24 @@ export function closeExtensionDbs(extId: string): void {
 }
 
 export function registerSqliteIpc(): void {
-  ipcMain.handle('sqlite:open', (_e, extId: string, name: string): { ok: boolean; error?: string } => {
-    try {
-      const key = handleKey(extId, name)
-      // 同名重开：先关旧连接，否则旧 DatabaseSync 永不 close（句柄 / 文件锁泄漏）
-      if (handles.has(key)) closeHandle(handles, key)
-      const h = openSqlite(extId, name, dataDirFor(extId))
-      // 句柄键统一用**归一化后的** name（handleKey）：open 与后续所有操作必须同一规则，
-      // 否则 `a\b.db` / `a/b.db` / `./a.db` 会被当成不同库——Windows 上表现为
-      // "open 成功但随后报数据库未打开"，或同一文件被双开连接
-      handles.set(key, h)
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  ipcMain.handle(
+    'sqlite:open',
+    (_e, extId: string, name: string): { ok: boolean; error?: string } => {
+      try {
+        const key = handleKey(extId, name)
+        // 同名重开：先关旧连接，否则旧 DatabaseSync 永不 close（句柄 / 文件锁泄漏）
+        if (handles.has(key)) closeHandle(handles, key)
+        const h = openSqlite(extId, name, dataDirFor(extId))
+        // 句柄键统一用**归一化后的** name（handleKey）：open 与后续所有操作必须同一规则，
+        // 否则 `a\b.db` / `a/b.db` / `./a.db` 会被当成不同库——Windows 上表现为
+        // "open 成功但随后报数据库未打开"，或同一文件被双开连接
+        handles.set(key, h)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
     }
-  })
+  )
 
   ipcMain.handle('sqlite:close', (_e, extId: string, name: string): void => {
     closeHandle(handles, handleKey(extId, name))
@@ -164,10 +167,17 @@ export function registerSqliteIpc(): void {
   // get：按 id 取单行
   ipcMain.handle(
     'sqlite:get',
-    (_e, extId: string, name: string, id: unknown): { ok: boolean; row?: unknown; error?: string } => {
+    (
+      _e,
+      extId: string,
+      name: string,
+      id: unknown
+    ): { ok: boolean; row?: unknown; error?: string } => {
       try {
         const h = requireHandle(handles, handleKey(extId, name))
-        const found = h.raw.prepare(`SELECT * FROM "${h.table}" WHERE id = ?`).get(normalizeValue(id))
+        const found = h.raw
+          .prepare(`SELECT * FROM "${h.table}" WHERE id = ?`)
+          .get(normalizeValue(id))
         return {
           ok: true,
           row: found ? readRows(metaPathFor(extId, name), h.table, [found])[0] : undefined
@@ -206,7 +216,9 @@ export function registerSqliteIpc(): void {
         const h = requireHandle(handles, handleKey(extId, name))
         if (!tableExists(h, h.table)) return { ok: true, rows: [] }
         const w = buildWhere(where ?? {})
-        const sql = w.sql ? `SELECT * FROM "${h.table}" WHERE ${w.sql}` : `SELECT * FROM "${h.table}"`
+        const sql = w.sql
+          ? `SELECT * FROM "${h.table}" WHERE ${w.sql}`
+          : `SELECT * FROM "${h.table}"`
         const rows = h.raw.prepare(sql).all(...w.params) as unknown[]
         return { ok: true, rows: readRows(metaPathFor(extId, name), h.table, rows) }
       } catch (err) {
@@ -218,7 +230,12 @@ export function registerSqliteIpc(): void {
   // del：按 id 删除
   ipcMain.handle(
     'sqlite:del',
-    (_e, extId: string, name: string, id: unknown): { ok: boolean; changes?: number; error?: string } => {
+    (
+      _e,
+      extId: string,
+      name: string,
+      id: unknown
+    ): { ok: boolean; changes?: number; error?: string } => {
       try {
         const h = requireHandle(handles, handleKey(extId, name))
         const info = h.raw.prepare(`DELETE FROM "${h.table}" WHERE id = ?`).run(normalizeValue(id))

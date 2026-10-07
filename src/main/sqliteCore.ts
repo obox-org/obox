@@ -159,9 +159,10 @@ export function denormalizeValue(v: unknown, type: 'boolean' | 'number' | 'strin
 }
 
 /** 等值条件 → SQL WHERE 子句与参数（多键 AND） */
-export function buildWhere(
-  where: Record<string, unknown>
-): { sql: string; params: Array<string | number | bigint | null> } {
+export function buildWhere(where: Record<string, unknown>): {
+  sql: string
+  params: Array<string | number | bigint | null>
+} {
   const keys = Object.keys(where ?? {})
   if (keys.length === 0) return { sql: '', params: [] }
   const sql = keys.map((k) => `"${ident(k)}" = ?`).join(' AND ')
@@ -249,14 +250,22 @@ export function tableExists(h: SqliteHandle, table: string): boolean {
 }
 
 /** insert：插入一行（自动建表；含 id 则 upsert），返回新行 */
-export function insertRow(h: SqliteHandle, metaFile: string, row: Record<string, unknown>): unknown {
+export function insertRow(
+  h: SqliteHandle,
+  metaFile: string,
+  row: Record<string, unknown>
+): unknown {
   ensureTable(h, metaFile, row)
   const cols = Object.keys(row).filter((c) => c !== 'id')
   if (row.id !== undefined) {
     const set = cols.map((c) => `"${ident(c)}" = ?`).join(', ')
     const values = cols.map((c) => normalizeValue(row[c]))
-    h.raw.prepare(`UPDATE "${ident(h.table)}" SET ${set} WHERE id = ?`).run(...values, normalizeValue(row.id))
-    const found = h.raw.prepare(`SELECT * FROM "${ident(h.table)}" WHERE id = ?`).get(normalizeValue(row.id))
+    h.raw
+      .prepare(`UPDATE "${ident(h.table)}" SET ${set} WHERE id = ?`)
+      .run(...values, normalizeValue(row.id))
+    const found = h.raw
+      .prepare(`SELECT * FROM "${ident(h.table)}" WHERE id = ?`)
+      .get(normalizeValue(row.id))
     return readRows(metaFile, h.table, [found])[0]
   }
   const placeholders = cols.map(() => '?').join(', ')
@@ -266,6 +275,8 @@ export function insertRow(h: SqliteHandle, metaFile: string, row: Record<string,
       `INSERT INTO "${ident(h.table)}" (${cols.map((c) => `"${ident(c)}"`).join(', ')}) VALUES (${placeholders})`
     )
     .run(...values)
-  const found = h.raw.prepare(`SELECT * FROM "${ident(h.table)}" WHERE id = ?`).get(info.lastInsertRowid)
+  const found = h.raw
+    .prepare(`SELECT * FROM "${ident(h.table)}" WHERE id = ?`)
+    .get(info.lastInsertRowid)
   return readRows(metaFile, h.table, [found])[0]
 }

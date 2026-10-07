@@ -114,7 +114,10 @@ function makeRawZip(file: string, entries: Array<[string, string]>): void {
 /** 造一个含恶意条目路径的 .oix（manifest/main 合法，仅额外条目非法） */
 function makeMaliciousOix(file: string, evilEntry: string): string {
   makeRawZip(file, [
-    ['manifest.json', JSON.stringify({ name: 'demo-ext', version: '1.0.0', main: './index.js', author: 'chenzhi' })],
+    [
+      'manifest.json',
+      JSON.stringify({ name: 'demo-ext', version: '1.0.0', main: './index.js', author: 'chenzhi' })
+    ],
     ['index.js', 'BAD'],
     [evilEntry, 'evil']
   ])
@@ -155,11 +158,11 @@ describe('oixCore · 正常安装', () => {
   })
 
   it('author 缺失 → 目录名退化为纯 name', async () => {
-    const file = await makeOix(
-      'noauthor.oix',
-      [['index.js', 'x']],
-      { name: 'plain', version: '2.0.0', main: './index.js' }
-    )
+    const file = await makeOix('noauthor.oix', [['index.js', 'x']], {
+      name: 'plain',
+      version: '2.0.0',
+      main: './index.js'
+    })
     const r = await installFromPackage(file, opts())
     expect(r.id).toBe('plain')
   })
@@ -259,9 +262,9 @@ describe('oixCore · 限额', () => {
     const entries: Array<[string, string]> = [['index.js', 'x']]
     for (let i = 0; i < 20; i++) entries.push([`f${i}.txt`, 'x'])
     const file = await makeOix('many.oix', entries)
-    await expect(
-      installFromPackage(file, { ...opts(), maxEntries: 5 })
-    ).rejects.toMatchObject({ code: 'too-large' })
+    await expect(installFromPackage(file, { ...opts(), maxEntries: 5 })).rejects.toMatchObject({
+      code: 'too-large'
+    })
     expect(existsSync(join(targetRoot, 'demo-ext_chenzhi'))).toBe(false)
   })
 

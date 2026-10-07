@@ -27,7 +27,10 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
     if (typeof apiVersion !== 'number' || !Number.isInteger(apiVersion) || apiVersion < 0) {
       messages.push({ severity: 'error', message: 'apiVersion 必须是大于等于 0 的整数' })
     } else if (apiVersion > oboxPackage.apiVersion) {
-      messages.push({ severity: 'error', message: `需要 obox API v${apiVersion} 或更高（当前 obox 为 v${oboxPackage.apiVersion}）` })
+      messages.push({
+        severity: 'error',
+        message: `需要 obox API v${apiVersion} 或更高（当前 obox 为 v${oboxPackage.apiVersion}）`
+      })
     }
   }
   if (typeof m.main !== 'string' || !m.main.trim()) {

@@ -157,7 +157,9 @@ export interface ExtensionActivationApi {
      * 注册 App 子窗口消息处理器（子窗口 iframe 经 postMessage 发来的消息）。
      * handler(channel, payload) 返回值/结果回传给 iframe（可返回 Promise）；返回注销函数。
      */
-    onMessage(handler: (channel: string, payload: unknown) => unknown | Promise<unknown>): Disposable
+    onMessage(
+      handler: (channel: string, payload: unknown) => unknown | Promise<unknown>
+    ): Disposable
   }
   /** 扩展多语言能力（扩展语言包与宿主语言包独立命名空间） */
   i18n: {
@@ -257,7 +259,13 @@ export interface ExtensionActivationApi {
         body?: unknown
         json?: boolean
       }
-    ): Promise<{ ok: boolean; status?: number; statusText?: string; data?: unknown; error?: string }>
+    ): Promise<{
+      ok: boolean
+      status?: number
+      statusText?: string
+      data?: unknown
+      error?: string
+    }>
   }
   /** 文件对话框（主进程 dialog） */
   dialog: {
@@ -358,7 +366,10 @@ export interface ExtensionActivationApi {
       closeOnClickOutside?: boolean
     }): Promise<Record<string, unknown> | undefined>
     /** 任务进度（title + 进度条，task 完成自动关闭；report(percent) 更新进度） */
-    withProgress<T>(title: string, task: (report: (percent: number) => void) => Promise<T>): Promise<T>
+    withProgress<T>(
+      title: string,
+      task: (report: (percent: number) => void) => Promise<T>
+    ): Promise<T>
   }
   /** 输出通道（底部输出面板，多通道 tab） */
   output: {

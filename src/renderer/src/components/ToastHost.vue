@@ -11,10 +11,7 @@ import { uiState, uiStore } from '../core/uiStore'
     <div v-if="uiState.progress" class="progress-bar-row">
       <div class="progress-text">{{ uiState.progress.title }}</div>
       <div class="progress-track">
-        <div
-          class="progress-fill"
-          :style="{ width: (uiState.progress.percent ?? 0) + '%' }"
-        ></div>
+        <div class="progress-fill" :style="{ width: (uiState.progress.percent ?? 0) + '%' }"></div>
       </div>
     </div>
 

@@ -10,7 +10,11 @@ export function registerExtIpc(): void {
     'dialog:open',
     async (
       _e,
-      opts: { title?: string; filters?: Array<{ name: string; extensions: string[] }>; multiSelect?: boolean }
+      opts: {
+        title?: string
+        filters?: Array<{ name: string; extensions: string[] }>
+        multiSelect?: boolean
+      }
     ): Promise<{ ok: boolean; filePaths?: string[]; canceled?: boolean; error?: string }> => {
       try {
         const win = BrowserWindow.getFocusedWindow()
@@ -36,13 +40,25 @@ export function registerExtIpc(): void {
     'dialog:save',
     async (
       _e,
-      opts: { title?: string; defaultName?: string; filters?: Array<{ name: string; extensions: string[] }> }
+      opts: {
+        title?: string
+        defaultName?: string
+        filters?: Array<{ name: string; extensions: string[] }>
+      }
     ): Promise<{ ok: boolean; filePath?: string; canceled?: boolean; error?: string }> => {
       try {
         const win = BrowserWindow.getFocusedWindow()
         const result = win
-          ? await dialog.showSaveDialog(win, { title: opts?.title, defaultPath: opts?.defaultName, filters: opts?.filters })
-          : await dialog.showSaveDialog({ title: opts?.title, defaultPath: opts?.defaultName, filters: opts?.filters })
+          ? await dialog.showSaveDialog(win, {
+              title: opts?.title,
+              defaultPath: opts?.defaultName,
+              filters: opts?.filters
+            })
+          : await dialog.showSaveDialog({
+              title: opts?.title,
+              defaultPath: opts?.defaultName,
+              filters: opts?.filters
+            })
         return { ok: true, filePath: result.filePath ?? undefined, canceled: result.canceled }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -54,7 +70,13 @@ export function registerExtIpc(): void {
     'dialog:message',
     async (
       _e,
-      opts: { type?: 'info' | 'warning' | 'error' | 'question'; title?: string; message?: string; detail?: string; buttons?: string[] }
+      opts: {
+        type?: 'info' | 'warning' | 'error' | 'question'
+        title?: string
+        message?: string
+        detail?: string
+        buttons?: string[]
+      }
     ): Promise<{ ok: boolean; response?: number; error?: string }> => {
       try {
         const win = BrowserWindow.getFocusedWindow()
@@ -65,7 +87,9 @@ export function registerExtIpc(): void {
           detail: opts?.detail,
           buttons: opts?.buttons && opts.buttons.length > 0 ? opts.buttons : undefined
         }
-        const result = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options)
+        const result = win
+          ? await dialog.showMessageBox(win, options)
+          : await dialog.showMessageBox(options)
         return { ok: true, response: result.response }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -109,18 +133,15 @@ export function registerExtIpc(): void {
   })
 
   // ---- 主窗口任务栏进度 ----
-  ipcMain.handle(
-    'window:set-progress-bar',
-    (_e, progress: number | null): void => {
-      const win = BrowserWindow.getAllWindows().find(
-        (w) => !w.isDestroyed() && !w.webContents.getURL().includes('obox-window=app')
-      )
-      if (!win) return
-      if (progress === null || progress === undefined) {
-        win.setProgressBar(-1)
-        return
-      }
-      win.setProgressBar(Math.min(1, Math.max(0, Number(progress))))
+  ipcMain.handle('window:set-progress-bar', (_e, progress: number | null): void => {
+    const win = BrowserWindow.getAllWindows().find(
+      (w) => !w.isDestroyed() && !w.webContents.getURL().includes('obox-window=app')
+    )
+    if (!win) return
+    if (progress === null || progress === undefined) {
+      win.setProgressBar(-1)
+      return
     }
-  )
+    win.setProgressBar(Math.min(1, Math.max(0, Number(progress))))
+  })
 }

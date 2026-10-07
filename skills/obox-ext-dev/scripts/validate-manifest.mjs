@@ -29,7 +29,8 @@ const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 
 /** obox 当前 API 版本（单源：根 package.json 的 apiVersion；读不到视为 0） */
-const OBX_API_VERSION = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8')).apiVersion ?? 0
+const OBX_API_VERSION =
+  JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8')).apiVersion ?? 0
 
 function validateManifest(raw) {
   const messages = []
@@ -49,7 +50,10 @@ function validateManifest(raw) {
     if (typeof av !== 'number' || !Number.isInteger(av) || av < 0) {
       messages.push({ severity: 'error', message: 'apiVersion 必须是大于等于 0 的整数' })
     } else if (av > OBX_API_VERSION) {
-      messages.push({ severity: 'error', message: `需要 obox API v${av} 或更高（当前 obox 为 v${OBX_API_VERSION}）` })
+      messages.push({
+        severity: 'error',
+        message: `需要 obox API v${av} 或更高（当前 obox 为 v${OBX_API_VERSION}）`
+      })
     }
   }
   if (typeof m.main !== 'string' || !m.main.trim()) {
@@ -59,7 +63,10 @@ function validateManifest(raw) {
     messages.push({ severity: 'error', message: 'contributes 必须是对象' })
   }
   if (m.extensionDependencies !== undefined) {
-    if (!Array.isArray(m.extensionDependencies) || m.extensionDependencies.some((d) => typeof d !== 'string')) {
+    if (
+      !Array.isArray(m.extensionDependencies) ||
+      m.extensionDependencies.some((d) => typeof d !== 'string')
+    ) {
       messages.push({ severity: 'error', message: 'extensionDependencies 必须是字符串数组' })
     }
   }
@@ -71,17 +78,26 @@ function validateManifest(raw) {
   if (c) {
     for (const nav of c.navItems ?? []) {
       if (!nav.id || !nav.title || !nav.icon) {
-        messages.push({ severity: 'warning', message: `导航项缺少 id/title/icon: ${JSON.stringify(nav)}` })
+        messages.push({
+          severity: 'warning',
+          message: `导航项缺少 id/title/icon: ${JSON.stringify(nav)}`
+        })
       }
     }
     for (const sb of c.statusBarItems ?? []) {
       if (!sb.id || !sb.name) {
-        messages.push({ severity: 'warning', message: `状态栏项缺少 id/name: ${JSON.stringify(sb)}` })
+        messages.push({
+          severity: 'warning',
+          message: `状态栏项缺少 id/name: ${JSON.stringify(sb)}`
+        })
       }
     }
     for (const cmd of c.commands ?? []) {
       if (!cmd.command || !cmd.title) {
-        messages.push({ severity: 'warning', message: `命令缺少 command/title: ${JSON.stringify(cmd)}` })
+        messages.push({
+          severity: 'warning',
+          message: `命令缺少 command/title: ${JSON.stringify(cmd)}`
+        })
       }
     }
   }

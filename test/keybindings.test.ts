@@ -48,7 +48,11 @@ describe('keybindingStore · 取值与修改', () => {
   })
 
   it('大小写差异当前**不**视为冲突（normalizeKey 只规范空白）——记录现状', () => {
-    keybindingStore.register({ command: 'kb-test.gamma', labelKey: 'g', defaultKey: 'Ctrl+Shift+G' })
+    keybindingStore.register({
+      command: 'kb-test.gamma',
+      labelKey: 'g',
+      defaultKey: 'Ctrl+Shift+G'
+    })
     const r = keybindingStore.setKey('kb-test.gamma', 'ctrl+shift+g')
     expect(r.conflict).toBeNull()
     expect(keybindingStore.currentKey('kb-test.gamma')).toBe('ctrl+shift+g')
@@ -69,11 +73,15 @@ describe('keybindingStore · 按键事件', () => {
   it('matchKeydown 命中注册命令', () => {
     keybindingStore.register({ command: 'kb-match.do', labelKey: 'm', defaultKey: 'Ctrl+F1' })
     expect(keybindingStore.matchKeydown(keydown({ key: 'F1', ctrlKey: true }))).toBe('kb-match.do')
-    expect(keybindingStore.matchKeydown(keydown({ key: 'F2', ctrlKey: true }))).not.toBe('kb-match.do')
+    expect(keybindingStore.matchKeydown(keydown({ key: 'F2', ctrlKey: true }))).not.toBe(
+      'kb-match.do'
+    )
   })
 
   it('list 返回命令 + 当前生效按键', () => {
     const rows = keybindingStore.list()
-    expect(rows.some((r) => r.command === 'kb-test.alpha' && r.currentKey === 'Ctrl+Alt+A')).toBe(true)
+    expect(rows.some((r) => r.command === 'kb-test.alpha' && r.currentKey === 'Ctrl+Alt+A')).toBe(
+      true
+    )
   })
 })

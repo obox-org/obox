@@ -40,7 +40,9 @@ describe('extensionSettingsStore', () => {
 
   it('byExtension / extensionIds 按扩展归组', () => {
     extensionSettingsStore.register('ext-set-d', page('ext-set-d.one'))
-    expect(extensionSettingsStore.byExtension('ext-set-d').map((p) => p.id)).toEqual(['ext-set-d.one'])
+    expect(extensionSettingsStore.byExtension('ext-set-d').map((p) => p.id)).toEqual([
+      'ext-set-d.one'
+    ])
     expect(extensionSettingsStore.extensionIds).toContain('ext-set-d')
     extensionSettingsStore.deactivateExtension('ext-set-d')
   })

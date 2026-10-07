@@ -431,7 +431,13 @@ class ExtensionHost {
       net: {
         fetch: (url, opts) =>
           window.api.netFetch(
-            { url, method: opts?.method, headers: opts?.headers, body: opts?.body, json: opts?.json },
+            {
+              url,
+              method: opts?.method,
+              headers: opts?.headers,
+              body: opts?.body,
+              json: opts?.json
+            },
             stateStore.getSetting<ProxyConfig>('network.proxy')
           )
       },
@@ -460,7 +466,8 @@ class ExtensionHost {
       ui: {
         showQuickPick: (items, opts) =>
           this.showUiModal('quickPick', { items, opts }, () => uiStore.showQuickPick(items, opts)),
-        showInputBox: (opts) => this.showUiModal('inputBox', opts, () => uiStore.showInputBox(opts)),
+        showInputBox: (opts) =>
+          this.showUiModal('inputBox', opts, () => uiStore.showInputBox(opts)),
         showMessage: (message, type = 'info') => uiStore.showToast(message, type),
         showForm: (opts) => this.showUiModal('form', opts, () => uiStore.showForm(opts)),
         withProgress: async (title, task) => {
@@ -575,16 +582,14 @@ class ExtensionHost {
       if (e.kind === 'timeout') callbacks.delete(e.key)
     })
     disposables.push(offFire)
-    const set = (kind: 'timeout' | 'interval') => (
-      id: string,
-      seconds: number,
-      callback: () => void
-    ): void => {
-      callbacks.set(`${ext.id}:${id}`, callback)
-      void (kind === 'timeout'
-        ? window.api.setTimerTimeout(ext.id, id, seconds)
-        : window.api.setTimerInterval(ext.id, id, seconds))
-    }
+    const set =
+      (kind: 'timeout' | 'interval') =>
+      (id: string, seconds: number, callback: () => void): void => {
+        callbacks.set(`${ext.id}:${id}`, callback)
+        void (kind === 'timeout'
+          ? window.api.setTimerTimeout(ext.id, id, seconds)
+          : window.api.setTimerInterval(ext.id, id, seconds))
+      }
     const clear = (id: string): void => {
       callbacks.delete(`${ext.id}:${id}`)
       void window.api.clearTimer(ext.id, id)
@@ -611,19 +616,25 @@ class ExtensionHost {
       return {
         exec: (sql) => window.api.sqliteExec(extId, name, sql),
         query: async (sql, params = []) =>
-          ((await call(window.api.sqliteQuery(extId, name, sql, params))).rows as SqliteRow[] | undefined) ?? [],
+          ((await call(window.api.sqliteQuery(extId, name, sql, params))).rows as
+            SqliteRow[] | undefined) ?? [],
         insert: async (row) =>
-          ((await call(window.api.sqliteInsert(extId, name, row))).row as SqliteRow | undefined) ?? null,
+          ((await call(window.api.sqliteInsert(extId, name, row))).row as SqliteRow | undefined) ??
+          null,
         update: async (where, patch) =>
           (await call(window.api.sqliteUpdate(extId, name, where, patch))).changes ?? 0,
         get: async (id) =>
-          ((await call(window.api.sqliteGet(extId, name, id))).row as SqliteRow | undefined) ?? null,
+          ((await call(window.api.sqliteGet(extId, name, id))).row as SqliteRow | undefined) ??
+          null,
         get_all: async () =>
-          ((await call(window.api.sqliteGetAll(extId, name))).rows as SqliteRow[] | undefined) ?? [],
+          ((await call(window.api.sqliteGetAll(extId, name))).rows as SqliteRow[] | undefined) ??
+          [],
         get_by: async (where) =>
-          ((await call(window.api.sqliteGetBy(extId, name, where))).rows as SqliteRow[] | undefined) ?? [],
+          ((await call(window.api.sqliteGetBy(extId, name, where))).rows as
+            SqliteRow[] | undefined) ?? [],
         del: async (id) => (await call(window.api.sqliteDel(extId, name, id))).changes ?? 0,
-        del_by: async (where) => (await call(window.api.sqliteDelBy(extId, name, where))).changes ?? 0,
+        del_by: async (where) =>
+          (await call(window.api.sqliteDelBy(extId, name, where))).changes ?? 0,
         clear: async () => (await call(window.api.sqliteClear(extId, name))).changes ?? 0,
         close: () => window.api.sqliteClose(extId, name)
       }
@@ -706,7 +717,8 @@ class ExtensionHost {
         if (!feedUrl) {
           return {
             ok: false,
-            error: '强制重装需要更新源：请传入 feedUrl，或在 manifest 声明 contributes.updater.feedUrl'
+            error:
+              '强制重装需要更新源：请传入 feedUrl，或在 manifest 声明 contributes.updater.feedUrl'
           }
         }
         const r = await window.api.forceInstallUpdate({ feedUrl, proxy: proxy(), reason: 'user' })

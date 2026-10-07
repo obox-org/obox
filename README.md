@@ -28,7 +28,9 @@ src/
 │   ├── fs.ts        # 扩展文件系统（api.fs，限定扩展 data 目录，相对路径 + watch）
 │   ├── ext.ts       # 扩展杂项能力（对话框/外链/剪贴板/任务栏进度）
 │   ├── ui.ts        # 应用内交互（api.ui：quickPick/inputBox/form 模态，按焦点窗口本地渲染或转发子窗口）
-│   ├── updater.ts   # 更新服务（electron-updater：解析更新源/检查/下载/安装 + 事件广播）
+│   ├── updater.ts   # 更新服务（electron-updater：解析更新源/检查/下载/安装 + 事件广播 + 强制重装/降级）
+│   ├── updateFeed.ts # 更新元数据 latest.yml 解析与按架构挑产物（强制重装/降级用；不依赖 electron，可单测）
+│   ├── proxy.ts     # 代理与证书的 session 级应用（扩展联网 obox-net 与更新下载 electron-updater 共用）
 │   ├── secrets.ts   # 扩展密钥存储（api.secrets，safeStorage 加密）
 │   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源 + app://debug）
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
@@ -46,23 +48,23 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ### 扩展系统核心（`renderer/src/core/`）
 
-| 文件 | 职责 |
-|---|---|
-| `types.ts` | 历史兼容入口：再导出 `src/api/`（扩展 API 类型已迁至 `src/api/`：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable；新代码直接 import `src/api`） |
-| `host.ts` | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效 |
-| `manifest.ts` | 清单校验（name/version/main 必填、semver、**apiVersion 门槛**、依赖检测）+ 错误收集 |
-| `registry.ts` | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive） |
-| `loader.ts` | 内置扩展 Vite 静态收集 + 用户扩展 app:// 运行时加载 + 调试扩展 app://debug 加载 |
-| `state.ts` | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）** |
-| `appStore.ts` | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理） |
-| `theme.ts` | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题 |
-| `keybindings.ts` | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化 |
-| `extensionSettings.ts` | 扩展设置页注册表（api.settings.register / manifest 声明） |
-| `extensionI18n.ts` | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间） |
-| `uiStore.ts` | 应用内交互状态（模态/表单/quickPick/进度/toast），主窗口与 App 子窗口共用，驱动 `PromptHost`/`ToastHost` |
-| `outputStore.ts` | 输出面板通道（api.output.createChannel），底部 `OutputPanel` 渲染 |
-| `treeStore.ts` | 树视图数据源注册表（api.views.registerTreeProvider，按扩展 id 隔离） |
-| `updaterStore.ts` | 更新提供者注册表（`contributes.updater`，**仅一个生效**，设置-更新里选择） |
+| 文件                   | 职责                                                                                                                                                                                                   |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `types.ts`             | 历史兼容入口：再导出 `src/api/`（扩展 API 类型已迁至 `src/api/`：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable；新代码直接 import `src/api`） |
+| `host.ts`              | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效                                                                                                 |
+| `manifest.ts`          | 清单校验（name/version/main 必填、semver、**apiVersion 门槛**、依赖检测）+ 错误收集                                                                                                                    |
+| `registry.ts`          | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive）                                                                                                                                        |
+| `loader.ts`            | 内置扩展 Vite 静态收集 + 用户扩展 app:// 运行时加载 + 调试扩展 app://debug 加载                                                                                                                        |
+| `state.ts`             | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）**                                                                                                   |
+| `appStore.ts`          | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理）                                                                                                                                              |
+| `theme.ts`             | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题                                                                                                                                      |
+| `keybindings.ts`       | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化                                                                                                                                                   |
+| `extensionSettings.ts` | 扩展设置页注册表（api.settings.register / manifest 声明）                                                                                                                                              |
+| `extensionI18n.ts`     | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间）                                                                                                                                                 |
+| `uiStore.ts`           | 应用内交互状态（模态/表单/quickPick/进度/toast），主窗口与 App 子窗口共用，驱动 `PromptHost`/`ToastHost`                                                                                               |
+| `outputStore.ts`       | 输出面板通道（api.output.createChannel），底部 `OutputPanel` 渲染                                                                                                                                      |
+| `treeStore.ts`         | 树视图数据源注册表（api.views.registerTreeProvider，按扩展 id 隔离）                                                                                                                                   |
+| `updaterStore.ts`      | 更新提供者注册表（`contributes.updater`，**仅一个生效**，设置-更新里选择）                                                                                                                             |
 
 ### i18n（`renderer/src/i18n/`）
 
@@ -85,17 +87,17 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ## 常用命令
 
-| 命令 | 说明 |
-|---|---|
-| `npm run dev` | 开发模式（HMR，Electron 窗口自动打开） |
-| `npm test` | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具） |
-| `npm run typecheck` | 类型检查（node 主进程 + web 渲染进程） |
-| `npm run lint` | ESLint 检查（0 errors 为门槛） |
-| `npm run build` | typecheck + electron-vite 构建到 `out/` |
-| `npm run build:win` | 打包 Windows 安装包（electron-builder） |
-| `npm run format` | Prettier 格式化 |
-| `node skills/obox-ext-dev/scripts/create-extension.mjs <id>` | 生成新内置扩展骨架 |
-| `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all` | 校验全部内置扩展 manifest |
+| 命令                                                           | 说明                                                |
+| -------------------------------------------------------------- | --------------------------------------------------- |
+| `npm run dev`                                                  | 开发模式（HMR，Electron 窗口自动打开）              |
+| `npm test`                                                     | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具） |
+| `npm run typecheck`                                            | 类型检查（node 主进程 + web 渲染进程）              |
+| `npm run lint`                                                 | ESLint 检查（0 errors 为门槛）                      |
+| `npm run build`                                                | typecheck + electron-vite 构建到 `out/`             |
+| `npm run build:win`                                            | 打包 Windows 安装包（electron-builder）             |
+| `npm run format`                                               | Prettier 格式化                                     |
+| `node skills/obox-ext-dev/scripts/create-extension.mjs <id>`   | 生成新内置扩展骨架                                  |
+| `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all` | 校验全部内置扩展 manifest                           |
 
 ## 发布（GitHub CI + Releases）
 
@@ -123,14 +125,14 @@ git push origin v1.0.0
 
 ## 文档导航
 
-| 文档 | 内容 |
-|---|---|
-| [README.md](README.md) | 本文件：项目概览 / 快速上手（导航入口，不重复细节） |
-| [CONTEXT.md](CONTEXT.md) | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等） |
-| [AGENTS.md](AGENTS.md) | 开发者约定：提问约定 + obox-ext-dev 文档同步要求 + 强制提交流程（**分支 + PR**）+ 质量门槛 |
-| [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md) | 扩展开发完整指南（含 references/ 与 scripts/） |
-| [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装） |
-| [docs/adr/](docs/adr/) | 架构决策记录：0001–0004 宿主与贡献点/启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009–0014 调试扩展·API 版本·扩展能力·热安装 / **0015 扩展信任模型与身份守卫** |
+| 文档                                                                               | 内容                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [README.md](README.md)                                                             | 本文件：项目概览 / 快速上手（导航入口，不重复细节）                                                                                                                                                                      |
+| [CONTEXT.md](CONTEXT.md)                                                           | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等）                                                                                                                                                         |
+| [AGENTS.md](AGENTS.md)                                                             | 开发者约定：提问约定 + obox-ext-dev 文档同步要求 + 强制提交流程（**分支 + PR**）+ 质量门槛                                                                                                                               |
+| [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md)                       | 扩展开发完整指南（含 references/ 与 scripts/）                                                                                                                                                                           |
+| [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装）                                                                                                                                            |
+| [docs/adr/](docs/adr/)                                                             | 架构决策记录：0001–0004 宿主与贡献点/启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009–0014 调试扩展·API 版本·扩展能力·热安装 / **0015 扩展信任模型与身份守卫** |
 
 ## 技术栈
 

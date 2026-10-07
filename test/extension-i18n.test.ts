@@ -36,7 +36,9 @@ describe('extensionI18n', () => {
 
   it('{param} 插值', () => {
     registerExtensionMessages('ext-i18n', { zh: { greet: '你好 {name}，共 {n} 条' } })
-    expect(translateExtension('ext-i18n', 'greet', { name: 'Obox', n: 3 })).toBe('你好 Obox，共 3 条')
+    expect(translateExtension('ext-i18n', 'greet', { name: 'Obox', n: 3 })).toBe(
+      '你好 Obox，共 3 条'
+    )
   })
 
   it('多次注册合并（新 key 追加，旧 key 保留）', () => {

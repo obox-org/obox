@@ -108,6 +108,7 @@ function onClick(id: string): void {
         @dragend="onDragEnd"
         @click="onClick(item.id)"
       >
+        <!-- eslint-disable-next-line vue/no-v-html -- 图标来自扩展注册（同进程受信代码，见 ADR-0015） -->
         <span class="nav-icon" v-html="item.icon" />
         <span v-if="item.badgeCount" class="nav-badge">{{
           item.badgeCount > 999 ? '1K+' : item.badgeCount
@@ -123,6 +124,7 @@ function onClick(id: string): void {
         :title="navTitle(item)"
         @click="onClick(item.id)"
       >
+        <!-- eslint-disable-next-line vue/no-v-html -- 图标来自扩展注册（同进程受信代码，见 ADR-0015） -->
         <span class="nav-icon" v-html="item.icon" />
         <span v-if="item.badgeCount" class="nav-badge">{{
           item.badgeCount > 999 ? '1K+' : item.badgeCount

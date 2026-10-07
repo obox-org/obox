@@ -95,7 +95,8 @@ export async function resolveLatestRelease(
       feedUrl: `https://github.com/${repo}/releases/download/${pick.tag_name}/`
     }
   } catch (err) {
-    const aborted = err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')
+    const aborted =
+      err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')
     return {
       ok: false,
       error: aborted ? '请求超时（10s）' : err instanceof Error ? err.message : String(err)
@@ -227,7 +228,10 @@ async function forceInstallFromFeed(opts: {
     await pipeline(stream, createWriteStream(dest))
   } catch (err) {
     await rm(dest, { force: true })
-    return { ok: false, error: `写入安装包失败：${err instanceof Error ? err.message : String(err)}` }
+    return {
+      ok: false,
+      error: `写入安装包失败：${err instanceof Error ? err.message : String(err)}`
+    }
   }
 
   // 4) 校验 sha512（元数据里给了就必须匹配，否则删除并报错——不启动未校验的安装器）
@@ -262,7 +266,13 @@ export function registerUpdateIpc(): void {
       _e,
       repo: string,
       proxy?: ProxyConfig
-    ): Promise<{ ok: boolean; tag?: string; feedUrl?: string; publishedAt?: string; error?: string }> => {
+    ): Promise<{
+      ok: boolean
+      tag?: string
+      feedUrl?: string
+      publishedAt?: string
+      error?: string
+    }> => {
       try {
         if (!isValidRepo(repo)) {
           return { ok: false, error: '仓库格式非法（应为 owner/repo）' }

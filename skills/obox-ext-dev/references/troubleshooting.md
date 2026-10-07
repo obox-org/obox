@@ -11,6 +11,7 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 **原因**：渲染进程 CSP `script-src 'self'` 无 `'unsafe-inline'`，**内联事件处理器与内联 `<script>` 块都会被拦截**（srcdoc 继承父文档 CSP）。旧文"用外部 `<script>` 块"的说法不成立。
 
 **修复**（按场景）：
+
 - **用户扩展静态页（推荐）**：App 卡片用 `url: 'app://extensions/<id>/todo.html'`——app:// 页面无 CSP 头，脚本正常执行（CSP 已放行 app: scheme 供 iframe 加载）
 - **srcdoc 场景**：把脚本放到同源外部文件（如 public/ 下的静态资源）用 `<script src>` 引用；或改用 `url` 形态
 - 窗口控制一律用 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`
@@ -20,6 +21,7 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 **症状**：`url: 'app://extensions/<id>/todo.html'` 打不开 / 404；控制台 `Failed to load resource`。
 
 **排查**：
+
 - 该扩展是**用户扩展**（已安装到 `userData/extensions/<id>/`）——app://extensions 只映射 userData；内置扩展没有静态文件通道
 - `<id>` 是**安装目录名**（`<name>_<author>`，如 `todo_chenzhi`），不是 manifest.name；`index.js` 里用 `new URL('./todo.html', import.meta.url)` 推导，勿硬编码
 - 协议映射：`app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（协议注册在 `src/main/protocol.ts`）
@@ -38,6 +40,7 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 ## 5. oix 安装失败
 
 **排查**（扩展管理器提示的失败信息）：
+
 - `manifest.json` 必须在 zip **根目录**
 - `name`/`version` 非法（正则 / semver）；`main` 指向的文件必须在包内
 - 包内含非法条目路径（`..` / 绝对路径 / 反斜杠）→ 被 zip-slip 防护拒绝
@@ -63,6 +66,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **原因**：入口未导出 `default` 插件函数，或入口加载/执行抛错。
 
 **排查**：
+
 - 入口必须有 `export default function(api) {...}`
 - 扩展管理器详情页看 `activationError`（激活失败原因）
 - dev 日志看 `[host] activate <id> failed <error>`
@@ -125,6 +129,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **原因**（历史 bug，已修复）：`appStore` 的 index Map 未从 localStorage 持久化重建，导致同 id 重复注册不更新而 push 新条目；已卸载扩展的卡片（孤儿）在持久化中残留。
 
 **修复（宿主侧已实现）**：
+
 - `appStore` 构造函数从持久化重建 index，同 id 重复注册只更新不新建
 - `loadPersisted` 去重（同 id 只保留一条）
 - 宿主启动时清理孤儿卡片：`appStore.items` 中 `extensionId` 不在当前扩展列表的卡片被删除
@@ -135,6 +140,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 ## 17. --debug-extension 调试扩展没被加载
 
 **排查**：
+
 - 参数格式：`--debug-extension <id>@<绝对路径>`，路径必须存在、id 须匹配 `^[a-z0-9][a-z0-9._-]*$`（非法/路径缺失会被主进程静默忽略并打 warn）
 - manifest 必须能经 `app://debug/<id>/manifest.json` 读到（协议只服务已声明的 id）
 - 看宿主日志 `[host] 启动完成: N 个扩展...` 是否包含调试扩展；激活失败看扩展管理器详情页 `activationError`（调试扩展同样受声明式贡献点校验）
@@ -142,6 +148,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 ## 18. VS Code 断点不命中（app://debug）
 
 **排查**：
+
 - launch.json 的 `pathMapping` 前缀必须与 `app://debug/<id>/` 完全一致（id 大小写、目录尾斜杠）；改代码后需**重载 obox 窗口**（宿主在启动时收集扩展）
 - `urlFilter` 只匹配 dev 渲染进程（http://localhost:5173）；打包版（file://）去掉 urlFilter 或改匹配
 - 确认 attach 的是渲染进程（chrome attach + CDP 端口），不是主进程 inspector
@@ -173,6 +180,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **原因**：这两个能力是**开发辅助**（渲染进程任意 JS 执行 + 截图写任意路径），只在开发构建（`is.dev`，即未打包）注册到主进程；打包构建**不注册**，属于有意的安全门控。
 
 **建议**：不要在扩展里依赖它们；需要截图/自检请在 `npm run dev` 下做，或改用正式的 `api.output` / `api.fs` 等能力。
+
 ## 23. 代理（设置-网络）配了却"没走代理"
 
 **症状**：设置-网络里填了代理并启用，但 `api.net.fetch` 与更新检查/下载看起来仍**直连**（代理服务器上没有请求日志；或内外网混合环境下请求照旧成功/照旧失败）。
@@ -180,6 +188,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **原因**（宿主早期实现缺陷，已修复）：代理原先靠**环境变量**（`HTTP_PROXY`/`HTTPS_PROXY`/`NODE_TLS_REJECT_UNAUTHORIZED`）应用，但 Node 的全局 `fetch`（undici）与 Electron `net.request`（Chromium）**都不读这些变量**——实测把 `HTTP_PROXY` 指向不可达代理，`fetch` 仍直连成功。`ignoreSSL` 同理无效，且 `NODE_TLS_REJECT_UNAUTHORIZED=0` 会**全局**关闭证书校验（含更新下载），风险面过大。
 
 **修复后机制**：宿主在请求真正经过的 session 上应用配置——
+
 - 扩展联网：专用 session `obox-net` + `setProxy` / `setCertificateVerifyProc`
 - 更新下载：electron-updater 自己的 session（`electron-updater`）+ 同一套应用逻辑；代理认证经 `autoUpdater.on('login')` 回填设置里的账号密码
 
@@ -190,18 +199,19 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **症状**：扩展管理器提示"安装失败：…"，但看不到具体原因分类；或覆盖安装失败后担心旧版本被删。
 
 **先明确两点**（宿主侧已实现）：
+
 - **失败不会丢旧版本**：安装先解到暂存目录（`userData/extensions/.tmp`），全部校验通过后才整体替换目标目录；覆盖安装时旧目录先改名备份，替换失败会改回。
 - **失败以返回值 + 错误码表达**（不再靠 IPC 抛错传消息），可按错误码排查：
 
-| code | 含义与排查方向 |
-|---|---|
-| `invalid-package` | 文件不是有效 zip / 读取失败——确认打包产物没被截断，`.oix` 就是 zip（可用 `tar -tf x.oix` 或解压工具验证） |
+| code               | 含义与排查方向                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `invalid-package`  | 文件不是有效 zip / 读取失败——确认打包产物没被截断，`.oix` 就是 zip（可用 `tar -tf x.oix` 或解压工具验证）          |
 | `invalid-manifest` | 缺**根目录** `manifest.json`，或 `name`/`version`/`main` 非法——常见是打包时把文件放进了子目录（必须扁平在 zip 根） |
-| `entry-missing` | `manifest.main` 写的路径在包内不存在——注意 `./index.js` 与 `index.js` 的差别，以及是否漏打包入口 |
-| `entry-invalid` | 包内含非法条目路径（`../`、绝对路径、反斜杠、空段）——属 zip-slip 防护，换工具重新打包 |
-| `too-large` | 条目数 > 2000 或解压总量 > 64MB——检查是否误把 `node_modules/`、`dist/` 全打进包了 |
-| `path-invalid` | 传入路径为空或文件不存在（拖拽场景取到的是空路径） |
-| `write-failed` | 暂存/替换/写盘失败（磁盘满、权限、目录被占用）——旧版本已回滚 |
+| `entry-missing`    | `manifest.main` 写的路径在包内不存在——注意 `./index.js` 与 `index.js` 的差别，以及是否漏打包入口                   |
+| `entry-invalid`    | 包内含非法条目路径（`../`、绝对路径、反斜杠、空段）——属 zip-slip 防护，换工具重新打包                              |
+| `too-large`        | 条目数 > 2000 或解压总量 > 64MB——检查是否误把 `node_modules/`、`dist/` 全打进包了                                  |
+| `path-invalid`     | 传入路径为空或文件不存在（拖拽场景取到的是空路径）                                                                 |
+| `write-failed`     | 暂存/替换/写盘失败（磁盘满、权限、目录被占用）——旧版本已回滚                                                       |
 
 **扩展侧注意事项**：打包时只放分发必需文件（`manifest.json`、入口 `index.js`、图标与静态资源），不要把源码、`node_modules/`、构建缓存打进 `.oix`——既是限额要求，也能避免把 `main` 之外的路径写错。
 
@@ -224,6 +234,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **修复后行为**：激活抛错时立即清理本次已收集的全部副作用，并把清理函数登记进宿主（后续热移除/重启时同样可用）。
 
 **扩展侧注意事项**：仍应自己保证注册顺序合理——把"可能抛错"的初始化逻辑放在注册副作用**之前**（`apply` 内先校验配置/依赖，再注册）。
+
 ## 27. 想重装同一版本或回退到旧版本，但"检查更新"说无更新
 
 **症状**：安装损坏想重装，或想从新版回退到旧版，但 `api.update.check()` 总是返回"无更新"；`install()` 也无从下手。
@@ -239,4 +250,3 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 - 下载失败或 sha512 不匹配时**不会启动安装器**（不匹配的文件会被删除），返回 `{ ok:false, error }`。
 
 **扩展侧注意事项**：`force` 会真的启动安装程序，建议放在显式命令（如命令面板项）里，由用户主动触发；不要放在自动检查流程里。
-

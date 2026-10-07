@@ -75,9 +75,7 @@ export type InstallOixErrorCode =
  * 这样错误码能稳定跨进程传递，渲染进程可做区分处理。
  */
 export type InstallOixOutcome =
-  | { ok: true; result: InstallOixResult }
-  | { ok: false; code: InstallOixErrorCode; error: string }
-
+  { ok: true; result: InstallOixResult } | { ok: false; code: InstallOixErrorCode; error: string }
 
 /** 代理配置（设置-网络页，VS Code 风格） */
 export interface ProxyConfig {
@@ -160,8 +158,16 @@ export interface MainApi {
     reason?: 'user' | 'auto'
   }): Promise<{ ok: boolean; version?: string; filePath?: string; error?: string }>
   // ---- 扩展能力：定时器（主进程精确计时，秒粒度） ----
-  setTimerTimeout(extId: string, id: string, seconds: number): Promise<{ ok: boolean; error?: string }>
-  setTimerInterval(extId: string, id: string, seconds: number): Promise<{ ok: boolean; error?: string }>
+  setTimerTimeout(
+    extId: string,
+    id: string,
+    seconds: number
+  ): Promise<{ ok: boolean; error?: string }>
+  setTimerInterval(
+    extId: string,
+    id: string,
+    seconds: number
+  ): Promise<{ ok: boolean; error?: string }>
   clearTimer(extId: string, id: string): Promise<void>
   // ---- 扩展能力：sqlite（node:sqlite，相对路径 → 扩展 data 目录） ----
   sqliteOpen(extId: string, name: string): Promise<{ ok: boolean; error?: string }>
@@ -184,20 +190,34 @@ export interface MainApi {
     where: Record<string, unknown>,
     patch: Record<string, unknown>
   ): Promise<{ ok: boolean; changes?: number; error?: string }>
-  sqliteGet(extId: string, name: string, id: unknown): Promise<{ ok: boolean; row?: unknown; error?: string }>
-  sqliteGetAll(extId: string, name: string): Promise<{ ok: boolean; rows?: unknown[]; error?: string }>
+  sqliteGet(
+    extId: string,
+    name: string,
+    id: unknown
+  ): Promise<{ ok: boolean; row?: unknown; error?: string }>
+  sqliteGetAll(
+    extId: string,
+    name: string
+  ): Promise<{ ok: boolean; rows?: unknown[]; error?: string }>
   sqliteGetBy(
     extId: string,
     name: string,
     where: Record<string, unknown>
   ): Promise<{ ok: boolean; rows?: unknown[]; error?: string }>
-  sqliteDel(extId: string, name: string, id: unknown): Promise<{ ok: boolean; changes?: number; error?: string }>
+  sqliteDel(
+    extId: string,
+    name: string,
+    id: unknown
+  ): Promise<{ ok: boolean; changes?: number; error?: string }>
   sqliteDelBy(
     extId: string,
     name: string,
     where: Record<string, unknown>
   ): Promise<{ ok: boolean; changes?: number; error?: string }>
-  sqliteClear(extId: string, name: string): Promise<{ ok: boolean; changes?: number; error?: string }>
+  sqliteClear(
+    extId: string,
+    name: string
+  ): Promise<{ ok: boolean; changes?: number; error?: string }>
   // ---- 扩展能力：系统提醒 ----
   showNotification(
     extId: string,
@@ -207,7 +227,13 @@ export interface MainApi {
   cleanupExtension(extId: string): Promise<void>
   // ---- 扩展能力：网络（渲染 CSP 禁外网，走主进程 + 代理） ----
   netFetch(
-    req: { url?: string; method?: string; headers?: Record<string, string>; body?: unknown; json?: boolean },
+    req: {
+      url?: string
+      method?: string
+      headers?: Record<string, string>
+      body?: unknown
+      json?: boolean
+    },
     proxy?: ProxyConfig
   ): Promise<{ ok: boolean; status?: number; statusText?: string; data?: unknown; error?: string }>
   // ---- 扩展能力：文件系统（限定扩展 data 目录，相对路径） ----
@@ -253,7 +279,11 @@ export interface MainApi {
   fsUnwatch(extId: string, watchId: string): Promise<void>
   // ---- App 子窗口 ↔ 扩展消息桥 ----
   /** 子窗口（AppWindow）向扩展入口发消息并等待响应（经主进程 → 主窗口宿主 → 扩展 handler） */
-  extensionMessage(appId: string, channel: string, payload: unknown): Promise<{
+  extensionMessage(
+    appId: string,
+    channel: string,
+    payload: unknown
+  ): Promise<{
     ok: boolean
     data?: unknown
     error?: string
@@ -262,7 +292,10 @@ export interface MainApi {
   extensionReply(requestId: number, result: { ok: boolean; data?: unknown; error?: string }): void
   // ---- 窗口化 ui 模态框（按焦点窗口显示） ----
   /** 扩展 ui 模态框：焦点在 App 子窗口时转发到该窗口渲染；否则 local（主窗口自己渲染） */
-  uiShow(kind: string, payload: unknown): Promise<{ local: boolean; canceled?: boolean; value?: unknown }>
+  uiShow(
+    kind: string,
+    payload: unknown
+  ): Promise<{ local: boolean; canceled?: boolean; value?: unknown }>
   /** 子窗口把模态框结果回传主进程（ui:show 的回复侧） */
   uiResult(requestId: number, r: { canceled: boolean; value?: unknown }): void
 }

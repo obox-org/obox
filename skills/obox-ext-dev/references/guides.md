@@ -47,7 +47,13 @@ src/renderer/src/extensions/my-hello/
       }
     ],
     "statusBarItems": [
-      { "id": "my-hello.status", "name": "你好状态", "text": "就绪", "alignment": "right", "priority": 5 }
+      {
+        "id": "my-hello.status",
+        "name": "你好状态",
+        "text": "就绪",
+        "alignment": "right",
+        "priority": 5
+      }
     ],
     "commands": [
       { "command": "my-hello.say", "title": "打个招呼", "category": "你好", "palette": true }
@@ -62,7 +68,7 @@ src/renderer/src/extensions/my-hello/
 import type { ExtensionActivationApi } from '../../../../api'
 import HelloView from './HelloView.vue'
 
-export { HelloView }  // 具名导出：导航项 view 字段引用
+export { HelloView } // 具名导出：导航项 view 字段引用
 
 export default function myHello(api: ExtensionActivationApi): () => void {
   // 绑定命令实现（manifest 已声明）
@@ -140,7 +146,9 @@ export default function myHello(api: ExtensionActivationApi): () => void {
     height: 600
   })
 
-  return () => { appCard.dispose() }
+  return () => {
+    appCard.dispose()
+  }
 }
 ```
 
@@ -204,15 +212,15 @@ extensions/todo/
 
 **安装失败的错误码**（扩展管理器展示消息，代码可据此分支）：
 
-| code | 含义 |
-|---|---|
-| `invalid-package` | 不是有效 zip / 无法读取 |
-| `invalid-manifest` | 缺根 `manifest.json`，或 name / version / main 非法 |
-| `entry-missing` | `manifest.main` 指向的入口不在包内 |
-| `entry-invalid` | 含非法条目路径（zip-slip / 反斜杠 / 绝对路径 / 空段） |
-| `too-large` | 条目数或解压总量超限 |
-| `path-invalid` | 传入的安装路径非法或不存在 |
-| `write-failed` | 暂存 / 替换 / 写盘失败（旧版本已回滚） |
+| code               | 含义                                                  |
+| ------------------ | ----------------------------------------------------- |
+| `invalid-package`  | 不是有效 zip / 无法读取                               |
+| `invalid-manifest` | 缺根 `manifest.json`，或 name / version / main 非法   |
+| `entry-missing`    | `manifest.main` 指向的入口不在包内                    |
+| `entry-invalid`    | 含非法条目路径（zip-slip / 反斜杠 / 绝对路径 / 空段） |
+| `too-large`        | 条目数或解压总量超限                                  |
+| `path-invalid`     | 传入的安装路径非法或不存在                            |
+| `write-failed`     | 暂存 / 替换 / 写盘失败（旧版本已回滚）                |
 
 ## 教程：更新提供者扩展（参考 `extensions/obox-updater/`）
 
@@ -258,13 +266,18 @@ App 子窗口内容是 iframe。要做"左侧边栏 + 内容栏"级别的富界�
 // vite.config.ts 要点
 export default defineConfig({
   root: resolve(__dirname, 'app'),
-  base: './',                       // 必须相对路径：产物从 app://extensions/<id>/ 任意子路径加载
+  base: './', // 必须相对路径：产物从 app://extensions/<id>/ 任意子路径加载
   plugins: [vue()],
   build: {
     outDir: resolve(__dirname, 'dist'),
     rollupOptions: {
       input: resolve(__dirname, 'app/todo.html'),
-      output: { format: 'iife', inlineDynamicImports: true, entryFileNames: 'todo.js', assetFileNames: 'todo.[ext]' }
+      output: {
+        format: 'iife',
+        inlineDynamicImports: true,
+        entryFileNames: 'todo.js',
+        assetFileNames: 'todo.[ext]'
+      }
     }
   }
 })
@@ -275,12 +288,12 @@ export default defineConfig({
 ```js
 // index.js
 export default function todoExt(api) {
-  const base = new URL('.', import.meta.url).href   // 推导安装目录，不硬编码目录名
+  const base = new URL('.', import.meta.url).href // 推导安装目录，不硬编码目录名
   const card = api.app.register({
     id: 'todo.main',
     name: '待办',
     icon: '<svg .../>',
-    url: new URL('./todo.html', base).href,          // app://extensions/<id>/todo.html
+    url: new URL('./todo.html', base).href, // app://extensions/<id>/todo.html
     multiOpen: false,
     width: 1024,
     height: 700
@@ -326,10 +339,7 @@ npm run dev -- -- --remote-debugging-port=9333 --debug-extension <id>@<路径>
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "${config:obox.path}",
-      "args": [
-        "--remote-debugging-port=9333",
-        "--debug-extension", "<id>@${workspaceFolder}"
-      ],
+      "args": ["--remote-debugging-port=9333", "--debug-extension", "<id>@${workspaceFolder}"],
       "cwd": "${workspaceFolder}",
       "windows": { "runtimeExecutable": "${config:obox.path}" }
     },

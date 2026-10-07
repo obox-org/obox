@@ -45,6 +45,7 @@ onUnmounted(() => offState?.())
 <template>
   <header class="titlebar" :class="{ inactive: !state.isFocused, fullscreen: state.isFullScreen }">
     <div class="titlebar-drag" />
+    <!-- eslint-disable-next-line vue/no-v-html -- 图标由 App 扩展提供（同进程受信代码，见 ADR-0015） -->
     <span v-if="props.icon" class="titlebar-icon" v-html="props.icon" />
     <div class="titlebar-title">{{ props.title ?? t('app.title') }}</div>
     <div class="titlebar-controls">
