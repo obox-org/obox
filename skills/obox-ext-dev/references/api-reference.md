@@ -148,7 +148,7 @@ window.parent.postMessage(
 // 结果回传：parent 收到后 postMessage { source:'obox-app', action:'obox-extension-reply', requestId, result:{ok,data|error} }
 ```
 
-- `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；10s 超时
+- `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；**60s 超时**（放宽以容纳 handler 内弹模态框等需用户填写的场景）
 - `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销
 
 ### i18n（扩展多语言）
@@ -167,6 +167,7 @@ const text = api.i18n.t('hello', { name: 'Obox' })  // 支持 {param} 插值
 const locale = api.i18n.locale // 'zh' | 'en'
 // 语言切换监听（返回 Disposable），扩展据此刷新自身 UI
 api.i18n.onLocaleChanged((locale) => { /* 重新渲染 */ })
+// 注意：实现复用设置变更通知，**任意设置项变化都会触发**该回调（不只是语言切换）
 ```
 
 ### settings（扩展设置项）
@@ -248,7 +249,7 @@ api.timer.clearInterval('tick')
 
 ### sqlite（数据库，node:sqlite 内置驱动）
 
-宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。
+宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。相对路径可含子目录（如 `sub/a.db`，Windows 上写 `/` 亦可，宿主自动建目录）。
 
 ```ts
 const db = await api.sqlite.open('todo.db')   // → userData/extensions/todo_chenzhi/data/todo.db
@@ -435,6 +436,8 @@ const off = api.settings.onChanged(() => {
 })
 off.dispose()
 ```
+
+> 注意：当前实现**不追踪变更的 key**，回调参数恒为**空字符串**（任何设置项变化都会通知你）。需要精确判断时，用 `api.settings.get` 自行比对缓存值。
 
 ### env.language / window 聚焦
 

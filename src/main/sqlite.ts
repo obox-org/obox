@@ -45,7 +45,9 @@ export function registerSqliteIpc(): void {
   ipcMain.handle('sqlite:open', (_e, extId: string, name: string): { ok: boolean; error?: string } => {
     try {
       const h = openSqlite(extId, name, dataDirFor(extId))
-      handles.set(keyOf(extId, h.name), h)
+      // 句柄以**调用方传入的原始 name** 为 key（h.name 是规范化后的路径，Windows 分隔符为 \，
+      // 与后续操作传入的 name 不一致会导致 requireHandle 找不到句柄——嵌套相对路径在 Windows 失效）
+      handles.set(keyOf(extId, name), h)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }

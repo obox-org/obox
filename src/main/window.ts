@@ -109,20 +109,23 @@ export function registerWindowIpc(): void {
     return win && !win.isDestroyed() ? getState(win) : null
   })
 
-  // 开发辅助：渲染进程请求截图保存到磁盘（用于验证 UI）
-  ipcMain.handle('window:capture', async (_e, outPath: string): Promise<string> => {
-    const win = mainWindow
-    if (!win || win.isDestroyed()) throw new Error('no window')
-    const image = await win.webContents.capturePage()
-    const { writeFile } = await import('fs/promises')
-    await writeFile(outPath, image.toPNG())
-    return outPath
-  })
+  // 开发辅助（**仅开发构建注册**；打包后不注册，避免"任意 JS 执行 / 任意路径写入"能力外泄）：
+  // 渲染进程请求截图保存到磁盘（用于验证 UI）
+  if (is.dev) {
+    ipcMain.handle('window:capture', async (_e, outPath: string): Promise<string> => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) throw new Error('no window')
+      const image = await win.webContents.capturePage()
+      const { writeFile } = await import('fs/promises')
+      await writeFile(outPath, image.toPNG())
+      return outPath
+    })
 
-  // 开发辅助：在渲染进程执行 JS 并返回结果（用于验证 UI 状态）
-  ipcMain.handle('window:eval', async (_e, script: string): Promise<unknown> => {
-    const win = mainWindow
-    if (!win || win.isDestroyed()) throw new Error('no window')
-    return win.webContents.executeJavaScript(script)
-  })
+    // 在渲染进程执行 JS 并返回结果（用于验证 UI 状态）
+    ipcMain.handle('window:eval', async (_e, script: string): Promise<unknown> => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) throw new Error('no window')
+      return win.webContents.executeJavaScript(script)
+    })
+  }
 }
