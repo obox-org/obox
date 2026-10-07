@@ -11,3 +11,6 @@ vendor
 # 注意：必须锚定根目录——写成 `extensions/` 会连**内置扩展目录** src/renderer/src/extensions/ 一并忽略，
 # 导致新建内置扩展时无法 git add（既有文件已跟踪，所以问题不易察觉）
 /extensions/
+# Python 夹具/冒烟脚本的字节码缓存（跑 py_compile 或真实解释器时生成）
+__pycache__/
+*.pyc

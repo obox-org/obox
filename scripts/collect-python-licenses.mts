@@ -65,7 +65,7 @@ async function main(): Promise<void> {
   const arch = argValue('arch') ?? pkg?.arch
   if (!pythonVersion || !arch) {
     throw new Error(
-      '缺 Python 版本/架构：请先跑 scripts/build-python-runtime.mts，或用 --python/--arch 指定'
+      '缺 Python 版本/架构：请先跑打包任务（test/python-runtime-task.test.ts，需设 OBOX_PACK_RUNTIME_OUT 与 OBOX_PYTHON_ARCHIVE），或用 --python/--arch 指定'
     )
   }
   const subject = manifest?.displayName ?? manifest?.name ?? ext.split(sep).pop() ?? 'extension'
