@@ -115,11 +115,13 @@ async function doUninstall(): Promise<void> {
 async function installFromPath(filePath: string): Promise<boolean> {
   installBusy.value = true
   try {
-    const result = await window.api.installUserExtensionFromPath(filePath)
-    if (result) {
-      await hotInstall(result)
+    const outcome = await window.api.installUserExtensionFromPath(filePath)
+    if (outcome.ok) {
+      await hotInstall(outcome.result)
       return true
     }
+    // 失败经返回值 + 错误码表达（不再靠 IPC 抛错传消息），error 可直接展示
+    showNotice(t('extManager.notices.installFailed', { msg: outcome.error }))
     return false
   } catch (err) {
     showNotice(
@@ -165,10 +167,13 @@ async function hotInstall(result: {
 async function installViaDialog(): Promise<void> {
   installBusy.value = true
   try {
-    const result = await window.api.installUserExtensionViaDialog()
-    if (result) {
-      await hotInstall(result)
+    const outcome = await window.api.installUserExtensionViaDialog()
+    if (!outcome) return // 用户取消
+    if (outcome.ok) {
+      await hotInstall(outcome.result)
+      return
     }
+    showNotice(t('extManager.notices.installFailed', { msg: outcome.error }))
   } catch (err) {
     showNotice(
       t('extManager.notices.installFailed', {

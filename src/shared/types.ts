@@ -51,6 +51,34 @@ export interface InstallOixResult {
   replaced: boolean
 }
 
+/**
+ * .oix 安装失败的错误码（渲染进程据此区分引导文案；不要依赖 message 文本做判断）。
+ * - invalid-package：不是有效 zip / 无法读取
+ * - invalid-manifest：缺根 manifest.json，或 name/version/main 非法
+ * - entry-missing：manifest.main 指向的入口不在包内
+ * - entry-invalid：含非法条目路径（zip-slip / 反斜杠 / 绝对路径 / 空段）
+ * - too-large：条目数或解压总量超限
+ * - path-invalid：传入的安装路径非法或不存在
+ * - write-failed：暂存/替换/写盘失败（旧版本已回滚）
+ */
+export type InstallOixErrorCode =
+  | 'invalid-package'
+  | 'invalid-manifest'
+  | 'entry-missing'
+  | 'entry-invalid'
+  | 'too-large'
+  | 'path-invalid'
+  | 'write-failed'
+
+/**
+ * .oix 安装结果：成功或失败都以**返回值**表达（不再靠 IPC 抛错传消息），
+ * 这样错误码能稳定跨进程传递，渲染进程可做区分处理。
+ */
+export type InstallOixOutcome =
+  | { ok: true; result: InstallOixResult }
+  | { ok: false; code: InstallOixErrorCode; error: string }
+
+
 /** 代理配置（设置-网络页，VS Code 风格） */
 export interface ProxyConfig {
   /** 是否启用代理 */
@@ -85,9 +113,9 @@ export interface MainApi {
   /** 运行用户扩展的卸载钩子（若有），返回是否成功 */
   runUninstallHook(id: string): Promise<boolean>
   /** 文件对话框选择 .oix 并安装；取消返回 null */
-  installUserExtensionViaDialog(): Promise<InstallOixResult | null>
+  installUserExtensionViaDialog(): Promise<InstallOixOutcome | null>
   /** 按路径安装 .oix（拖拽场景，路径来自 getPathForFile） */
-  installUserExtensionFromPath(filePath: string): Promise<InstallOixResult>
+  installUserExtensionFromPath(filePath: string): Promise<InstallOixOutcome>
   /** 拖拽文件取真实磁盘路径（Electron webUtils；渲染进程传入 File） */
   getPathForFile(file: unknown): string
   /** 开发辅助：截图窗口内容到磁盘，返回保存路径 */
