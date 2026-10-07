@@ -18,6 +18,7 @@ src/
 │   ├── capabilities.ts # 能力服务：应用信息、用户扩展扫描/卸载/卸载钩子
 │   ├── oix.ts       # .oix 安装能力薄壳（对话框/IPC；失败转成带错误码的返回值）
 │   ├── oixCore.ts   # .oix 安装核心（校验/限额/原子替换+回滚/同 id 串行；不依赖 electron，可单测）
+│   ├── extGuard.ts  # 扩展身份守卫（id 规范化 + 已知扩展成员校验 + 稳定错误码；**误用防护非安全边界**，见 ADR-0015）
 │   ├── debug.ts     # 调试扩展（--debug-extension 解析 + IPC，不安装直接加载）
 │   ├── sqlite.ts    # 扩展数据库（node:sqlite 内置驱动，相对路径 → 扩展 data 目录，表集合 API）
 │   ├── sqliteCore.ts # 数据库核心逻辑（路径校验/自动建表/表集合/列类型元数据；不依赖 electron，可单测）
@@ -129,7 +130,7 @@ git push origin v1.0.0
 | [AGENTS.md](AGENTS.md) | 开发者约定：提问约定 + obox-ext-dev 文档同步要求 + 强制提交流程（**分支 + PR**）+ 质量门槛 |
 | [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md) | 扩展开发完整指南（含 references/ 与 scripts/） |
 | [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装） |
-| [docs/adr/](docs/adr/) | 架构决策记录：0001 渲染进程宿主 / 0002 声明式贡献点 / 0003 禁用卸载重启生效 / 0004 两阶段启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009 调试扩展 / 0010 扩展 API 版本 / 0011–0013 扩展能力 / 0014 热安装与重启 |
+| [docs/adr/](docs/adr/) | 架构决策记录：0001–0004 宿主与贡献点/启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009–0014 调试扩展·API 版本·扩展能力·热安装 / **0015 扩展信任模型与身份守卫** |
 
 ## 技术栈
 
