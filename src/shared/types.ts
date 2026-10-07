@@ -153,6 +153,12 @@ export interface MainApi {
   downloadUpdate(): Promise<{ ok: boolean; error?: string }>
   /** 安装并重启（下载完成后） */
   installUpdate(): Promise<void>
+  /** 强制重装/降级：从更新源直接下载并启动安装向导（绕开 electron-updater 的版本门控） */
+  forceInstallUpdate(opts: {
+    feedUrl: string
+    proxy?: ProxyConfig
+    reason?: 'user' | 'auto'
+  }): Promise<{ ok: boolean; version?: string; filePath?: string; error?: string }>
   // ---- 扩展能力：定时器（主进程精确计时，秒粒度） ----
   setTimerTimeout(extId: string, id: string, seconds: number): Promise<{ ok: boolean; error?: string }>
   setTimerInterval(extId: string, id: string, seconds: number): Promise<{ ok: boolean; error?: string }>

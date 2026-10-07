@@ -5,10 +5,17 @@
  *   代理认证经 autoUpdater 的 `login` 事件回填设置-网络里的账号密码
  * - 事件（检查结果/下载进度/下载完成）经 IPC 转发渲染进程
  */
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { autoUpdater, UpdateInfo } from 'electron-updater'
+import { createHash } from 'node:crypto'
+import { createWriteStream } from 'node:fs'
+import { mkdir, rm, stat } from 'node:fs/promises'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import { join } from 'node:path'
 import type { ProxyConfig } from '../shared/types'
 import { applyProxyToSession, currentProxy, updaterSession } from './proxy'
+import { buildAssetUrl, parseUpdateFeed, pickArtifact } from './updateFeed'
 
 /** 更新事件（主进程 → 渲染进程） */
 export type UpdateEvent =
@@ -148,6 +155,100 @@ function ensureInit(): void {
 /** 进行中的检查/下载：并发调用复用同一结果（命令面板与状态栏可同时触发，避免重复下载/竞态） */
 let activeCheck: Promise<{ ok: boolean; available?: string; error?: string }> | null = null
 let activeDownload: Promise<{ ok: boolean; error?: string }> | null = null
+/** 进行中的"强制重装/降级"下载 */
+let activeForceInstall: Promise<{
+  ok: boolean
+  version?: string
+  filePath?: string
+  error?: string
+}> | null = null
+
+/**
+ * 强制重装 / 降级：**绕开 electron-updater 的版本门控**。
+ *
+ * electron-updater 默认 `allowDowngrade = false`，且远端版本与本地**相等**时按 semver 判"无更新"——
+ * 因此"修复损坏的安装（同版本重装）"和"回退到旧版本"都无法经它完成。
+ * 这里直接从更新源读 `latest.yml` → 按本机架构挑产物 → 流式下载 → 校验 sha512 → 启动安装向导，
+ * 由用户完成安装（NSIS 向导式安装器）；应用自身不退出。
+ */
+async function forceInstallFromFeed(opts: {
+  feedUrl: string
+  proxy?: ProxyConfig
+}): Promise<{ ok: boolean; version?: string; filePath?: string; error?: string }> {
+  const ses = updaterSession()
+  applyProxyToSession(ses, opts.proxy)
+  const feedBase = opts.feedUrl.endsWith('/') ? opts.feedUrl : `${opts.feedUrl}/`
+
+  // 1) 取并解析更新元数据
+  const metaRes = await ses.fetch(buildAssetUrl(feedBase, { url: 'latest.yml' }), {
+    redirect: 'follow'
+  })
+  if (!metaRes.ok) {
+    return { ok: false, error: `读取更新元数据失败（HTTP ${metaRes.status}）` }
+  }
+  const feed = parseUpdateFeed(await metaRes.text())
+
+  // 2) 按架构挑产物（Windows 只有一份 latest.yml，两根架构的包都在 files 里）
+  const file = pickArtifact(feed, process.arch)
+  const url = buildAssetUrl(feedBase, file)
+  const dir = join(app.getPath('userData'), 'updates')
+  await mkdir(dir, { recursive: true })
+  const dest = join(dir, file.url.split('/').pop() ?? 'obox-setup.exe')
+
+  // 3) 流式下载（边下边算 sha512），限时 30 分钟；进度经既有 download-progress 事件透出
+  const res = await ses.fetch(url, { redirect: 'follow' })
+  if (!res.ok) return { ok: false, error: `下载安装包失败（HTTP ${res.status}）` }
+  const total = Number(res.headers.get('content-length') ?? file.size ?? 0)
+  const hash = createHash('sha512')
+  let transferred = 0
+  let lastEmit = 0
+  const started = Date.now()
+  const stream = Readable.fromWeb(
+    res.body as unknown as Parameters<typeof Readable.fromWeb>[0]
+  ) as Readable
+  stream.on('data', (chunk: Buffer) => {
+    hash.update(chunk)
+    transferred += chunk.length
+    const now = Date.now()
+    if (now - lastEmit < 200) return
+    lastEmit = now
+    const elapsed = Math.max(1, now - started) / 1000
+    listeners.forEach((l) =>
+      l({
+        type: 'download-progress',
+        percent: total > 0 ? (transferred / total) * 100 : 0,
+        bytesPerSecond: transferred / elapsed,
+        transferred,
+        total
+      })
+    )
+  })
+  try {
+    await pipeline(stream, createWriteStream(dest))
+  } catch (err) {
+    await rm(dest, { force: true })
+    return { ok: false, error: `写入安装包失败：${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  // 4) 校验 sha512（元数据里给了就必须匹配，否则删除并报错——不启动未校验的安装器）
+  if (file.sha512) {
+    const actual = hash.digest('base64')
+    if (actual !== file.sha512) {
+      await rm(dest, { force: true })
+      return { ok: false, error: '安装包校验失败（sha512 不匹配），已删除下载文件' }
+    }
+  }
+  const size = (await stat(dest)).size
+
+  // 5) 启动安装向导（应用不退出：用户可在向导里选择安装目录/安装用户）
+  const openResult = await shell.openPath(dest)
+  if (openResult) {
+    return { ok: false, error: `启动安装程序失败：${openResult}` }
+  }
+  listeners.forEach((l) => l({ type: 'update-downloaded', version: feed.version }))
+  console.log(`[updater] 强制安装 ${feed.version}（${size} 字节）已启动：${dest}`)
+  return { ok: true, version: feed.version, filePath: dest }
+}
 
 export function registerUpdateIpc(): void {
   ensureInit()
@@ -221,6 +322,35 @@ export function registerUpdateIpc(): void {
   ipcMain.handle('update:install', (): void => {
     autoUpdater.quitAndInstall()
   })
+
+  /**
+   * 强制重装 / 降级：见 forceInstallFromFeed 的说明（绕开 electron-updater 的版本门控）。
+   * 进行中互斥：重复调用复用同一结果。
+   */
+  ipcMain.handle(
+    'update:force-install',
+    async (
+      _e,
+      opts: { feedUrl?: string; proxy?: ProxyConfig; reason?: 'user' | 'auto' }
+    ): Promise<{ ok: boolean; version?: string; filePath?: string; error?: string }> => {
+      if (!opts?.feedUrl) return { ok: false, error: '未配置更新源（需在设置-更新选择更新扩展）' }
+      if (activeForceInstall) return activeForceInstall
+      // reason 目前只用于日志（后续可据此区分"用户主动"与"自动重试"的埋点/提示）
+      console.log(`[updater] 强制安装请求（reason=${opts.reason ?? 'user'}）`)
+      activeForceInstall = forceInstallFromFeed({
+        feedUrl: opts.feedUrl,
+        proxy: opts.proxy
+      })
+        .catch((err) => ({
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        }))
+        .finally(() => {
+          activeForceInstall = null
+        })
+      return activeForceInstall
+    }
+  )
 }
 
 /** 渲染进程订阅更新事件（preload 经此转发） */

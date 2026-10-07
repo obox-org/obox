@@ -224,4 +224,19 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **修复后行为**：激活抛错时立即清理本次已收集的全部副作用，并把清理函数登记进宿主（后续热移除/重启时同样可用）。
 
 **扩展侧注意事项**：仍应自己保证注册顺序合理——把"可能抛错"的初始化逻辑放在注册副作用**之前**（`apply` 内先校验配置/依赖，再注册）。
+## 27. 想重装同一版本或回退到旧版本，但"检查更新"说无更新
+
+**症状**：安装损坏想重装，或想从新版回退到旧版，但 `api.update.check()` 总是返回"无更新"；`install()` 也无从下手。
+
+**原因**（electron-updater 的既有语义，不是 bug）：默认 `allowDowngrade = false`，且远端版本与本地**相等**时按 semver 直接判定"无更新"——`check` 与 `download`/`install` 这条链路因此**无法完成同版本重装与降级**。
+
+**修复（宿主已提供强制通道）**：用 `api.update.install({ force: true, feedUrl })`：
+
+- 宿主**直接**从更新源读 `latest.yml` → 按本机架构挑安装包 → 流式下载 → 校验 sha512 → 启动安装向导（NSIS 向导式，应用不退出，由用户完成安装）；
+- 因此**不受版本门控限制**：同版本重装（修复损坏安装）与降级（回退到旧版）都能做；
+- 进度仍经 `api.update.onEvent` 的 `download-progress` 透出；完成后会发一次 `update-downloaded`；
+- `feedUrl` 省略时回落到提供者 manifest 的 `contributes.updater.feedUrl`；
+- 下载失败或 sha512 不匹配时**不会启动安装器**（不匹配的文件会被删除），返回 `{ ok:false, error }`。
+
+**扩展侧注意事项**：`force` 会真的启动安装程序，建议放在显式命令（如命令面板项）里，由用户主动触发；不要放在自动检查流程里。
 
