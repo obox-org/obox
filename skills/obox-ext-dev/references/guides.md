@@ -197,7 +197,22 @@ extensions/todo/
 
 - 校验 manifest（name 正则 / version semver / main 存在且入口文件在包内）
 - zip-slip 防护：拒绝绝对路径、`..`、反斜杠、重复条目
+- **原子安装 + 回滚**：先解到暂存目录（`userData/extensions/.tmp`），全部校验通过后才整体替换目标目录；覆盖安装时旧目录先改名备份，替换失败会改回——**安装失败不会让旧版本消失**
+- **并发串行**：同一扩展 id 的安装排队执行（进程内队列），并发安装不会写出半安装目录
+- **解压限额**：条目数 ≤ 2000、解压总量 ≤ 64MB（防压缩炸弹），超限直接拒绝
 - 同名覆盖安装（升级语义）；`.obox-meta.json` 记录安装时间戳（Last Updated 展示）
+
+**安装失败的错误码**（扩展管理器展示消息，代码可据此分支）：
+
+| code | 含义 |
+|---|---|
+| `invalid-package` | 不是有效 zip / 无法读取 |
+| `invalid-manifest` | 缺根 `manifest.json`，或 name / version / main 非法 |
+| `entry-missing` | `manifest.main` 指向的入口不在包内 |
+| `entry-invalid` | 含非法条目路径（zip-slip / 反斜杠 / 绝对路径 / 空段） |
+| `too-large` | 条目数或解压总量超限 |
+| `path-invalid` | 传入的安装路径非法或不存在 |
+| `write-failed` | 暂存 / 替换 / 写盘失败（旧版本已回滚） |
 
 ## 教程：更新提供者扩展（参考 `extensions/obox-updater/`）
 

@@ -16,7 +16,8 @@ src/
 │   ├── window.ts    # 无边框窗口 + 窗口控制 IPC（最小化/最大化/关闭/状态推送）
 │   ├── appWindow.ts # App 子窗口管理（单开聚焦/多开序号/主机关闭全关）
 │   ├── capabilities.ts # 能力服务：应用信息、用户扩展扫描/卸载/卸载钩子
-│   ├── oix.ts       # .oix 扩展包安装（校验 + 防路径穿越解压 + 安装 IPC）
+│   ├── oix.ts       # .oix 安装能力薄壳（对话框/IPC；失败转成带错误码的返回值）
+│   ├── oixCore.ts   # .oix 安装核心（校验/限额/原子替换+回滚/同 id 串行；不依赖 electron，可单测）
 │   ├── debug.ts     # 调试扩展（--debug-extension 解析 + IPC，不安装直接加载）
 │   ├── sqlite.ts    # 扩展数据库（node:sqlite 内置驱动，相对路径 → 扩展 data 目录，表集合 API）
 │   ├── sqliteCore.ts # 数据库核心逻辑（路径校验/自动建表/表集合/列类型元数据；不依赖 electron，可单测）

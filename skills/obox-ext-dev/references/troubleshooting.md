@@ -185,7 +185,27 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **扩展侧注意事项**：不要自己读写代理环境变量——用 `api.proxy.get()` 读取配置，联网统一走 `api.net.fetch`（宿主自动应用）；`ignoreSSL` 现只作用于上述 session，不再是进程级全局开关。
 
-## 23. 热安装带 extensionDependencies 的扩展后，跨扩展命令调用失败
+## 24. 安装 .oix 失败：怎么判断是包的问题还是路径的问题
+
+**症状**：扩展管理器提示"安装失败：…"，但看不到具体原因分类；或覆盖安装失败后担心旧版本被删。
+
+**先明确两点**（宿主侧已实现）：
+- **失败不会丢旧版本**：安装先解到暂存目录（`userData/extensions/.tmp`），全部校验通过后才整体替换目标目录；覆盖安装时旧目录先改名备份，替换失败会改回。
+- **失败以返回值 + 错误码表达**（不再靠 IPC 抛错传消息），可按错误码排查：
+
+| code | 含义与排查方向 |
+|---|---|
+| `invalid-package` | 文件不是有效 zip / 读取失败——确认打包产物没被截断，`.oix` 就是 zip（可用 `tar -tf x.oix` 或解压工具验证） |
+| `invalid-manifest` | 缺**根目录** `manifest.json`，或 `name`/`version`/`main` 非法——常见是打包时把文件放进了子目录（必须扁平在 zip 根） |
+| `entry-missing` | `manifest.main` 写的路径在包内不存在——注意 `./index.js` 与 `index.js` 的差别，以及是否漏打包入口 |
+| `entry-invalid` | 包内含非法条目路径（`../`、绝对路径、反斜杠、空段）——属 zip-slip 防护，换工具重新打包 |
+| `too-large` | 条目数 > 2000 或解压总量 > 64MB——检查是否误把 `node_modules/`、`dist/` 全打进包了 |
+| `path-invalid` | 传入路径为空或文件不存在（拖拽场景取到的是空路径） |
+| `write-failed` | 暂存/替换/写盘失败（磁盘满、权限、目录被占用）——旧版本已回滚 |
+
+**扩展侧注意事项**：打包时只放分发必需文件（`manifest.json`、入口 `index.js`、图标与静态资源），不要把源码、`node_modules/`、构建缓存打进 `.oix`——既是限额要求，也能避免把 `main` 之外的路径写错。
+
+## 25. 热安装带 extensionDependencies 的扩展后，跨扩展命令调用失败
 
 **症状**：扩展 A 声明 `extensionDependencies: ["B"]`。冷启动（`npm run dev` 重启）一切正常；但经 .oix **热安装 A** 后，A 调用 `api.executeCommand('B.do')` 报"命令不存在"，B 看起来也没激活。
 
@@ -195,7 +215,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **扩展侧注意事项**：声明依赖后仍需对"依赖缺失"做兜底（宿主不阻塞），例如命令调用前 `try/catch` 或用 `api.on/emit` 做就绪通知。
 
-## 24. 扩展激活失败后，副作用残留（事件监听还在、设置页/卡片仍在）
+## 26. 扩展激活失败后，副作用残留（事件监听还在、设置页/卡片仍在）
 
 **症状**：扩展 `apply(api)` 中途抛错 → 扩展管理器显示激活失败（`activationError`），但它的部分注册仍生效（如状态栏项被更新、设置页仍出现、事件监听仍在响应、App 卡片仍在）。
 
