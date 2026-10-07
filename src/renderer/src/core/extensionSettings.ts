@@ -27,6 +27,17 @@ class ExtensionSettingsStore {
     }
   }
 
+  /**
+   * 按页面 id 移除单个设置页。
+   * api.settings.register 返回的 dispose 用它——只撤掉自己注册的那一页，
+   * 不影响该扩展 manifest 声明的设置页与其它运行时注册的页面。
+   */
+  removePage(pageId: string): void {
+    for (let i = this.pages.length - 1; i >= 0; i--) {
+      if (this.pages[i].id === pageId) this.pages.splice(i, 1)
+    }
+  }
+
   /** 按扩展 id 找设置页（扩展节点下按扩展名展开） */
   byExtension(extensionId: string): RegisteredSettingsPage[] {
     return this.pages.filter((p) => p.extensionId === extensionId)

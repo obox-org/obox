@@ -55,6 +55,12 @@ class Registry {
   // ---- 注册（宿主启动阶段，manifest 声明） ----
 
   registerNavItem(extensionId: string, c: NavItemContribution): void {
+    // 按 id 原地更新：覆盖安装/热重载会重复注册，直接 push 会让数组无限增长
+    const existing = this.navItems.find((i) => i.id === c.id)
+    if (existing) {
+      Object.assign(existing, c, { group: c.group ?? 'top', extensionId, active: true })
+      return
+    }
     this.navItems.push({ ...c, group: c.group ?? 'top', extensionId, active: true })
   }
 
@@ -92,6 +98,17 @@ class Registry {
   }
 
   registerStatusBarItem(extensionId: string, c: StatusBarItemContribution): void {
+    // 按 id 原地更新（同 registerNavItem：避免覆盖安装导致条目堆积）
+    const existing = this.statusBarItems.find((i) => i.id === c.id)
+    if (existing) {
+      Object.assign(existing, c, {
+        extensionId,
+        text: c.text ?? '',
+        visible: true,
+        active: true
+      })
+      return
+    }
     this.statusBarItems.push({
       ...c,
       extensionId,
@@ -141,11 +158,47 @@ class Registry {
     }
   }
 
+  /**
+   * 卸载 / 热移除时的**物理清理**：把该扩展的贡献项从注册表真正删除。
+   *
+   * 与 `deactivateExtension`（仅标记 active=false，禁用等场景需要保留条目）分开：
+   * 卸载/覆盖安装必须物理移除，否则——
+   * - 同 id 命令永久占据 commandIndex：重装声明同 id 的扩展被当重复丢弃、handler 绑到旧条目
+   * - 导航项/状态栏项数组随每次覆盖安装无限增长（内存与渲染泄漏）
+   */
+  unregisterExtension(extensionId: string): void {
+    const dropByExt = <T extends { extensionId: string }>(arr: T[]): void => {
+      for (let i = arr.length - 1; i >= 0; i--) {
+        if (arr[i].extensionId === extensionId) arr.splice(i, 1)
+      }
+    }
+    dropByExt(this.navItems)
+    dropByExt(this.statusBarItems)
+    dropByExt(this.commands)
+    dropByExt(this.menus)
+    for (const [id, cmd] of [...this.commandIndex]) {
+      if (cmd.extensionId === extensionId) this.commandIndex.delete(id)
+    }
+    this.removeRuntimeStatusBarItems(extensionId)
+  }
+
   // ---- 命令实现绑定（扩展激活时） ----
 
-  setCommandHandler(id: string, handler: (...args: unknown[]) => unknown): Disposable {
+  setCommandHandler(
+    id: string,
+    handler: (...args: unknown[]) => unknown,
+    extensionId?: string
+  ): Disposable {
     const cmd = this.commandIndex.get(id)
     if (!cmd) throw new Error(`command not declared: ${id}`)
+    // 归属校验：命令 id 全局唯一，只允许声明它的扩展绑定实现——
+    // 否则后激活的扩展可用同名命令把 handler 绑到别人的命令项上（静默劫持）
+    if (extensionId && cmd.extensionId !== extensionId) {
+      console.warn(
+        `[registry] 命令 ${id} 由扩展 ${cmd.extensionId} 声明，${extensionId} 不能绑定其实现`
+      )
+      return { dispose: (): void => {} }
+    }
     cmd.handler = handler
     cmd.active = true
     return { dispose: () => (cmd.handler = undefined) }
@@ -176,7 +229,12 @@ class Registry {
     for (const nav of this.navItems) {
       if (nav.extensionId === extensionId && nav.view) viewIds.add(nav.view)
     }
-    for (const viewId of viewIds) this.viewComponents.delete(viewId)
+    for (const viewId of viewIds) {
+      // 内置共享组件（如树视图所有贡献点共用的 'obox.tree'）不能随单个扩展移除，
+      // 否则其它扩展的树视图会一并失效直至重启
+      if (viewId.startsWith('obox.')) continue
+      this.viewComponents.delete(viewId)
+    }
   }
 
   // ---- 查询（UI 消费） ----
