@@ -12,10 +12,13 @@ import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import type { IpcChannelDeclaration, IpcEvent, IpcReplyOutcome } from '../shared/types'
 import { getUserExtensionsDir } from './capabilities'
+import type { Readable, Writable } from 'node:stream'
 import { IpcCoreError, ipcEndpoint, isIpcCoreError, validateIpcDeclaration } from './ipcCore'
+import type { Framing } from './ipcCore'
 import {
   openPipeClientTransport,
   openStdioTransport,
+  openStreamTransport,
   resolveProgramInExtension,
   type IpcTransportHandles
 } from './ipcTransport'
@@ -26,7 +29,6 @@ export const MAX_CHANNELS_PER_EXTENSION = 4
 const FORWARD_TIMEOUT_MS = 30_000
 
 interface OpenChannel {
-  declaration: IpcChannelDeclaration
   transport: IpcTransportHandles
 }
 
@@ -96,15 +98,11 @@ async function forwardInboundRequest(
   return outcome.result
 }
 
-/** 打开一条通道（校验声明 → 建传输 → 接事件）；失败抛 IpcCoreError */
-export async function openExtensionChannel(
-  extId: string,
-  rawDeclaration: IpcChannelDeclaration
-): Promise<void> {
-  const declaration = validateIpcDeclaration(rawDeclaration)
+/** 校验还能再开一条通道（重名与每扩展限额），返回该扩展的通道表 */
+function assertChannelSlot(extId: string, name: string): Map<string, OpenChannel> {
   const map = channelMap(extId)
-  if (map.has(declaration.id)) {
-    throw new IpcCoreError('invalid-declaration', `通道 ${declaration.id} 已打开`)
+  if (map.has(name)) {
+    throw new IpcCoreError('invalid-declaration', `通道 ${name} 已打开`)
   }
   if (map.size >= MAX_CHANNELS_PER_EXTENSION) {
     throw new IpcCoreError(
@@ -112,6 +110,41 @@ export async function openExtensionChannel(
       `通道数已达上限 ${MAX_CHANNELS_PER_EXTENSION}（先关闭不用的通道）`
     )
   }
+  return map
+}
+
+/**
+ * 把一条已就绪的传输登记为通道：转发 stderr、挂关闭广播与注销、把对端请求交给渲染进程。
+ * `openExtensionChannel`（自己 spawn/连接）与 `registerStreamChannel`（用调用方给的流）共用这段。
+ */
+function registerChannel(extId: string, name: string, transport: IpcTransportHandles): void {
+  transport.onStderr((text) => broadcast({ extId, name, type: 'stderr', text: text.trimEnd() }))
+  transport.channel.onClose((err) => {
+    // 通道关闭：登记表移除，并通知扩展（err 为 null 表示扩展自己关闭）
+    if (channels.get(extId)?.get(name) === undefined) return
+    channels.get(extId)?.delete(name)
+    if (channels.get(extId)?.size === 0) channels.delete(extId)
+    broadcast({
+      extId,
+      name,
+      type: 'close',
+      code: err?.code ?? 'channel-closed',
+      message: err?.message ?? '通道已关闭'
+    })
+  })
+  transport.channel.setDefaultHandler((method, params) =>
+    forwardInboundRequest(extId, name, method, params)
+  )
+  channelMap(extId).set(name, { transport })
+}
+
+/** 打开一条通道（校验声明 → 建传输 → 接事件）；失败抛 IpcCoreError */
+export async function openExtensionChannel(
+  extId: string,
+  rawDeclaration: IpcChannelDeclaration
+): Promise<void> {
+  const declaration = validateIpcDeclaration(rawDeclaration)
+  assertChannelSlot(extId, declaration.id)
 
   const extensionDir = join(getUserExtensionsDir(), extId)
   let transport: IpcTransportHandles
@@ -136,28 +169,35 @@ export async function openExtensionChannel(
   }
 
   await transport.ready
+  registerChannel(extId, declaration.id, transport)
+}
 
-  transport.onStderr((text) =>
-    broadcast({ extId, name: declaration.id, type: 'stderr', text: text.trimEnd() })
-  )
-  transport.channel.onClose((err) => {
-    // 通道关闭：登记表移除，并通知扩展（err 为 null 表示扩展自己关闭）
-    if (channels.get(extId)?.get(declaration.id) === undefined) return
-    channels.get(extId)?.delete(declaration.id)
-    if (channels.get(extId)?.size === 0) channels.delete(extId)
-    broadcast({
-      extId,
-      name: declaration.id,
-      type: 'close',
-      code: err?.code ?? 'channel-closed',
-      message: err?.message ?? '通道已关闭'
-    })
+/**
+ * 用**调用方已建立的流**注册一条通道（issue #51：宿主以 shell 方式拉起的解释器进程）。
+ *
+ * 与 `openExtensionChannel` 共用限额、注册表、关闭广播与对端请求转发；区别只在于"字节从哪来"：
+ * 这里由调用方给流，且 `name` 必须已经过校验（`pythonCore.normalizeChannelName` 一类）。
+ * 对端退出时由调用方 `transport.channel.close(...)`——但那需要通道句柄，因此本函数返回它。
+ */
+export function registerStreamChannel(
+  extId: string,
+  name: string,
+  streams: {
+    readable: Readable
+    writable: Writable
+    framing?: Framing
+    onDispose?: () => void
+  }
+): IpcTransportHandles {
+  assertChannelSlot(extId, name)
+  const transport = openStreamTransport({
+    readable: streams.readable,
+    writable: streams.writable,
+    framing: streams.framing,
+    onDispose: streams.onDispose
   })
-  transport.channel.setDefaultHandler((method, params) =>
-    forwardInboundRequest(extId, declaration.id, method, params)
-  )
-
-  map.set(declaration.id, { declaration, transport })
+  registerChannel(extId, name, transport)
+  return transport
 }
 
 /** 关闭一条通道（幂等） */
