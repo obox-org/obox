@@ -135,6 +135,17 @@ export async function recordInstallHookResult(
   return next
 }
 
+/** 读某目录清单里的版本号（覆盖安装时记下被替换的版本，供钩子的 ctx.previousVersion） */
+async function readManifestVersion(dir: string): Promise<string | undefined> {
+  try {
+    const raw = await fs.readFile(join(dir, 'manifest.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { version?: unknown }
+    return typeof parsed.version === 'string' ? parsed.version : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** 解压阶段进入暂存目录：所有校验通过前不碰目标目录 */
 async function extractToStage(
   zip: AdmZip,
@@ -247,15 +258,25 @@ export async function installFromPackage(
     await fs.mkdir(opts.tmpRoot, { recursive: true })
     await fs.rm(stage, { recursive: true, force: true })
 
+    // 覆盖安装：**替换前**把旧版本号与旧的钩子执行记录读出来（替换后旧目录就没了）。
+    // previousVersion 供 install 钩子做 ctx.previousVersion；旧 install 记录要继承下来，
+    // 否则"同一版本只跑一次"的判定在替换后就失去了依据（E2E 抓到的重复执行）
+    const replaced = await pathExists(target)
+    const previousVersion = replaced ? await readManifestVersion(target) : undefined
+    const previousMeta = replaced ? await readExtensionMeta(target) : {}
+
     try {
       await fs.mkdir(stage, { recursive: true })
       await extractToStage(zip, stage, limits)
       const now = Date.now()
       const meta: ExtensionMeta = {
         installedTimestamp: now,
+        // 继承覆盖安装前的 install 记录（同版本重装 → 主进程据此判定"已跑过"并跳过钩子）
+        ...(previousMeta.install ? { install: previousMeta.install } : {}),
         // 安装完成即标记"待执行 install 钩子"：渲染进程执行后回写 install 并清除本字段；
-        // 若安装当时渲染进程不可用，则留待下次启动扫描期补跑（见 issue #52 / hookState.ts）
-        pendingInstall: { version, at: now }
+        // 若安装当时渲染进程不可用，则留待下次启动扫描期补跑（见 issue #52 / hookState.ts）。
+        // 记上 previousVersion：延迟补跑时同样能给出正确的升级上下文
+        pendingInstall: { version, at: now, previousVersion }
       }
       await fs.writeFile(join(stage, '.obox-meta.json'), JSON.stringify(meta), 'utf8')
     } catch (err) {
@@ -266,7 +287,6 @@ export async function installFromPackage(
     }
 
     // 原子替换：旧目录先改名备份，替换失败则改回（旧版本不丢）
-    const replaced = await pathExists(target)
     try {
       if (replaced) await fs.rename(target, backup)
       await fs.rename(stage, target)
@@ -282,7 +302,7 @@ export async function installFromPackage(
     }
     await fs.rm(backup, { recursive: true, force: true }).catch(() => {})
 
-    return { id, name, displayName, version, author, replaced }
+    return { id, name, displayName, version, author, replaced, previousVersion }
   }
 
   // 串行化：把本次安装接到该 id 的队列尾部；队列项自身不抛错，避免影响后续安装

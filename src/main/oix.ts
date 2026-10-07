@@ -13,7 +13,13 @@ import type { InstallOixOutcome } from '../shared/types'
 import { getUserExtensionsDir } from './capabilities'
 import { addKnownExtension } from './extGuard'
 import { registerHookIpc, runExtensionHook } from './hookRunner'
-import { installFromPackage, OixInstallError, recordInstallHookResult } from './oixCore'
+import {
+  installFromPackage,
+  OixInstallError,
+  readExtensionMeta,
+  recordInstallHookResult
+} from './oixCore'
+import { decideInstallHook } from '../shared/hookState'
 
 export { deriveDirName } from './oixCore'
 
@@ -41,16 +47,33 @@ async function triggerInstallHook(input: {
   id: string
   version: string
   replaced: boolean
+  previousVersion?: string
 }): Promise<void> {
+  const dir = join(getUserExtensionsDir(), input.id)
   try {
+    // "同一版本只跑一次"的判定（与渲染进程共用 src/shared/hookState.ts 的同一套规则）：
+    // 同版本重装时该版本已跑过 → 跳过；但要把 pendingInstall 清掉，否则下次启动扫描期又会补跑一次
+    const meta = await readExtensionMeta(dir)
+    const decision = decideInstallHook({
+      state: meta,
+      version: input.version,
+      upgraded: input.replaced,
+      atInstallTime: true
+    })
+    if (!decision.run) {
+      const previous = meta.install
+      if (previous) await recordInstallHookResult(dir, previous.version, previous.ok, previous.at)
+      return
+    }
     const outcome = await runExtensionHook({
       extId: input.id,
       phase: 'install',
       version: input.version,
-      upgraded: input.replaced
+      upgraded: input.replaced,
+      previousVersion: input.previousVersion
     })
     if (!outcome.delivered || outcome.deferred === true) return
-    await recordInstallHookResult(join(getUserExtensionsDir(), input.id), input.version, outcome.ok)
+    await recordInstallHookResult(dir, input.version, outcome.ok)
   } catch (err) {
     // 钩子链路自身的问题不影响安装结果（pendingInstall 保留，下次启动补跑）
     console.warn('[oix] 触发 install 钩子失败：', err instanceof Error ? err.message : String(err))
@@ -69,7 +92,12 @@ export async function installOixFromPath(filePath: string): Promise<InstallOixOu
     // 登记进"已知扩展"集合（成员校验的真值来源之一）
     addKnownExtension(result.id)
     // 安装完成后立刻跑 install 钩子（渲染进程执行；见上面 triggerInstallHook 的降级语义）
-    await triggerInstallHook({ id: result.id, version: result.version, replaced: result.replaced })
+    await triggerInstallHook({
+      id: result.id,
+      version: result.version,
+      replaced: result.replaced,
+      previousVersion: result.previousVersion
+    })
     return { ok: true, result }
   } catch (err) {
     return toOutcome(err)

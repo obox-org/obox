@@ -2,6 +2,7 @@
  * 渲染进程侧钩子执行的测试（issue #52）：skipped / 执行成功 / 失败归因 / 未加载不误记 / 同阶段互斥。
  */
 import { describe, expect, it } from 'vitest'
+import type { ExtensionActivationApi } from '../src/api'
 import type { ExtensionHookRunRequest } from '../src/shared/types'
 import {
   deferredHookResult,
@@ -20,9 +21,14 @@ const request = (over: Partial<ExtensionHookRunRequest> = {}): ExtensionHookRunR
 
 const loadOf = (module: unknown) => async (): Promise<unknown> => module
 
+const apiStub = { ok: true } as unknown as ExtensionActivationApi
+
 describe('executeExtensionHook', () => {
   it('入口未导出钩子 → ok + skipped（可选、可为空，属正常）', async () => {
-    const result = await executeExtensionHook(request(), { load: loadOf({ default: () => {} }) })
+    const result = await executeExtensionHook(request(), {
+      load: loadOf({ default: () => {} }),
+      api: apiStub
+    })
     expect(result).toEqual({ requestId: 'r1', ok: true, skipped: true })
   })
 
@@ -31,6 +37,7 @@ describe('executeExtensionHook', () => {
     const result = await executeExtensionHook(
       request({ upgraded: true, previousVersion: '0.9.0' }),
       {
+        api: apiStub,
         load: loadOf({
           install: (ctx: unknown) => {
             seen.push(ctx)
@@ -39,12 +46,18 @@ describe('executeExtensionHook', () => {
       }
     )
     expect(result).toEqual({ requestId: 'r1', ok: true, skipped: false })
-    expect(seen[0]).toEqual({ extensionId: 'demo_ext', upgraded: true, previousVersion: '0.9.0' })
+    expect(seen[0]).toEqual({
+      extensionId: 'demo_ext',
+      upgraded: true,
+      previousVersion: '0.9.0',
+      api: apiStub
+    })
   })
 
   it('只跑对应阶段的钩子（install 请求不触发 uninstall）', async () => {
     let uninstallCalls = 0
     await executeExtensionHook(request({ phase: 'install' }), {
+      api: apiStub,
       load: loadOf({
         install: () => {},
         uninstall: () => {
@@ -57,6 +70,7 @@ describe('executeExtensionHook', () => {
 
   it('钩子抛错 → ok:false 且原因为中文失败文案（可并入 activationError）', async () => {
     const result = await executeExtensionHook(request(), {
+      api: apiStub,
       load: loadOf({
         install: () => {
           throw new Error('依赖准备失败')
@@ -92,8 +106,8 @@ describe('executeExtensionHook', () => {
         await blocked
       }
     })
-    const first = executeExtensionHook(request({ requestId: 'a' }), { load })
-    const second = await executeExtensionHook(request({ requestId: 'b' }), { load })
+    const first = executeExtensionHook(request({ requestId: 'a' }), { load, api: apiStub })
+    const second = await executeExtensionHook(request({ requestId: 'b' }), { load, api: apiStub })
     expect(second).toMatchObject({ requestId: 'b', ok: false, deferred: true })
     release?.()
     await expect(first).resolves.toEqual({ requestId: 'a', ok: true, skipped: false })
@@ -110,7 +124,10 @@ describe('executeExtensionHook', () => {
       },
       uninstall: () => {}
     })
-    const install = executeExtensionHook(request({ requestId: 'i', phase: 'install' }), { load })
+    const install = executeExtensionHook(request({ requestId: 'i', phase: 'install' }), {
+      load,
+      api: apiStub
+    })
     const uninstall = await executeExtensionHook(request({ requestId: 'u', phase: 'uninstall' }), {
       load
     })

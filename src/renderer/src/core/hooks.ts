@@ -8,6 +8,8 @@
  * 钩子失败不在此模块决定后果（install 失败归为激活失败，由宿主走既有 activationError 通道）。
  */
 
+import type { ExtensionActivationApi } from '../../../api'
+
 /** 钩子名称 */
 export type HookName = 'install' | 'uninstall'
 
@@ -19,6 +21,12 @@ export interface HookContext {
   upgraded: boolean
   /** 升级前的版本（仅 upgraded 为 true 时提供） */
   previousVersion?: string
+  /**
+   * 与激活时**同一套**能力面（api-reference 承诺的 `ctx.api`）。
+   * 注意：钩子期**注册类操作会被宿主在钩子结束后立即释放**（命令/视图/状态栏/App 卡片等属"激活后"的事），
+   * 钩子应只做环境准备与清理。
+   */
+  api: ExtensionActivationApi
 }
 
 /** 钩子函数：可同步可异步；返回值不使用 */

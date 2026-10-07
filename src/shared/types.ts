@@ -49,6 +49,8 @@ export interface InstallOixResult {
   author?: string
   /** 是否覆盖了已存在的同名扩展 */
   replaced: boolean
+  /** 被替换掉的旧版本（仅覆盖安装且能读到旧清单时提供；install 钩子的 ctx.previousVersion） */
+  previousVersion?: string
 }
 
 /**
@@ -62,7 +64,7 @@ export interface ExtensionHookState {
   /** install 钩子的执行记录（该版本跑过即记；失败也记，避免"只跑一次"被破坏后无限重跑） */
   install?: { version: string; at: number; ok: boolean }
   /** 待补跑：安装完成时渲染进程不可用，下次启动扫描期补跑一次 */
-  pendingInstall?: { version: string; at: number }
+  pendingInstall?: { version: string; at: number; previousVersion?: string }
 }
 
 /** `.obox-meta.json` 的内容（缺失字段一律视为未设置，兼容旧文件） */

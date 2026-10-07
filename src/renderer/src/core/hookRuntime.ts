@@ -7,6 +7,7 @@
  * - 入口未导出钩子 → `skipped`（可选、可为空，属正常）
  * - 钩子抛错 → `ok:false` + 归一化原因（install 场景由宿主记入 `activationError`）
  */
+import type { ExtensionActivationApi } from '../../../api'
 import type { ExtensionHookRunRequest, ExtensionHookRunResult } from '../../../shared/types'
 import { formatHookFailure, resolveHooks, runHook } from './hooks'
 import { createHookGate, hookLockKey, runExclusive } from './hookState'
@@ -17,6 +18,8 @@ const gate = createHookGate()
 export interface ExecuteHookOptions {
   /** 加载扩展入口（宿主提供；缺失即 deferred） */
   load: () => Promise<unknown>
+  /** 钩子上下文里的能力面（宿主用 buildApi 构造；与激活时同一套） */
+  api: ExtensionActivationApi
 }
 
 function describe(error: unknown): string {
@@ -39,7 +42,8 @@ export async function executeExtensionHook(
         return runHook(request.phase, hook, {
           extensionId: request.extId,
           upgraded: request.upgraded,
-          previousVersion: request.previousVersion
+          previousVersion: request.previousVersion,
+          api: options.api
         })
       }
     )
