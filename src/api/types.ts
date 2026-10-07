@@ -393,7 +393,7 @@ export interface ExtensionActivationApi {
    */
   ipc: {
     /** 打开通道：`stdio` 由宿主拉起子进程（program 必须是扩展目录内相对路径）；`pipe` 连接已在运行的进程 */
-    connect(declaration: IpcChannelDeclaration): Promise<void>
+    connect(declaration: IpcChannelDeclaration | string): Promise<void>
     /** 关闭通道（幂等） */
     close(name: string): Promise<void>
     /** 当前已打开的通道名 */

@@ -99,3 +99,43 @@ describe('validateManifest 依赖与贡献点', () => {
     ).toBe(true)
   })
 })
+
+describe('validateManifest contributes.ipcChannels（issue #45）', () => {
+  it('合法声明 → 无 error', () => {
+    expect(
+      errors({
+        ...valid,
+        contributes: {
+          ipcChannels: [{ id: 'worker', transport: 'stdio', program: 'bin/worker.js' }]
+        }
+      })
+    ).toEqual([])
+  })
+
+  it('非法声明 → 清单无效（带明确错误，而不是等 connect() 才炸）', () => {
+    const e = errors({
+      ...valid,
+      contributes: { ipcChannels: [{ id: 'worker', transport: 'tcp' }] }
+    })
+    expect(e).toHaveLength(1)
+    expect(e[0]).toMatch(/contributes\.ipcChannels 非法/)
+    expect(e[0]).toMatch(/不支持 TCP\/端口/)
+  })
+
+  it('非数组 → error', () => {
+    expect(errors({ ...valid, contributes: { ipcChannels: {} } })[0]).toMatch(/必须是数组/)
+  })
+
+  it('重复 id → error', () => {
+    const e = errors({
+      ...valid,
+      contributes: {
+        ipcChannels: [
+          { id: 'w', transport: 'pipe' },
+          { id: 'w', transport: 'pipe' }
+        ]
+      }
+    })
+    expect(e[0]).toMatch(/通道 id 重复/)
+  })
+})

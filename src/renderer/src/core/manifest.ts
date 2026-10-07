@@ -3,6 +3,7 @@
  * 内置扩展（resources/extensions 或开发期由 Vite 注入）与用户扩展（userData/extensions）统一走这里。
  */
 import type { ExtensionInfo, ExtensionManifest, ExtensionSource, ValidationMessage } from './types'
+import { checkIpcChannelList } from '../../../shared/ipcDeclaration'
 import oboxPackage from '../../../../package.json'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
@@ -40,6 +41,17 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
     messages.push({ severity: 'error', message: 'contributes 必须是对象' })
   }
   const contributes = m.contributes as Record<string, unknown> | undefined
+  if (contributes?.ipcChannels !== undefined) {
+    // issue #45：静态声明的 IPC 通道。复用与运行时声明**同一套**校验（src/shared/ipcDeclaration.ts），
+    // 非法即让清单无效（扩展标红 + 明确错误），而不是等到 connect() 才炸。
+    const checked = checkIpcChannelList(contributes.ipcChannels)
+    if (!checked.ok) {
+      messages.push({
+        severity: 'error',
+        message: `contributes.ipcChannels 非法：${checked.message}`
+      })
+    }
+  }
   if (contributes?.keybindings !== undefined) {
     const kb = contributes.keybindings as unknown
     if (

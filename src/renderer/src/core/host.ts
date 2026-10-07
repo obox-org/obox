@@ -9,6 +9,7 @@ import type { Component } from 'vue'
 import type { Disposable } from '../../../api/runtime'
 import { registry } from './registry'
 import { deferredHookResult, executeExtensionHook, hookFailureForActivation } from './hookRuntime'
+import { resolveIpcChannelDeclaration } from '../../../shared/ipcDeclaration'
 import { makeExtensionInfo, topoSort } from './manifest'
 import { stateStore } from './state'
 import { appStore } from './appStore'
@@ -1185,7 +1186,17 @@ class ExtensionHost {
 
     return {
       connect: async (declaration): Promise<void> => {
-        const r = await window.api.ipcConnect(ext.id, declaration)
+        // 清单静态声明（issue #45）：传通道 id 即可；传对象时**运行时声明优先**（不做合并/覆盖提示）
+        const resolved =
+          typeof declaration === 'string'
+            ? resolveIpcChannelDeclaration(ext.manifest.contributes?.ipcChannels, declaration)
+            : declaration
+        if (!resolved) {
+          throw new Error(
+            `[invalid-declaration] 清单里没有声明通道 ${String(declaration)}（contributes.ipcChannels）`
+          )
+        }
+        const r = await window.api.ipcConnect(ext.id, resolved)
         if (!r.ok) throw new Error(`[${r.code ?? 'connect-failed'}] ${r.error ?? '打开通道失败'}`)
       },
       close: async (name: string): Promise<void> => {

@@ -11,7 +11,13 @@
  * 传输层（spawn 子进程 stdio / `node:net` 连接）在薄壳 `ipc.ts` 中，只负责把字节喂给
  * `JsonRpcChannel.accept()` 并把 `sendFrame` 的字节写出去——因此本模块与传输完全解耦。
  */
-import { isAbsolute, posix } from 'node:path'
+import { posix } from 'node:path'
+import {
+  isValidIpcName,
+  validateIpcDeclaration as validateDeclarationShared,
+  type Framing,
+  type IpcChannelDeclaration
+} from '../shared/ipcDeclaration'
 
 /** 单条消息上限（与 api.net.fetch 的 8MB 响应上限一致） */
 export const DEFAULT_MAX_MESSAGE_BYTES = 8 * 1024 * 1024
@@ -20,9 +26,8 @@ export const DEFAULT_TIMEOUT_MS = 30_000
 /** 每通道并发请求上限 */
 export const DEFAULT_MAX_PENDING_REQUESTS = 64
 /** 分帧类型 */
-export type Framing = 'content-length' | 'ndjson'
+export type { Framing, IpcChannelDeclaration, IpcTransport } from '../shared/ipcDeclaration'
 /** 传输类型（**没有 TCP**） */
-export type IpcTransport = 'stdio' | 'pipe'
 
 /** 稳定错误码（扩展按码分支，不依赖 message 文本） */
 export type IpcErrorCode =
@@ -589,21 +594,15 @@ function toCoreError(err: unknown, fallback: IpcErrorCode): IpcCoreError {
 // 平台命名（Windows 命名管道 / POSIX 域套接字；**不用 TCP 端口**）
 // ---------------------------------------------------------------------------
 
-const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-
 /** 校验通道/扩展 id 片段：只允许字母数字与 . _ -，禁止路径分隔符与 .. */
 export function sanitizeIpcName(raw: unknown, what = 'ipc 名称'): string {
-  if (typeof raw !== 'string') {
-    throw new IpcCoreError('invalid-declaration', `${what} 必须是字符串`)
-  }
-  const value = raw.trim()
-  if (!value || !NAME_RE.test(value) || value.includes('..')) {
+  if (!isValidIpcName(raw)) {
     throw new IpcCoreError(
       'invalid-declaration',
-      `${what} 非法（只允许字母/数字/./_/-，且不能含 ..）: ${value}`
+      `${what} 非法（只允许字母/数字/./_/-，且不能含 ..）: ${String(raw)}`
     )
   }
-  return value
+  return raw.trim()
 }
 
 export interface IpcEndpointOptions {
@@ -642,67 +641,18 @@ export function isWindowsNamedPipe(endpoint: string): boolean {
 // 声明校验（扩展在 manifest 里声明的通道）
 // ---------------------------------------------------------------------------
 
-export interface IpcChannelDeclaration {
-  /** 通道名（同一扩展内唯一） */
-  id: string
-  /** 传输：stdio（宿主拉起子进程）/ pipe（连接已在运行的进程） */
-  transport: IpcTransport
-  /** stdio 必填：相对扩展目录的可执行文件/脚本路径（禁止绝对路径与 ..） */
-  program?: string
-  /** stdio 可选：命令行参数 */
-  args?: string[]
-  /** 分帧（默认 content-length） */
-  framing?: Framing
-}
-
-/** 校验一个通道声明；非法即抛 `invalid-declaration` */
+/**
+ * 校验一个通道声明；非法即抛 `invalid-declaration`。
+ *
+ * 规则实现已移到 `src/shared/ipcDeclaration.ts`：渲染进程在**清单校验阶段**要校验
+ * `contributes.ipcChannels`（issue #45），而它不能 import 主进程模块——只有放共享处
+ * 才能做到"两边同一套校验"。这里把共享模块的错误转成既有的 `IpcCoreError`，
+ * 保持错误码（`invalid-declaration`）与文案不变。
+ */
 export function validateIpcDeclaration(raw: unknown): IpcChannelDeclaration {
-  if (!isRecord(raw)) {
-    throw new IpcCoreError('invalid-declaration', '通道声明必须是对象')
+  try {
+    return validateDeclarationShared(raw)
+  } catch (err) {
+    throw new IpcCoreError('invalid-declaration', err instanceof Error ? err.message : String(err))
   }
-  const id = sanitizeIpcName(raw.id, '通道 id')
-  const transport = raw.transport
-  if (transport !== 'stdio' && transport !== 'pipe') {
-    throw new IpcCoreError(
-      'invalid-declaration',
-      `通道 ${id} 的 transport 必须是 'stdio' 或 'pipe'（不支持 TCP/端口）`
-    )
-  }
-  const framing = raw.framing
-  if (framing !== undefined && framing !== 'content-length' && framing !== 'ndjson') {
-    throw new IpcCoreError('invalid-declaration', `通道 ${id} 的 framing 非法: ${String(framing)}`)
-  }
-  const declaration: IpcChannelDeclaration = { id, transport }
-  if (framing) declaration.framing = framing
-
-  if (transport === 'stdio') {
-    const program = raw.program
-    if (typeof program !== 'string' || !program.trim()) {
-      throw new IpcCoreError('invalid-declaration', `stdio 通道 ${id} 必须声明 program`)
-    }
-    const normalized = program.replace(/\\/g, '/').replace(/^\.\//, '')
-    if (
-      isAbsolute(normalized) ||
-      /^[A-Za-z]:/.test(normalized) ||
-      normalized.split('/').includes('..')
-    ) {
-      throw new IpcCoreError(
-        'invalid-declaration',
-        `stdio 通道 ${id} 的 program 必须是扩展目录内的相对路径: ${program}`
-      )
-    }
-    declaration.program = normalized
-    if (raw.args !== undefined) {
-      if (!Array.isArray(raw.args) || raw.args.some((a) => typeof a !== 'string')) {
-        throw new IpcCoreError('invalid-declaration', `stdio 通道 ${id} 的 args 必须是字符串数组`)
-      }
-      declaration.args = raw.args as string[]
-    }
-  } else if (raw.program !== undefined || raw.args !== undefined) {
-    throw new IpcCoreError(
-      'invalid-declaration',
-      `pipe 通道 ${id} 不应声明 program/args（它是连接已在运行的进程）`
-    )
-  }
-  return declaration
 }

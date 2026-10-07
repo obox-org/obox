@@ -1,3 +1,4 @@
+import type { IpcChannelDeclaration } from './shared'
 /**
  * 扩展贡献点类型（面向扩展作者；扩展经相对路径导入 src/api）。
  * 贡献点由扩展在 manifest 的 contributes 中声明，宿主解析注册。
@@ -127,6 +128,13 @@ export interface ViewContribution {
 
 /** manifest 的贡献点声明 */
 export interface ContributionManifest {
+  /**
+   * 静态声明的 IPC 通道（issue #45）：声明一次，代码里只写 `api.ipc.connect('<通道id>')`。
+   * 与运行时声明**同一套校验**（src/shared/ipcDeclaration.ts）：非法声明会让**清单无效**
+   * （扩展标红 + 明确错误），而不是等到 connect() 才炸。声明本身**不自动连接**。
+   */
+
+  ipcChannels?: IpcChannelDeclaration[]
   navItems?: NavItemContribution[]
   statusBarItems?: StatusBarItemContribution[]
   commands?: CommandContribution[]

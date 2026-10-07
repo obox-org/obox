@@ -566,6 +566,10 @@ await api.ipc.connect({
   args: ['--serve']
 })
 
+// 1b) 清单里静态声明过（contributes.ipcChannels）的通道：只写 id 即可
+await api.ipc.connect('worker')
+// 传对象时**运行时声明优先**；清单里没声明的 id 会直接报 invalid-declaration（不会静默失败）
+
 // 2) pipe：连接已在运行的进程（对端需按同样的端点命名约定监听）
 await api.ipc.connect({ id: 'svc', transport: 'pipe' })
 
@@ -585,13 +589,15 @@ api.ipc.onClose('worker', (err) => console.warn('通道关闭', err.code))
 await api.ipc.close('worker')
 ```
 
-| 项             | 说明                                                                                                                                                                                                                                              |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 限额           | 每扩展最多 **4 条通道**；每通道并发请求有上限；单条消息上限 **8MB**；请求默认 **30s** 超时（`request(..., { timeoutMs })` 可覆盖）                                                                                                                |
-| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起） |
-| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程）                                                                                                                                          |
-| 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                   |
-| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**（扩展与宿主同上下文，属受信代码）                                                                                                                                                                  |
+| 项             | 说明                                                                                                                                                                                                                                                                       |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 限额           | 每扩展最多 **4 条通道**；每通道并发请求有上限；单条消息上限 **8MB**；请求默认 **30s** 超时（`request(..., { timeoutMs })` 可覆盖）                                                                                                                                         |
+| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起）                          |
+| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程）                                                                                                                                                                   |
+| 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                                            |
+| stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`） |
+| 清单声明       | 在 `contributes.ipcChannels` 静态声明后，代码里只写 `api.ipc.connect('<通道id>')`；声明**不自动连接**，非法声明会让清单无效（见 manifest-reference）                                                                                                                       |
+| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**（扩展与宿主同上下文，属受信代码）                                                                                                                                                                                           |
 
 ## api.python（扩展自带的 Python 运行时，见 ADR-0018）
 
