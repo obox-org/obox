@@ -2,19 +2,21 @@
  * 应用状态持久化（userData JSON）。
  * - disabledExtensions: 禁用列表（缺省即启用模型）
  * - notificationDisabledExtensions: 通知关闭列表（设置-通知逐扩展关闭，缺省即开启）
- * - lastActiveNavId: 上次激活的导航项 id（重启恢复）
  * - memento: 每扩展命名空间的 Memento 存储（workspaceState/globalState 共用一处，分命名空间）
  * - settings: 统一设置存储（主题/快捷键/扩展设置等，key-value）
  *
  * 通过 window.api 无法直接读写 userData 文件（能力面未开放通用 fs），
  * 因此状态经 localStorage 持久化——Electron 渲染进程 localStorage 落在 userData 下。
+ *
+ * 注：曾持久化 `lastActiveNavId`（重启恢复上次导航项），现已移除——
+ * 启动视图改为**固定显示"应用"扩展**（见 core/startupView.ts），不再恢复上次选择；
+ * 旧值留在 localStorage 里也无害（load() 不再读取该字段）。
  */
 const STORAGE_KEY = 'obox:state:v1'
 
 interface PersistedState {
   disabledExtensions: string[]
   notificationDisabledExtensions: string[]
-  lastActiveNavId: string | null
   memento: Record<string, Record<string, unknown>>
   settings: Record<string, unknown>
 }
@@ -28,7 +30,6 @@ function load(): PersistedState {
       return {
         disabledExtensions: [],
         notificationDisabledExtensions: [],
-        lastActiveNavId: null,
         memento: {},
         settings: {}
       }
@@ -39,7 +40,6 @@ function load(): PersistedState {
       notificationDisabledExtensions: Array.isArray(parsed.notificationDisabledExtensions)
         ? parsed.notificationDisabledExtensions
         : [],
-      lastActiveNavId: typeof parsed.lastActiveNavId === 'string' ? parsed.lastActiveNavId : null,
       memento: parsed.memento && typeof parsed.memento === 'object' ? parsed.memento : {},
       settings: parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {}
     }
@@ -47,7 +47,6 @@ function load(): PersistedState {
     return {
       disabledExtensions: [],
       notificationDisabledExtensions: [],
-      lastActiveNavId: null,
       memento: {},
       settings: {}
     }
@@ -96,13 +95,6 @@ export const stateStore = {
       )
       save()
     }
-  },
-  get lastActiveNavId(): string | null {
-    return state.lastActiveNavId
-  },
-  setLastActiveNavId(id: string): void {
-    state.lastActiveNavId = id
-    save()
   },
   /** 统一设置存储：读取设置值 */
   getSetting<T>(key: string, defaultValue?: T): T | undefined {
