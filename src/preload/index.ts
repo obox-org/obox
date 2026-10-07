@@ -95,7 +95,9 @@ const api: MainApi = {
     ipcRenderer.send('extension:reply', { requestId, ...result }),
   // 窗口化 ui 模态框（按焦点窗口显示）
   uiShow: (kind, payload) => ipcRenderer.invoke('ui:show', { kind, payload }),
-  uiResult: (requestId, r) => ipcRenderer.send('ui:result', { requestId, ...r })
+  uiResult: (requestId, r) => ipcRenderer.send('ui:result', { requestId, ...r }),
+  // 生命周期钩子（issue #52）：宿主把入口导出的 install/uninstall 执行结果回传主进程
+  hookResult: (result) => ipcRenderer.send('extension:hook-result', result)
 }
 
 // 主进程 → 渲染进程事件订阅

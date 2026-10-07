@@ -12,7 +12,8 @@ import { join } from 'path'
 import type { InstallOixOutcome } from '../shared/types'
 import { getUserExtensionsDir } from './capabilities'
 import { addKnownExtension } from './extGuard'
-import { installFromPackage, OixInstallError } from './oixCore'
+import { registerHookIpc, runExtensionHook } from './hookRunner'
+import { installFromPackage, OixInstallError, recordInstallHookResult } from './oixCore'
 
 export { deriveDirName } from './oixCore'
 
@@ -23,6 +24,36 @@ function toOutcome(err: unknown): InstallOixOutcome {
     ok: false,
     code: 'write-failed',
     error: err instanceof Error ? err.message : String(err)
+  }
+}
+
+/**
+ * 安装完成后**立刻**请渲染进程执行 install 钩子（issue #52）。
+ *
+ * 只在这两种情况下记录"该版本已跑过"：请求**送达**渲染进程，且**不是 deferred**
+ * （deferred = 扩展还没加载到宿主）。其余情况（窗口不可用、超时、扩展未加载）
+ * 一律保留 `.obox-meta.json` 里的 `pendingInstall`，下次启动扫描期补跑——
+ * 绝不能把"没跑"记成"跑过了"，否则钩子会被永久跳过。
+ *
+ * 失败不阻塞安装结果：钩子失败由渲染进程记入既有 `activationError` 通道。
+ */
+async function triggerInstallHook(input: {
+  id: string
+  version: string
+  replaced: boolean
+}): Promise<void> {
+  try {
+    const outcome = await runExtensionHook({
+      extId: input.id,
+      phase: 'install',
+      version: input.version,
+      upgraded: input.replaced
+    })
+    if (!outcome.delivered || outcome.deferred === true) return
+    await recordInstallHookResult(join(getUserExtensionsDir(), input.id), input.version, outcome.ok)
+  } catch (err) {
+    // 钩子链路自身的问题不影响安装结果（pendingInstall 保留，下次启动补跑）
+    console.warn('[oix] 触发 install 钩子失败：', err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -37,6 +68,8 @@ export async function installOixFromPath(filePath: string): Promise<InstallOixOu
     })
     // 登记进"已知扩展"集合（成员校验的真值来源之一）
     addKnownExtension(result.id)
+    // 安装完成后立刻跑 install 钩子（渲染进程执行；见上面 triggerInstallHook 的降级语义）
+    await triggerInstallHook({ id: result.id, version: result.version, replaced: result.replaced })
     return { ok: true, result }
   } catch (err) {
     return toOutcome(err)
@@ -44,6 +77,8 @@ export async function installOixFromPath(filePath: string): Promise<InstallOixOu
 }
 
 export function registerOixIpc(): void {
+  // 生命周期钩子的回包通道（主进程 → 渲染进程跑钩子；与安装/卸载同一批注册）
+  registerHookIpc()
   // 对话框选 .oix 并安装；取消返回 null
   ipcMain.handle('extensions:install-oix-dialog', async (e): Promise<InstallOixOutcome | null> => {
     const win = BrowserWindow.fromWebContents(e.sender)

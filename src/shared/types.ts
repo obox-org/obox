@@ -345,6 +345,44 @@ export interface MainApi {
   ): Promise<{ ok: boolean; code?: string; error?: string }>
   /** 渲染进程里扩展处理器对"对端请求"的回包 */
   ipcReply(requestId: string, outcome: IpcReplyOutcome): Promise<void>
+  // ---- 生命周期钩子（issue #52）：主进程请渲染进程执行入口导出的 install / uninstall ----
+  /**
+   * 渲染进程把钩子执行结果回传主进程（`extension:hook-request` 的回复侧）。
+   * `deferred: true` 表示"这次跑不了，请留待下次启动补跑"（如扩展尚未加载到宿主）。
+   */
+  hookResult(result: ExtensionHookRunResult): void
+}
+
+/** 生命周期钩子阶段（与 renderer/core/hookState.ts 的 HookPhase 一致） */
+export type ExtensionHookPhase = 'install' | 'uninstall'
+
+/** 主进程 → 渲染进程：请执行某扩展的钩子（钩子在渲染进程执行，因为扩展入口只在这里被 import） */
+export interface ExtensionHookRunRequest {
+  /** 主进程生成，回包时原样带回 */
+  requestId: string
+  /** 扩展 id（= 安装目录名） */
+  extId: string
+  phase: ExtensionHookPhase
+  /** 当前 manifest.version */
+  version: string
+  /** 是否覆盖安装（升级） */
+  upgraded: boolean
+  /** 升级前版本（仅 upgraded 为 true 时提供） */
+  previousVersion?: string
+}
+
+/**
+ * 渲染进程回传的钩子执行结果。
+ * - `ok: true` + `skipped: true`：入口未导出该钩子（可选、可为空，属正常）
+ * - `ok: false`：钩子跑过但失败（安装场景据此归为激活失败）
+ * - `deferred: true`：**这次没执行**（如扩展尚未加载），主进程必须保留 `pendingInstall` 待下次启动补跑
+ */
+export interface ExtensionHookRunResult {
+  requestId: string
+  ok: boolean
+  skipped?: boolean
+  deferred?: boolean
+  error?: string
 }
 
 /** 通道声明（与主进程 ipcCore 的契约形状一致；传输**不含 TCP/端口**） */
@@ -383,6 +421,8 @@ export type IpcEvent =
 export interface MainEvents {
   /** 窗口状态变化（最大化/还原/全屏/聚焦） */
   'window:state-changed': (state: WindowState) => void
+  /** 生命周期钩子执行请求（宿主执行后经 api.hookResult 回传，见 issue #52） */
+  'extension:hook-request': (e: ExtensionHookRunRequest) => void
   /** 更新事件（检查结果/下载进度/下载完成/错误） */
   'update:event': (e: {
     type: string
