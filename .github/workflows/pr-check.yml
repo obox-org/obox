@@ -1,4 +1,4 @@
-# PR 检查工作流：每个 PR（目标 master）必须通过 typecheck + lint 才能合并。
+# PR 检查工作流：每个 PR（目标 master）必须通过 typecheck + lint + 单元测试才能合并。
 # 配合 master 分支保护规则（Require status checks）作为合并门槛。
 name: PR Check
 
@@ -31,3 +31,6 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Test
+        run: npm test
