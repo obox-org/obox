@@ -78,7 +78,8 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 | 命令 | 说明 |
 |---|---|
-| `yarn dev` | 开发模式（HMR，Electron 窗口自动打开） |
+| `npm run dev` | 开发模式（HMR，Electron 窗口自动打开） |
+| `npm test` | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具） |
 | `npm run typecheck` | 类型检查（node 主进程 + web 渲染进程） |
 | `npm run lint` | ESLint 检查（0 errors 为门槛） |
 | `npm run build` | typecheck + electron-vite 构建到 `out/` |
@@ -107,7 +108,7 @@ git push origin v1.0.0
 
 1. **读本文件**：了解项目概览与架构（上文）
 2. **读约定**：`AGENTS.md`（开发约定 + 强制提交流程）、`CONTEXT.md`（术语表）
-3. **运行**：`yarn dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
+3. **运行**：`npm run dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
 4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装（重启生效）。**调试扩展**：`obox --debug-extension <id>@<本地目录> --remote-debugging-port=9333` 在 VS Code 里断点调试（不安装，详见 skills 指南）
 5. **改架构**：改动 `core/`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `skills/obox-ext-dev/` 文档（见 AGENTS.md 约定）和本文件
 
@@ -123,7 +124,7 @@ git push origin v1.0.0
 
 ## 技术栈
 
-- **Electron** 39 + **Vue** 3.5 + **TypeScript** 5.9（electron-vite 5 构建）
+- **Electron** 44 + **Vue** 3.5 + **TypeScript** 5.9（electron-vite 5 构建）
 - **@cordisjs/core** 3.18（扩展宿主插件框架，运行在渲染进程）
 - 无 UI 组件库：手写 CSS 暗色主题（VS Code 风格）
 
