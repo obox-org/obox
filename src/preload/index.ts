@@ -100,7 +100,9 @@ const api: MainApi = {
   hookResult: (result) => ipcRenderer.send('extension:hook-result', result),
   // 宿主补跑 install 钩子后回写元数据（发起方向与 hookResult 相反）
   recordInstallHook: (extId, version, ok) =>
-    ipcRenderer.invoke('extension:record-install-hook', extId, version, ok)
+    ipcRenderer.invoke('extension:record-install-hook', extId, version, ok),
+  // 扩展自带的 Python 运行时（issue #51）：跑脚本（可选注册成 api.ipc 通道）
+  pythonRun: (extId, input) => ipcRenderer.invoke('python:run', extId, input)
 }
 
 // 主进程 → 渲染进程事件订阅

@@ -420,6 +420,26 @@ export interface ExtensionActivationApi {
   output: {
     createChannel(name: string): OutputChannel
   }
+  /**
+   * 扩展自带的 **Python 运行时**（ADR-0018）：只提供 `run`，用来跑随扩展分发的脚本。
+   *
+   * - **默认不超时**：交互式脚本（`plt.show()`）会开窗等用户关窗，调用会一直等到进程结束；
+   * - **脚本自身失败不抛错**：返回非零 `code` + `stderr`（调用方需自行判断 `code`）；
+   * - 需要与宿主双向通信时传 `opts.channel`：该进程会被注册成一条 **`api.ipc` 通道**
+   *   （占用"每扩展 4 条通道"限额），随后用 `api.ipc.request/onRequest/...` 与它交互；
+   *   Python 侧需自行实现 JSON-RPC 与 `Content-Length` 分帧，且**不要**再往 stdout 打印；
+   * - 依赖随扩展包预置在 `<扩展>/python/`（含 pip，但不注入代理：宿主的代理设置对 Python 无效）。
+   *
+   * 稳定错误码（宿主侧失败才抛）：`python-missing`（包里没有该架构的运行时）/
+   * `arch-mismatch`（架构不符）/ `launch-failed`（启动失败）/ `invalid-declaration`（声明非法，如脚本越出扩展目录）。
+   */
+  python: {
+    run(
+      script: string,
+      args?: string[],
+      opts?: { channel?: string | boolean }
+    ): Promise<{ code: number | null; stdout: string; stderr: string }>
+  }
   /** 密钥存储（主进程 safeStorage 加密存 userData；token/凭据用） */
   secrets: {
     get(key: string): Promise<string | undefined>

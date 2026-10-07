@@ -424,6 +424,7 @@ class ExtensionHost {
       },
       update: this.buildUpdateApi(ext, disposables),
       ipc: this.buildIpcApi(ext, disposables),
+      python: this.buildPythonApi(ext),
       proxy: {
         get: (): ProxyConfig => {
           const p = stateStore.getSetting<ProxyConfig>('network.proxy')
@@ -1069,6 +1070,32 @@ class ExtensionHost {
     ext.enabled = false
     ext.requiresRestart = true
     return { hot: false, needsRestart: true }
+  }
+
+  /**
+   * 扩展 Python 能力：只提供 `run`（ADR-0018）。主进程负责准备环境、启动进程、杀进程树与清理；
+   * 这一层只做"按扩展绑定 + 错误码还原成抛错"（与 `buildIpcApi` 同一风格）。
+   */
+  private buildPythonApi(ext: ExtensionInfo): ExtensionActivationApi['python'] {
+    return {
+      run: async (
+        script: string,
+        args?: string[],
+        opts?: { channel?: string | boolean }
+      ): Promise<{ code: number | null; stdout: string; stderr: string }> => {
+        const outcome = await window.api.pythonRun(ext.id, {
+          script,
+          args,
+          channel: opts?.channel
+        })
+        if (!outcome.ok || !outcome.result) {
+          throw new Error(
+            `[${outcome.code ?? 'launch-failed'}] ${outcome.error ?? 'Python 运行失败'}`
+          )
+        }
+        return outcome.result
+      }
+    }
   }
 
   /**
