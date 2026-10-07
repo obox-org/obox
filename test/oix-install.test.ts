@@ -143,8 +143,11 @@ describe('oixCore · 正常安装', () => {
     expect(existsSync(join(dir, 'manifest.json'))).toBe(true)
     const meta = JSON.parse(readFileSync(join(dir, '.obox-meta.json'), 'utf8')) as {
       installedTimestamp?: number
+      pendingInstall?: { version: string; at: number }
     }
     expect(typeof meta.installedTimestamp).toBe('number')
+    // 安装完成即标记"待执行 install 钩子"（渲染进程执行后回写 install 并清除本字段，见 issue #52）
+    expect(meta.pendingInstall).toEqual({ version: '1.0.0', at: meta.installedTimestamp })
     // 子目录条目也能落地
   })
 
