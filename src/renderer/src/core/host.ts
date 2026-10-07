@@ -685,7 +685,7 @@ class ExtensionHost {
       getVersion: () => window.api.getOboxVersion(),
       resolveFeed: (repo) => {
         isProvider()
-        return window.api.resolveUpdateFeed(repo)
+        return window.api.resolveUpdateFeed(repo, proxy())
       },
       check: async (feedUrl) => {
         isProvider()
