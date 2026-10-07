@@ -11,7 +11,7 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { promises as fs } from 'node:fs'
 import { join } from 'node:path'
 import type { IpcChannelDeclaration, IpcEvent, IpcReplyOutcome } from '../shared/types'
-import { getUserExtensionsDir } from './capabilities'
+import { extensionSourceDir } from './paths'
 import type { Readable, Writable } from 'node:stream'
 import { IpcCoreError, ipcEndpoint, isIpcCoreError, validateIpcDeclaration } from './ipcCore'
 import type { Framing } from './ipcCore'
@@ -146,7 +146,7 @@ export async function openExtensionChannel(
   const declaration = validateIpcDeclaration(rawDeclaration)
   assertChannelSlot(extId, declaration.id)
 
-  const extensionDir = join(getUserExtensionsDir(), extId)
+  const extensionDir = extensionSourceDir(extId)
   let transport: IpcTransportHandles
   if (declaration.transport === 'stdio') {
     const program = resolveProgramInExtension(extensionDir, declaration.program ?? '')

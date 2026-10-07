@@ -21,14 +21,19 @@
 
 ## 实测依据（CPython 3.13.16 + python-build-standalone tag 20261003）
 
-| 项 | win-x64 | win-arm64 |
-| --- | --- | --- |
-| 归档 `.tar.gz` | 45.22 MB | 42.37 MB |
-| 解压后 | 144.97 MB / 3350 文件 | 146.95 MB / 3350 文件 |
-| `install_only_stripped`（去 41 个 `.pdb`） | 59.7 MB / 3309 文件 | 60.6 MB / 3309 文件 |
+| 项                                         | win-x64               | win-arm64             |
+| ------------------------------------------ | --------------------- | --------------------- |
+| 归档 `.tar.gz`                             | 45.22 MB              | 42.37 MB              |
+| 解压后                                     | 144.97 MB / 3350 文件 | 146.95 MB / 3350 文件 |
+| `install_only_stripped`（去 41 个 `.pdb`） | 59.7 MB / 3309 文件   | 60.6 MB / 3309 文件   |
 
 - 逐组裁剪后 ≈**56 MB / ≈3000 文件**（`include`+`libs` −2.25 MB、`idlelib`+`turtledemo` −1.16 MB）；`__pycache__` 可省 8.8 MB 但仅当目录只读（一次验证运行即重生 5.1 MB）。
 - 裁剪后 `python -m venv` + `pip install matplotlib` **成功**（matplotlib 3.11.2 + numpy 2.5.3，Agg 后端实际出图）；冷下载 16.2 s、warm 11.4 s；**装 matplotlib 的代价 = +119 MB / +3385 文件**。
+  - **按本 ADR 的落点复测的修正（更小）**：上面那组来自"装进 venv"（含重复的 pip）。按本方案的落点
+    （`uv pip install --python-platform … --target <扩展>/python/Lib/site-packages --only-binary :all:`）
+    实测为 **+90.0 MB / +2184 文件，合计 146.3 MB（5115 文件）**；裁剪基线实测 **56.3 MB / 2931 文件**
+    （归档解压后 3309 文件）。且包内 `matplotlib 3.11.2` 已在**真实应用**里 Agg 出图成功（GUI 级端到端）。
+    做体积规划时以这组为准。
 - **不可删清单**（逐项实测）：`python3.dll`（abi3 轮子依赖，删了 `python.exe` 仍能跑但 `cryptography` 等报 DLL load failed）、`Lib/ensurepip`（venv 带 pip）、`Lib/venv`、`Lib/tomllib`（pip 26.2.1 依赖）、`_socket`+`_select`+`_overlapped`+`_multiprocessing`（asyncio/multiprocessing）、`_ssl`+`libssl`+`libcrypto`（HTTPS 与 hashlib）、`unicodedata`、`_sqlite3`+`sqlite3.dll`+`Lib/sqlite3`、`_ctypes`+`libffi-8.dll`、`_bz2`/`_lzma`/`pyexpat`。
 - Windows 版 PBS **没有 `Scripts/pip.exe`**（上游已知限制），因此 pip 一律用 `python -m pip` 调用。
 

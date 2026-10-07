@@ -407,6 +407,12 @@ npm run dev -- -- --remote-debugging-port=9333 --debug-extension <id>@<路径>
 
 - `--debug-extension <id>@<路径>` 可重复传多个；id 即扩展 id（须与 manifest.name 一致），路径为扩展仓库目录（含 manifest.json）
 - 调试扩展经 `app://debug/<id>/` 加载：不写 userData、无安装时间戳、扩展管理器显示「调试中」、不可卸载，重启消失
+- **调试扩展可以自带运行时/二进制**：宿主解析「扩展自己的文件在哪」时**调试目录优先于 userData**，
+  所以调试扩展里放 `python/runtime`（见「把 Python 运行时打进扩展包」）或 `bin/xxx.exe` 与安装后行为一致；
+  扩展的**数据目录**仍在 `userData/extensions/<id>/data`（与安装态共用），主进程启动时会为没有
+  `manifest.json` 的数据目录打一条 `跳过没有 manifest.json 的目录` 提示，属正常
+- 启动日志会明确列出解析到的调试扩展（`[debug] 调试扩展 N 个: id@路径`）——没这行就是参数没传进来
+  （留意 `npm run dev` 要写两个 `--`，见上面命令）
 - 改代码后手动重载窗口生效（v1 无自动 watch）
 
 ### 2. 扩展仓库的 .vscode/launch.json

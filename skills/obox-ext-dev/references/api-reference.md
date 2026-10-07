@@ -607,18 +607,18 @@ api.ipc.onRequest('py1', (method, params) => ({ echo: params })) // Python 侧�
 const answer = await api.ipc.request('py1', 'compute', { n: 7 })
 ```
 
-| 项             | 说明                                                                                                                                                                                                |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 调用方式       | 宿主以 **shell** 方式启动 `<扩展>/python/python.exe`（参数按 cmd 规则转义）；工作目录是扩展 data 目录                                                                                               |
-| 返回值         | `{ code, stdout, stderr }`；**脚本失败不抛错**（`code` 非零 + `stderr`），调用方必须自己判断 `code`                                                                                                 |
-| 超时           | **默认不超时**（交互式脚本会一直等到进程结束）；写错脚本（死循环/`input()`）会挂住调用方                                                                                                            |
-| 错误码（抛出） | `python-missing`（包里没有该架构的运行时）/ `arch-mismatch` / `launch-failed` / `invalid-declaration`（如脚本越出扩展目录）                                                                         |
-| 通道           | `opts.channel`：省略/`false` = 不建；`true` = 建一条名为 `python` 的通道；字符串 = 指定名。**计入"每扩展 4 条通道"限额**                                                                            |
-| 协议           | 走通道时 Python 侧需自行实现 JSON-RPC 2.0 + `Content-Length` 分帧；**不建议再往 stdout 打印**（会破坏分帧）                                                                                         |
-| 环境           | 子进程只拿白名单 env（PATH/SystemRoot/TEMP/TMP/HOME/USERPROFILE/LANG）+ `PYTHONHOME`/`PYTHONPATH(<扩展>/data/user-site)`/`PYTHONNOUSERSITE`；**宿主的代理设置对 Python 无效**（pip 需自行处理网络） |
-| 依赖           | 依赖由扩展作者在打包时预置在 `<扩展>/python/Lib/site-packages`（随包替换）；用户自行装的库落在 `<扩展>/data/user-site`（升级保留）                                                                  |
-| 生命周期       | 扩展停用/卸载/重载时宿主**杀进程树**并注销通道（与定时器/DB/watch 同一时机）                                                                                                                        |
-| 信任边界       | 与 ADR-0015 一致：能力封装而非安全边界；Python 代码与扩展同等受信，**不构成沙箱**                                                                                                                   |
+| 项             | 说明                                                                                                                                                                                                                                                                    |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 调用方式       | 宿主以 **shell** 方式启动 `<扩展>/python/python.exe`（参数按 cmd 规则转义）；工作目录是扩展 data 目录                                                                                                                                                                   |
+| 返回值         | `{ code, stdout, stderr }`；**脚本失败不抛错**（`code` 非零 + `stderr`），调用方必须自己判断 `code`                                                                                                                                                                     |
+| 超时           | **默认不超时**（交互式脚本会一直等到进程结束）；写错脚本（死循环/`input()`）会挂住调用方                                                                                                                                                                                |
+| 错误码（抛出） | `python-missing`（包里没有该架构的运行时）/ `arch-mismatch` / `launch-failed` / `invalid-declaration`（如脚本越出扩展目录）                                                                                                                                             |
+| 通道           | `opts.channel`：省略/`false` = 不建；`true` = 建一条名为 `python` 的通道；字符串 = 指定名。**计入"每扩展 4 条通道"限额**                                                                                                                                                |
+| 协议           | 走通道时 Python 侧需自行实现 JSON-RPC 2.0 + `Content-Length` 分帧；**不建议再往 stdout 打印**（会破坏分帧）                                                                                                                                                             |
+| 环境           | 子进程只拿白名单 env（PATH/SystemRoot/TEMP/TMP/HOME/USERPROFILE/LANG）+ `PYTHONHOME`/`PYTHONPATH(<扩展>/data/user-site)`/`PYTHONNOUSERSITE`；**宿主的代理设置对 Python 无效**（pip 需自行处理网络）                                                                     |
+| 依赖           | 依赖由扩展作者在打包时预置在 `<扩展>/python/Lib/site-packages`（随包替换）；用户自行装的库落在 `<扩展>/data/user-site`（升级保留）。**调试扩展**（`--debug-extension`）按**调试目录**找 `<扩展>/python/`，因此带运行时的扩展也能用调试方式开发（数据目录仍在 userData） |
+| 生命周期       | 扩展停用/卸载/重载时宿主**杀进程树**并注销通道（与定时器/DB/watch 同一时机）                                                                                                                                                                                            |
+| 信任边界       | 与 ADR-0015 一致：能力封装而非安全边界；Python 代码与扩展同等受信，**不构成沙箱**                                                                                                                                                                                       |
 
 ## 生命周期钩子（install / uninstall）
 
