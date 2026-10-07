@@ -12,10 +12,18 @@
   `electron-builder --win nsis --x64 --arm64 --publish never`，输出到 runner 临时目录。
 - 产物：`obox-<version>-x64-setup.exe`、`obox-<version>-arm64-setup.exe`、`latest.yml`、`*.blockmap`（差分更新用）。
 - **Windows 下更新元数据只有一份 `latest.yml`**（`electron-builder` 不生成 `latest-arm64.yml`；两个架构的安装包都列在同一份 `files` 数组里），electron-updater 按机器架构挑选匹配产物。**【源码核验】**
-- **线上实测数据点**（v1.0.3，2026-08-31，**【运行期已验证】**）：release 资产含
-  `obox-1.0.3-setup.exe`（200MB）、`obox-1.0.3-x64-setup.exe`（103MB）、`obox-1.0.3-arm64-setup.exe`（98MB）与一份 `latest.yml`；
-  **`latest.yml` 的 `path`/首个 `files` 条目指向无架构后缀的那份 200MB**。
-  → 因此**必须**在两种架构上确认"实际下载了哪个产物"，不要假设一定是架构后缀那份（见第 3 节清单第 4 步）。
+- **`electron-builder` 还会额外产出一份"无架构后缀"的安装包，且 `latest.yml` 的 `path`/首个 `files` 条目指向它**——已在 v1.0.3、v1.0.4 两次发布中复现：
+
+  | 版本 | 无后缀（`path` 指向） | x64 | arm64 |
+  | --- | --- | --- | --- |
+  | v1.0.3（2026-08-31） | 200 MB | 103 MB | 98 MB |
+  | v1.0.4（2026-10-07） | **225.4 MB**（236,335,162 B） | **115.8 MB**（121,374,809 B） | **110.4 MB**（115,798,281 B） |
+
+  无后缀那份的大小≈两个架构之和，具体成因**未查明【运行期未验证】**（已列为待办：查明来源并消除，或让 `latest.yml` 的 `path` 指向架构产物）。
+- 影响面（**分工明确**）：
+  - **本项目的强制重装/降级通道不受影响**——它走 `src/main/updateFeed.ts` 的 `pickArtifact()`，**优先精确匹配 `-<arch>-setup.`**，因此下载的是架构正确那份。**【源码核验】**
+  - **electron-updater 自身**按 `files` 数组选架构产物（`path` 是兼容旧格式的字段）。**【源码核验】**【运行期未验证】
+  - 因此**必须**在两种架构上确认"实际下载了哪个产物"，不要假设一定是架构后缀那份（见第 3 节清单第 4 步）。
 
 ## 2. 代理与证书
 
