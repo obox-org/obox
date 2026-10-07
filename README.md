@@ -93,6 +93,7 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 | `npm test`                                                     | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具） |
 | `npm run typecheck`                                            | 类型检查（node 主进程 + web 渲染进程）              |
 | `npm run lint`                                                 | ESLint 检查（0 errors 为门槛）                      |
+| `npm run security:audit`                                       | 依赖安全审计（`npm audit --audit-level=moderate`，0 告警为门槛；CI 与发版同样强制） |
 | `npm run build`                                                | typecheck + electron-vite 构建到 `out/`             |
 | `npm run build:win`                                            | 打包 Windows 安装包（electron-builder）             |
 | `npm run format`                                               | Prettier 格式化                                     |
