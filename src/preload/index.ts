@@ -24,6 +24,7 @@ const api: MainApi = {
   checkUpdate: (opts) => ipcRenderer.invoke('update:check', opts),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  forceInstallUpdate: (opts) => ipcRenderer.invoke('update:force-install', opts),
   // 扩展能力：定时器
   setTimerTimeout: (extId, id, seconds) => ipcRenderer.invoke('timer:set-timeout', extId, id, seconds),
   setTimerInterval: (extId, id, seconds) => ipcRenderer.invoke('timer:set-interval', extId, id, seconds),

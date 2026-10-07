@@ -210,6 +210,10 @@ const r = await api.update.check(feed.feedUrl)
 const d = await api.update.download()
 // 安装并重启（下载完成后）
 await api.update.install()
+// 强制重装 / 降级：直接下载本机架构安装包、校验 sha512、启动安装向导（应用不退出）
+// 绕开 electron-updater 的版本门控（allowDowngrade=false + 同版本判"无更新"），同版本重装与降级都能做
+const forced = await api.update.install({ force: true, feedUrl: feed.feedUrl })
+// forced = { ok, version?, error? }；feedUrl 省略时用提供者 manifest 里的 contributes.updater.feedUrl
 // 订阅更新事件（发现新版本/下载进度/下载完成/错误），返回注销函数
 api.update.onEvent((e) => {
   if (e.type === 'update-available') { /* e.version */ }

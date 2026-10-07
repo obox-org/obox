@@ -695,9 +695,22 @@ class ExtensionHost {
         isProvider()
         return window.api.downloadUpdate()
       },
-      install: async () => {
+      install: async (opts) => {
         isProvider()
-        await window.api.installUpdate()
+        if (!opts?.force) {
+          await window.api.installUpdate()
+          return { ok: true }
+        }
+        // 强制重装/降级：优先用调用方给的 feedUrl，否则回落到提供者 manifest 里声明的 feedUrl
+        const feedUrl = opts.feedUrl ?? updaterStore.active?.feedUrl
+        if (!feedUrl) {
+          return {
+            ok: false,
+            error: '强制重装需要更新源：请传入 feedUrl，或在 manifest 声明 contributes.updater.feedUrl'
+          }
+        }
+        const r = await window.api.forceInstallUpdate({ feedUrl, proxy: proxy(), reason: 'user' })
+        return { ok: r.ok, version: r.version, error: r.error }
       },
       onEvent: (callback) => {
         const off = window.events.on('update:event', (e) => {

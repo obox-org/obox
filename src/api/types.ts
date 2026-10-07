@@ -200,8 +200,18 @@ export interface ExtensionActivationApi {
     check(feedUrl: string): Promise<{ ok: boolean; available?: string; error?: string }>
     /** 下载更新（不自动安装） */
     download(): Promise<{ ok: boolean; error?: string }>
-    /** 安装并重启（下载完成后） */
-    install(): Promise<void>
+    /**
+     * 安装更新。
+     * - 缺省：`quitAndInstall()` —— 重启并安装 electron-updater 已下载的版本
+     * - `{ force: true }`：**强制重装 / 降级** —— 直接从更新源下载本机架构的安装包、校验 sha512 后
+     *   启动安装向导（应用不退出）。它绕开 electron-updater 的版本门控（`allowDowngrade=false` +
+     *   同版本按 semver 判"无更新"），因此**同版本重装与降级都能做**。
+     *   `feedUrl` 缺省时使用提供者 manifest 里的 `contributes.updater.feedUrl`
+     */
+    install(opts?: {
+      force?: boolean
+      feedUrl?: string
+    }): Promise<{ ok: boolean; version?: string; error?: string }>
     /** 订阅更新事件（发现新版本/下载进度/下载完成/错误），返回注销函数 */
     onEvent(callback: (e: UpdateEvent) => void): Disposable
   }
