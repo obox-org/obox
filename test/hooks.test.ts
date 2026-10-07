@@ -3,6 +3,7 @@
  * 覆盖：解析（函数/缺失/非函数/非法命名空间）、执行（跳过/成功/失败归因）、上下文透传、失败文案。
  */
 import { describe, expect, it } from 'vitest'
+import type { ExtensionActivationApi } from '../src/api'
 import {
   formatHookFailure,
   normalizeHookError,
@@ -12,7 +13,8 @@ import {
   type HookName
 } from '../src/renderer/src/core/hooks'
 
-const ctx: HookContext = { extensionId: 'demo_ext', upgraded: false }
+const apiStub = {} as ExtensionActivationApi
+const ctx: HookContext = { extensionId: 'demo_ext', upgraded: false, api: apiStub }
 
 describe('resolveHooks', () => {
   it('取出函数形式的 install / uninstall', () => {
@@ -73,7 +75,8 @@ describe('runHook', () => {
     const upgradeCtx: HookContext = {
       extensionId: 'demo_ext',
       upgraded: true,
-      previousVersion: '1.0.0'
+      previousVersion: '1.0.0',
+      api: apiStub
     }
     let seen: HookContext | undefined
     await runHook(

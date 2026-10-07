@@ -47,7 +47,7 @@ export interface ExtensionEntry {
   /** 安装时间戳（用户扩展；.obox-meta.json 提供） */
   installedTimestamp?: number
   /** 待补跑的 install 钩子（安装时渲染进程不可用，下次启动补跑；见 issue #52） */
-  pendingInstall?: { version: string; at: number }
+  pendingInstall?: { version: string; at: number; previousVersion?: string }
   /** 上次 install 钩子跑过的版本（用于判断本次是否属于升级） */
   previousInstallVersion?: string
 }
@@ -789,15 +789,30 @@ class ExtensionHost {
         window.api.hookResult(deferredHookResult(e.requestId))
         return
       }
-      void executeExtensionHook(e, { load }).then((result) => {
-        // 只有"真的执行过且失败"才标激活失败（deferred 与成功都不算）
-        const failure = hookFailureForActivation(result)
-        if (failure) {
-          const info = this.extensions.get(e.extId)
-          if (info) info.activationError = failure
-        }
-        window.api.hookResult(result)
-      })
+      const info = this.extensions.get(e.extId)
+      if (!info) {
+        // 构造不出文档承诺的 ctx.api 时不硬跑：回 deferred，留给下次启动补跑
+        window.api.hookResult(deferredHookResult(e.requestId))
+        return
+      }
+      // 钩子期注册类操作"不生效"= 钩子结束后立刻释放它们注册的东西
+      const hookDisposables: Array<() => void> = []
+      void executeExtensionHook(e, { load, api: this.buildApi(info, hookDisposables) })
+        .then((result) => {
+          // 只有"真的执行过且失败"才标激活失败（deferred 与成功都不算）
+          const failure = hookFailureForActivation(result)
+          if (failure) info.activationError = failure
+          window.api.hookResult(result)
+        })
+        .finally(() => {
+          for (const dispose of hookDisposables.splice(0)) {
+            try {
+              dispose()
+            } catch (err) {
+              console.warn('[host] 释放钩子期注册失败', err)
+            }
+          }
+        })
     })
     // ---- 1. 汇总扩展（内置 + 用户），跳过禁用项 ----
     const all: ExtensionInfo[] = []
@@ -836,7 +851,9 @@ class ExtensionHost {
       if (!pending) continue
       const info = this.extensions.get(entry.id)
       if (!info || !info.enabled || !info.isValid) continue
-      const previous = entry.previousInstallVersion
+      // 优先用安装时记下的"被替换版本"（延迟补跑的升级也能拿到），其次用上次钩子跑过的版本
+      const previous = pending.previousVersion ?? entry.previousInstallVersion
+      const hookDisposables: Array<() => void> = []
       const result = await executeExtensionHook(
         {
           requestId: `startup:${entry.id}`,
@@ -846,8 +863,15 @@ class ExtensionHost {
           upgraded: previous !== undefined && previous !== pending.version,
           previousVersion: previous
         },
-        { load: entry.load }
+        { load: entry.load, api: this.buildApi(info, hookDisposables) }
       )
+      for (const dispose of hookDisposables.splice(0)) {
+        try {
+          dispose()
+        } catch (err) {
+          console.warn('[host] 释放钩子期注册失败', err)
+        }
+      }
       if (result.deferred) continue
       const failure = hookFailureForActivation(result)
       if (failure) info.activationError = failure

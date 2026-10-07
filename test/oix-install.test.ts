@@ -171,9 +171,11 @@ describe('oixCore · 正常安装', () => {
     expect(r.id).toBe('plain')
   })
 
-  it('覆盖安装：replaced=true 且内容被替换', async () => {
+  it('覆盖安装：replaced=true、内容被替换，并记下被替换的旧版本（install 钩子要用）', async () => {
     const v1 = await makeOix('v1.oix', [['index.js', 'v1']])
-    await installFromPackage(v1, opts())
+    const first = await installFromPackage(v1, opts())
+    expect(first.replaced).toBe(false)
+    expect(first.previousVersion).toBeUndefined()
     const v2 = await makeOix('v2.oix', [['index.js', 'v2']], {
       name: 'demo-ext',
       version: '2.0.0',
@@ -183,7 +185,37 @@ describe('oixCore · 正常安装', () => {
     const r = await installFromPackage(v2, opts())
     expect(r.replaced).toBe(true)
     expect(r.version).toBe('2.0.0')
+    // E2E 抓到的缺口：升级时必须能给出 ctx.previousVersion（目录替换后就查不到了，所以这里留痕）
+    expect(r.previousVersion).toBe('1.0.0')
     expect(readFileSync(join(targetRoot, 'demo-ext_chenzhi', 'index.js'), 'utf8')).toBe('v2')
+    const meta = JSON.parse(
+      readFileSync(join(targetRoot, 'demo-ext_chenzhi', '.obox-meta.json'), 'utf8')
+    ) as { pendingInstall?: { version: string; previousVersion?: string } }
+    expect(meta.pendingInstall).toMatchObject({ version: '2.0.0', previousVersion: '1.0.0' })
+  })
+
+  it('覆盖安装继承旧的 install 钩子记录（"同一版本只跑一次"的判定依据）', async () => {
+    const v1 = await makeOix('v1.oix', [['index.js', 'v1']])
+    await installFromPackage(v1, opts())
+    const metaPath = join(targetRoot, 'demo-ext_chenzhi', '.obox-meta.json')
+    // 模拟"install 钩子已为 1.0.0 跑过"（真实流程由渲染进程回写）
+    await fs.writeFile(
+      metaPath,
+      JSON.stringify({
+        installedTimestamp: 1,
+        install: { version: '1.0.0', at: 111, ok: true }
+      }),
+      'utf8'
+    )
+    const v1b = await makeOix('v1b.oix', [['index.js', 'v1b']])
+    await installFromPackage(v1b, opts())
+    const meta = JSON.parse(await fs.readFile(metaPath, 'utf8')) as {
+      install?: unknown
+      pendingInstall?: { version?: string }
+    }
+    // 不继承的话，同版本重装会因为"查不到已跑记录"而重复执行钩子（E2E 抓到的 bug）
+    expect(meta.install).toEqual({ version: '1.0.0', at: 111, ok: true })
+    expect(meta.pendingInstall?.version).toBe('1.0.0')
   })
 
   it('安装结束后不残留暂存/备份目录', async () => {
