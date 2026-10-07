@@ -212,15 +212,16 @@ extensions/todo/
 
 **安装失败的错误码**（扩展管理器展示消息，代码可据此分支）：
 
-| code               | 含义                                                  |
-| ------------------ | ----------------------------------------------------- |
-| `invalid-package`  | 不是有效 zip / 无法读取                               |
-| `invalid-manifest` | 缺根 `manifest.json`，或 name / version / main 非法   |
-| `entry-missing`    | `manifest.main` 指向的入口不在包内                    |
-| `entry-invalid`    | 含非法条目路径（zip-slip / 反斜杠 / 绝对路径 / 空段） |
-| `too-large`        | 条目数或解压总量超限                                  |
-| `path-invalid`     | 传入的安装路径非法或不存在                            |
-| `write-failed`     | 暂存 / 替换 / 写盘失败（旧版本已回滚）                |
+| code               | 含义                                                               |
+| ------------------ | ------------------------------------------------------------------ |
+| `invalid-package`  | 不是有效 zip / 无法读取                                            |
+| `invalid-manifest` | 缺根 `manifest.json`，或 name / version / main 非法                |
+| `entry-missing`    | `manifest.main` 指向的入口不在包内                                 |
+| `entry-invalid`    | 含非法条目路径（zip-slip / 反斜杠 / 绝对路径 / 空段）              |
+| `too-large`        | 条目数或解压总量超限                                               |
+| `arch-mismatch`    | 自带运行时是另一架构（如 arm64 包在 x64 设备上装）——换对应架构的包 |
+| `path-invalid`     | 传入的安装路径非法或不存在                                         |
+| `write-failed`     | 暂存 / 替换 / 写盘失败（旧版本已回滚）                             |
 
 ## 教程：更新提供者扩展（参考 `extensions/obox-updater/`）
 
