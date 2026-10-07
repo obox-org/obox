@@ -102,10 +102,10 @@ export function registerExtIpc(): void {
     }
   )
 
-  // ---- 剪贴板 ----
-  ipcMain.handle('clipboard:read-text', (): string => clipboard.readText())
-  ipcMain.handle('clipboard:write-text', (_e, text: string): void => {
-    clipboard.writeText(String(text ?? ''))
+  // ---- 剪贴板（Electron 44 起主进程 clipboard 为异步 API：readText/writeText 返回 Promise）----
+  ipcMain.handle('clipboard:read-text', (): Promise<string> => clipboard.readText())
+  ipcMain.handle('clipboard:write-text', async (_e, text: string): Promise<void> => {
+    await clipboard.writeText(String(text ?? ''))
   })
 
   // ---- 主窗口任务栏进度 ----
