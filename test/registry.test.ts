@@ -1,12 +1,13 @@
 /**
  * 贡献点注册表单测（registry）。
- * 覆盖：命令 id 重复处理、命令 handler 归属校验、卸载时物理清理贡献项、
- * 导航/状态栏项按 id 原地更新、内置共享视图组件保护。
+ * 覆盖：命令 id 重复处理（告警 + 冲突写进 validations，issue #78）、命令 handler 归属校验、
+ * 卸载时物理清理贡献项、导航/状态栏项按 id 原地更新、内置共享视图组件保护。
  *
  * 注意：registry 是模块级单例，测试用**各用例独立的扩展 id** 避免相互污染。
  */
 import { describe, expect, it, vi } from 'vitest'
 import { registry } from '../src/renderer/src/core/registry'
+import type { ValidationMessage } from '../src/renderer/src/core/types'
 import type { Component } from 'vue'
 
 const dummy = {} as Component
@@ -14,17 +15,43 @@ const dummy = {} as Component
 describe('registry · 命令注册与 handler 归属', () => {
   const cmd = (id: string): { command: string; title: string } => ({ command: id, title: id })
 
-  it('重复命令 id：保留第一个并告警', () => {
+  it('重复命令 id：保留第一个、告警，并把冲突写进该扩展的 validations', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const validations: ValidationMessage[] = []
     registry.registerCommand('ext-dup-a', cmd('ext-dup-a.cmd'))
-    registry.registerCommand('ext-dup-b', cmd('ext-dup-a.cmd'))
+    registry.registerCommand('ext-dup-b', cmd('ext-dup-a.cmd'), validations)
     const found = registry.commands.filter((c) => c.command === 'ext-dup-a.cmd')
     expect(found).toHaveLength(1)
     expect(found[0].extensionId).toBe('ext-dup-a')
     expect(warn).toHaveBeenCalled()
+    // issue #78：注释声称"宿主会写进该扩展的 validations"，实际只有 warn——按注释落地。
+    // 形状与 host 的其它写入点一致（{ severity, message }），文案含命令 id 与双方扩展 id。
+    expect(validations).toHaveLength(1)
+    expect(validations[0].severity).toBe('warning')
+    expect(validations[0].message).toContain('ext-dup-a.cmd')
+    expect(validations[0].message).toContain('ext-dup-a')
+    expect(validations[0].message).toContain('ext-dup-b')
     warn.mockRestore()
     registry.unregisterExtension('ext-dup-a')
     registry.unregisterExtension('ext-dup-b')
+  })
+
+  it('重复命令 id 且未传 validations 收集数组 → 只告警，不抛错', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    registry.registerCommand('ext-dup-c', cmd('ext-dup-c.cmd'))
+    expect(() => registry.registerCommand('ext-dup-c2', cmd('ext-dup-c.cmd'))).not.toThrow()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+    registry.unregisterExtension('ext-dup-c')
+    registry.unregisterExtension('ext-dup-c2')
+  })
+
+  it('命令 id 不重复时不写 validations（不误报）', () => {
+    const validations: ValidationMessage[] = []
+    registry.registerCommand('ext-dup-ok', cmd('ext-dup-ok.a'), validations)
+    registry.registerCommand('ext-dup-ok', cmd('ext-dup-ok.b'), validations)
+    expect(validations).toEqual([])
+    registry.unregisterExtension('ext-dup-ok')
   })
 
   it('只能绑定本扩展声明的命令：跨扩展绑定被拒绝并告警', () => {

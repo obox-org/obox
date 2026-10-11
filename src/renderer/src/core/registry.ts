@@ -10,7 +10,8 @@ import type {
   Disposable,
   MenuContribution,
   NavItemContribution,
-  StatusBarItemContribution
+  StatusBarItemContribution,
+  ValidationMessage
 } from './types'
 
 export interface RegisteredNavItem extends NavItemContribution {
@@ -118,11 +119,20 @@ class Registry {
     })
   }
 
-  registerCommand(extensionId: string, c: CommandContribution): void {
+  registerCommand(
+    extensionId: string,
+    c: CommandContribution,
+    validations?: ValidationMessage[]
+  ): void {
     const cmd: RegisteredCommand = { ...c, extensionId, active: true }
-    if (this.commandIndex.has(c.command)) {
-      // 重复 id：保留第一个，记录冲突（宿主会写进该扩展的 validations）
+    const existing = this.commandIndex.get(c.command)
+    if (existing) {
+      // 重复 id：保留第一个，并把冲突写进该扩展的 validations（宿主传入 ext.validations）
       console.warn(`[registry] duplicate command id: ${c.command}`)
+      validations?.push({
+        severity: 'warning',
+        message: `命令 id ${c.command} 重复：已被扩展 ${existing.extensionId} 声明，扩展 ${extensionId} 的注册被丢弃（保留先注册者）`
+      })
       return
     }
     this.commandIndex.set(c.command, cmd)

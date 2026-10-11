@@ -192,7 +192,7 @@ const indexJs = `/**
  * 宿主用 import() 动态加载本文件，不做任何构建转换，所以：
  *   - 只能依赖注入的 api，不能 import npm 包，也不能 import 宿主 src/；
  *   - 命令 id 必须已在 manifest.json 的 contributes.commands 声明，
- *     否则 api.registerCommand 抛错（registry.ts:193 command not declared），扩展标红 activationError；
+ *     否则 api.registerCommand 抛错（registry.ts:203 command not declared），扩展标红 activationError；
  *   - 返回值是"释放函数"：宿主停用/卸载扩展时调用，所有注册都要在这里 dispose。
  *
  * 本目录的静态页（page.html / page.js）经 app://extensions/${id}/ 加载，路径由 import.meta.url 推导。
