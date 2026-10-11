@@ -126,7 +126,7 @@
 | `label`  | ✅   | 显示名（设置下拉框展示）                 |
 | `tokens` | ✅   | CSS 变量组（`--xxx` → 值），套到 `:root` |
 
-宿主已内置 `theme-dark`（深色）与 `theme-light`（浅色）主题扩展。**完整 token 表与主题编写指南见 `themes-settings.md`**（含背景/文字/语义色/字体/字号/图标尺寸 token；SVG 用 `currentColor` 继承、尺寸用 `--nav-icon-size`/`--icon-size`）。子窗口 iframe（srcdoc）自动注入当前主题 token，扩展页面用 `var(--bg)` 等即可跟随主题。
+宿主已内置 `theme-dark`（深色）与 `theme-light`（浅色）主题扩展。**完整 token 表与主题编写指南见 `themes-settings.md`**（含背景/文字/语义色/字体/字号/图标尺寸 token；SVG 用 `currentColor` 继承、尺寸用 `--nav-icon-size`/`--icon-size`）。子窗口 iframe（`srcdoc`）**自动注入**当前主题 token，扩展页面用 `var(--bg)` 等即可跟随主题；**App 卡片的 `url` 型静态页由宿主经 `obox-theme` 消息下发 token**（跨源 inject 不了，协议与最小接收代码见 `themes-settings.md`）。
 
 ### i18n（扩展语言包，manifest 声明）
 

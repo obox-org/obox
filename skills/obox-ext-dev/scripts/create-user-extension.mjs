@@ -16,6 +16,7 @@
  *   <id>/manifest.json          views/commands/statusBarItems/i18n 声明（main: "./index.js"）
  *   <id>/index.js               纯 ESM：default 插件函数 + 具名导出 greet + cleanup
  *   <id>/page.html + page.js    App 卡片子窗口的静态页（脚本是**独立文件**，不是内联）
+ *   <id>/theme.js               子窗口主题接收桥（宿主 obox-theme 推送；协议见 themes-settings.md）
  *   <id>/test/extension.test.js node --test + mock api（零依赖）
  *   <id>/scripts/pack.mjs       zip → out/<id>-<version>.oix（零依赖，自己写 zip）
  *   <id>/package.json           type: module；scripts: test / pack / release
@@ -275,13 +276,107 @@ export default function ${camelName}(api) {
 
 // ---------------------------------------------------------------- 静态页
 
+/**
+ * 子窗口主题接收桥（宿主 → iframe 单向推送，协议见 references/themes-settings.md 与 ADR-0022）。
+ *
+ * 为什么需要它：子窗口是独立文档（app:// 协议），与父文档**跨源** ⇒ CSS 自定义属性不跨文档继承、
+ * 宿主也注入不了 <style>。宿主在 iframe load / 主题变化 / 收到 obox-theme-request 时会 postMessage
+ * { source:'obox-app', action:'obox-theme', themeId, tokens }；本模块把 tokens 写到自己的 :root。
+ *
+ * FALLBACK_TOKENS 只用于"推送到达前 / 老宿主"的首帧，值 = 宿主 dark 默认值（main.css）。
+ * CSS 里仍写 var(--token, fallback)：宿主可用时两个来源同值，宿主不可用时兜住可读性。
+ * ⚠️ 消息形状与宿主协议一致，**勿改**。
+ */
+const themeJs = `/** 宿主子窗口主题接收桥（obox-theme）；协议见 skills/obox-ext-dev/references/themes-settings.md */
+const FALLBACK_TOKENS = {
+  '--bg': '#1e1e1e',
+  '--bg-input': '#3c3c3c',
+  '--border': '#3c3c3c',
+  '--fg': '#cccccc',
+  '--fg-dim': '#6e6e6e',
+  '--fg-bright': '#ffffff',
+  '--hover-bg': 'rgba(255, 255, 255, 0.1)',
+  '--font-family': "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif",
+  '--font-size': '13px',
+  '--font-size-lg': '16px'
+}
+
+/** 只认 '--xxx' 形状的键 + 非空字符串值；非法条目丢弃（与宿主侧双保险） */
+function sanitize(tokens) {
+  const out = {}
+  if (!tokens || typeof tokens !== 'object') return out
+  for (const [k, v] of Object.entries(tokens)) {
+    if (!/^--[a-z0-9-]+$/.test(k)) continue
+    if (typeof v !== 'string' || v === '') continue
+    out[k] = v
+  }
+  return out
+}
+
+/** 把 token 写到目标元素的行内样式（默认 :root） */
+export function applyThemeTokens(tokens, root = document.documentElement) {
+  let n = 0
+  for (const [k, v] of Object.entries(sanitize(tokens))) {
+    root.style.setProperty(k, v)
+    n++
+  }
+  return n
+}
+
+/**
+ * 安装接收桥：同步写兜底（首帧就有配色）→ 监听推送 → 按 0/300/1000ms 请求重发（收到即停）。
+ * 无 DOM 环境（node 单测）下安全空转，不抛错。
+ * @returns {{ dispose(): void }}
+ */
+export function installAppThemeBridge() {
+  if (typeof document === 'undefined' || typeof window === 'undefined') {
+    return { dispose() {} }
+  }
+  applyThemeTokens(FALLBACK_TOKENS)
+  document.documentElement.style.colorScheme = 'dark'
+
+  let received = false
+  const timers = []
+  const onMessage = (event) => {
+    const data = event.data
+    if (!data || data.source !== 'obox-app' || data.action !== 'obox-theme') return
+    if (event.source !== window.parent) return
+    applyThemeTokens(data.tokens)
+    received = true
+    for (const t of timers) clearTimeout(t)
+    timers.length = 0
+    console.log('[ext] 主题已应用', data.themeId || '(无主题扩展)')
+  }
+  window.addEventListener('message', onMessage)
+  for (const ms of [0, 300, 1000]) {
+    timers.push(
+      setTimeout(() => {
+        if (received) return
+        window.parent.postMessage({ source: 'obox-app', action: 'obox-theme-request' }, '*')
+        if (ms === 1000) {
+          console.warn('[ext] 未收到宿主主题推送（3 次请求无响应），使用内置兜底配色')
+        }
+      }, ms)
+    )
+  }
+  return {
+    dispose() {
+      window.removeEventListener('message', onMessage)
+      for (const t of timers) clearTimeout(t)
+    }
+  }
+}
+`
+
 const pageHtml = `<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
     <title>${htmlEscape(displayName)}</title>
     <style>
-      /* 子窗口是独立文档（app:// 协议），拿不到宿主的主题变量 —— 所以 token 一律写 var(--token, fallback) */
+      /* 子窗口是独立文档（app:// 协议），CSS 变量不跨文档继承；宿主经 obox-theme 推送 token（theme.js），
+         在收到之前由 var(--token, fallback) 兜住首帧 / 老宿主 */
       body {
         margin: 0;
         padding: 16px;
@@ -328,8 +423,14 @@ const pageJs = `/**
  *
  * 与扩展入口的桥：window.parent.postMessage({ source: 'obox-app', action: 'obox-extension', ... })
  * 宿主回 { source: 'obox-app', action: 'obox-extension-reply', requestId, result }
- * 协议实现在 src/renderer/src/AppWindow.vue:54-99，扩展侧处理器在 api.app.onMessage。
+ * 协议实现在 src/renderer/src/AppWindow.vue，扩展侧处理器在 api.app.onMessage。
+ *
+ * 主题：先装接受桥（宿主经 obox-theme 推送 token，跨源拿不到 CSS 变量），再挂 UI。
  */
+import { installAppThemeBridge } from './theme.js'
+
+installAppThemeBridge()
+
 const APP_ID = ${jsLiteral(appId)}
 const pending = new Map()
 let seq = 0
@@ -527,6 +628,7 @@ const FILES = [
   'index.js',
   'page.html',
   'page.js',
+  'theme.js',
   'icon.svg',
   'icon.png',
   'LICENSE'
@@ -709,7 +811,7 @@ ${description || '一个 obox 用户扩展骨架：纯 ESM 入口 + 导航树视
 | --- | --- |
 | \`manifest.json\` | 扩展清单（\`main: "./index.js"\`）；贡献点在 \`contributes\` 里**声明式**声明 |
 | \`index.js\` | 入口：纯 ESM JavaScript，\`default\` 导出插件函数，返回释放函数 |
-| \`page.html\` / \`page.js\` | App 卡片子窗口的静态页（脚本必须是独立文件，见下） |
+| \`page.html\` / \`page.js\` / \`theme.js\` | App 卡片子窗口的静态页（脚本必须是独立文件，见下）；\`theme.js\` 是主题接收桥 |
 | \`test/extension.test.js\` | \`node --test\` 单测（mock api，零依赖） |
 | \`scripts/pack.mjs\` | 打包 \`.oix\`（zip，零依赖） |
 | \`out/<id>-<version>.oix\` | 分发给别人安装的扩展包 |
@@ -751,8 +853,10 @@ ${vue ? 'npm install && npm run build   # 构建 Vue 子应用（构建期依赖
 
 1. **不要写内联 \`<script>\`**：App 卡片的 \`html\`（srcdoc）模式继承宿主 CSP
    \`script-src 'self' app:\`，内联脚本会被直接拦掉（按钮点了没反应）。用独立 \`.js\` 文件。
-2. 子窗口是独立文档（\`app://\` 协议），**拿不到宿主主题变量**，所以 CSS 里 token 一律写
-   \`var(--token, fallback)\`，fallback 就是实际生效值。
+2. 子窗口是独立文档（\`app://\` 协议），**CSS 自定义属性不跨文档继承**；宿主会通过
+   \`obox-theme\` 消息**下发**主题 token（协议见 \`skills/obox-ext-dev/references/themes-settings.md\`），
+   \`theme.js\` 的 \`installAppThemeBridge()\` 已装好接收桥；**在收到之前**用 \`var(--token, fallback)\`
+   兜住首帧 / 老宿主（两者同值时以宿主推送为准）。
 `
 
 // ---------------------------------------------------------------- --vue 子应用骨架
@@ -784,6 +888,7 @@ const appIndexHtml = `<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
     <title>${htmlEscape(displayName)}</title>
   </head>
   <body>
@@ -795,12 +900,17 @@ const appIndexHtml = `<!doctype html>
 
 const appMainTs = `import { createApp } from 'vue'
 import App from './App.vue'
+import { installAppThemeBridge } from './theme.js'
 import './style.css'
+
+// 子窗口主题接收桥：**必须在挂载 UI 之前**同步安装（宿主可能先于 Vue 就绪推送 token）
+installAppThemeBridge()
 
 createApp(App).mount('#app')
 `
 
-const appStyleCss = `/* 子窗口是独立文档（app:// 协议），拿不到宿主主题变量 → token 一律写 var(--token, fallback) */
+const appStyleCss = `/* 子窗口是独立文档（app:// 协议），CSS 变量不跨文档继承；宿主经 obox-theme 推送 token（theme.js），
+   在收到之前由 var(--token, fallback) 兜住首帧 / 老宿主 */
 body {
   margin: 0;
   padding: 16px;
@@ -910,16 +1020,18 @@ if (vue) {
   await write('app/main.ts', appMainTs)
   await write('app/App.vue', appVue)
   await write('app/style.css', appStyleCss)
+  await write('app/theme.js', themeJs)
   await write('vite.config.ts', viteConfig)
 } else {
   await write('page.html', pageHtml)
   await write('page.js', pageJs)
+  await write('theme.js', themeJs)
 }
 
 console.log(`[create-user-extension] 已生成用户扩展${vue ? '（含 Vue 子应用骨架）' : ''}:
   ${extDir}/manifest.json
   ${extDir}/index.js
-  ${extDir}/${vue ? 'app/（Vue 子应用源码，构建产物进 dist/）' : 'page.html + page.js'}
+  ${extDir}/${vue ? 'app/（Vue 子应用源码，构建产物进 dist/）' : 'page.html + page.js + theme.js'}
   ${extDir}/test/extension.test.js
   ${extDir}/scripts/pack.mjs
   ${extDir}/package.json

@@ -50,15 +50,15 @@ description: 在 obox 桌面应用（Electron + Vue + Cordis 版，扩展宿主�
 
 ## 五、references 索引
 
-| 何时读                  | 文件                               |
-| ----------------------- | ---------------------------------- |
-| 开工前走流程、必问清单  | `references/workflow.md`           |
-| 做内置扩展              | `references/guides-builtin.md`     |
-| 做用户扩展、打包调试    | `references/guides-user.md`        |
-| manifest 字段与校验规则 | `references/manifest-reference.md` |
-| 扩展 API 方法签名与限额 | `references/api-reference.md`      |
-| 主题 token、设置系统    | `references/themes-settings.md`    |
-| 出问题了（按症状查）    | `references/troubleshooting.md`    |
+| 何时读                                       | 文件                               |
+| -------------------------------------------- | ---------------------------------- |
+| 开工前走流程、必问清单                       | `references/workflow.md`           |
+| 做内置扩展                                   | `references/guides-builtin.md`     |
+| 做用户扩展、打包调试                         | `references/guides-user.md`        |
+| manifest 字段与校验规则                      | `references/manifest-reference.md` |
+| 扩展 API 方法签名与限额                      | `references/api-reference.md`      |
+| 主题 token、设置系统、App 子窗口主题下发协议 | `references/themes-settings.md`    |
+| 出问题了（按症状查）                         | `references/troubleshooting.md`    |
 
 ## 六、持续更新（强制）
 

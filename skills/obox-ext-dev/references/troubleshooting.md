@@ -16,6 +16,8 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 - **srcdoc 场景**：脚本必须用**绝对 `app://extensions/<id>/x.js`** 引入（`script-src` 放行了 `app:`；srcdoc 里的相对路径按父文档 URL 解析，取不到扩展目录）——该写法**未实机验证**，能用 `url` 形态就别用 srcdoc
 - 窗口控制一律用 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`
 
+**主题下发不受 CSP 影响**：它是 `postMessage`，不是脚本/样式注入。因此**不要**为了让主题生效去放宽 CSP 或往 iframe 里注入内联 `<style>`——跨源 iframe 里根本做不到（详见第 29 条）。
+
 ## 2. App 子窗口 iframe 加载 app:// 404 或空白
 
 **症状**：`url: 'app://extensions/<id>/todo.html'` 打不开 / 404；控制台 `Failed to load resource`。
@@ -334,3 +336,23 @@ export function uninstall(ctx) {
 - 打完自检：`tar -tf out/<id>-<version>.oix` 里不应出现 `data/` 条目。
 
 > 升级**保留数据**依赖的是宿主对 `data/` 的保留（见 [api-reference.md](api-reference.md) 的 `api.sqlite`），与包内排除 `data/` 是同一件事的两面：包负责不携带数据，宿主负责不删除数据。
+
+## 29. App 子窗口（`url` 型）拿不到主题 token / 切主题不跟随
+
+**症状**：App 卡片用 `url:` 加载 `app://extensions/<id>/…` 静态页，页面里 `var(--bg)` 这类引用**全部落到初始值**（无 fallback 时即"无值"⇒ 透明/黑字）；宿主切主题时子窗口外观**毫无变化**；表单配色丢失。
+
+**原因**（三条，逐条核对）：
+
+1. **跨源，宿主注入不了 CSS**：iframe 是 `app://extensions|debug/<id>/…`，与父文档（dev `http://localhost:5173`、打包 `file://`）**不同源** ⇒ `iframe.contentDocument` 恒为 `null`，宿主**无法**写 `<style>`；CSS 自定义属性也**不跨文档继承**（`srcdoc` 能生效是因为 token 被拼进了**同一份文档**）。所以 token 只能经消息送达。
+2. **扩展没装接收桥**：宿主会推送 `{source:'obox-app', action:'obox-theme', themeId, tokens}`，但页面若没有 `message` 监听（且没把 `tokens` `setProperty` 到自己的 `documentElement`），推送就是空投。
+3. **宿主没推送**：正常宿主在 iframe `load` 完成、主题变化、收到 `obox-theme-request` 三个时机都会推；三个时机全无日志才怀疑宿主。
+
+**排查**（子窗口 DevTools / 主进程日志，子窗口 iframe 的 console 会带 `[child-renderer:<level>]` 前缀转发）：
+
+- 子窗口控制台应出现 `[AppWindow] 下发主题 <themeId> N 个 token`（宿主侧）与 `[rdp] 主题已应用 <themeId>` 之类（扩展侧）；
+- 若只有"未收到宿主主题推送"这类 warn：说明请求发了但**没收到**回包 → 检查是否装了接收桥（第 2 条的代码片段）；
+- 若连"下发主题"都没有：宿主没推 → 见下面的**已知坑**；也确认卡片确实是 `url` 型（`html`/`srcdoc` 型不走这条通道，见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)）。
+
+**修复**：装接收桥 + 首帧兜底——最小代码见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议) 的 `applyTokens` / `message` 监听 / `obox-theme-request` 三件套（脚手架生成的骨架已内置 `installAppThemeBridge()`）。兜底值集中在**一处常量**（不要散在 CSS 里，否则既拿不到主题又难维护）。
+
+**已知坑（跨窗口主题同步依赖 `storage` 事件，ADR-0022）**：子窗口是**独立 document**，主窗口切主题不会自动改子窗口的 `:root`。自 ADR-0022 起，主窗口写 `obox:state:v1` 后由 Chromium 的 `storage` 事件把快照送到子窗口（`src/renderer/src/core/state.ts` 的 `applyExternal`），子窗口据此 `applyCurrent()` 再推给 iframe。若日志里**一条 `[AppWindow] 下发主题` 都没有**而页面明明开着，按 ADR-0022 的退路排查（改用主进程 `webContents.send` 广播）；此时**不要**在扩展侧"绕过宿主自己读 localStorage"——`app://` 页面有**自己的** localStorage，与宿主**不共享**。
