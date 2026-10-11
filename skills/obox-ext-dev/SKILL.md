@@ -39,7 +39,7 @@ description: 在 obox 桌面应用（Electron + Vue + Cordis 版，扩展宿主�
 3. **视图必须具名导出**：navItem 的 `view` 引用的组件要在入口具名 `export`，否则内容栏空白。
 4. **依赖环不跳过**：`extensionDependencies` 成环时环内扩展**仍会激活**，只是排在最后；缺失依赖不阻塞激活。
 5. **Disposable**：`registerCommand` / `on` / `app.register` / `statusBar.createItem` 都返回 `{ dispose() }`；插件函数返回的 cleanup 与它们一起被宿主在停用时统一释放，不返回会在热重载时泄漏。
-6. **只在主窗口激活**：App 子窗口（`?obox-window=app`）只注册贡献点、**不跑扩展代码**；子窗口交互走 `api.app.onMessage` 消息桥。
+6. **只在主窗口调用插件函数**：App 子窗口（`?obox-window=app`）**同样会 import 每个扩展入口并注册贡献点——模块顶层代码会执行**，只是不调用 `default` 插件函数。所以定时器 / DB 连接 / 文件监听一律放进插件函数，别写模块顶层，否则每个子窗口都会重跑；子窗口交互走 `api.app.onMessage` 消息桥。
 7. **命令 id 全局唯一**：跨扩展同名会被拒绝并记日志；扩展热移除/覆盖安装时其命令从注册表物理移除，同 id 可重新声明。
 8. **生命周期钩子**：入口具名导出 `install(ctx)` / `uninstall(ctx)`，两者都可选。`install` 在 `.oix` 安装完成后立刻执行（覆盖安装会重跑，`ctx.upgraded === true`），失败按激活失败处理；`uninstall` 在删除目录**之前**执行（禁用态扩展也会临时加载入口来跑），失败只告警但仍继续删目录。两者都要自行保证幂等。
 9. **i18n**：只有**导航项与树视图**支持 `titleKey`（词条加在 `src/renderer/src/i18n/locales/{zh,en}.ts`，**用户扩展改不了宿主语言包，所以对它无效**）；命令与状态栏项**没有**这个字段，要双语得自己接 `api.i18n` 并随语言变更刷新文本。

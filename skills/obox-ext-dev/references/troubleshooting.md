@@ -132,12 +132,15 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 15. VS Code 断点不命中（app://debug）
 
-**排查**：
+**先按仓库自带的 `.vscode/launch.json` 核对调试链路**（这是本仓库唯一可核实的配置）：
 
-- launch.json 的 `pathMapping` 前缀必须与 `app://debug/<id>/` 完全一致（id 大小写、目录尾斜杠）；改代码后需**重载 obox 窗口**（宿主在启动时收集扩展）
-- `urlFilter` 只匹配 dev 渲染进程（electron-vite 默认 `http://localhost:5173`）；本仓库未固定 `server.port`（`electron.vite.config.ts:15-20`），端口被占用时 Vite 会顺延换端口 → `urlFilter` 需同步改。`references/guides-user.md` 里的 `launch.json` 模板**未实机验证**，照抄前先确认实际端口
-- 打包版（file://）去掉 urlFilter 或改匹配
-- 确认 attach 的是渲染进程（chrome attach + CDP 端口），不是主进程 inspector
+- 用 compound **`Debug All`**：`Debug Main Process`（由 electron-vite 启动，`env` 里设 `REMOTE_DEBUGGING_PORT=9222`，`.vscode/launch.json:14-16`）+ `Debug Renderer Process`（`type: chrome` + `request: attach` + `port: 9222`，`.vscode/launch.json:18-28`）
+- **CDP 端口是怎么来的**：`npm run dev` 就是 `electron-vite dev`（`package.json:19`），**它自己不开**调试端口；electron-vite 在 dev 下读环境变量 `REMOTE_DEBUGGING_PORT` 并给 Electron 追加 `--remote-debugging-port=<port>`（`node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js:225-226`，仅 `isDev` 生效；也可用 `electron-vite dev --remoteDebuggingPort 9222`，`node_modules/electron-vite/dist/cli.js:42,46-48`）。因此"断点完全不命中 / 附加失败"的**第一嫌疑是没有这个端口**：确认 9222 在监听（`netstat -ano | findstr 9222`），没有就补上环境变量或命令行参数
+- attach 的是**渲染进程**（chrome 协议），不是主进程 inspector；`webRoot` 指 `${workspaceFolder}/src/renderer`
+- 改扩展代码后需**重载 obox 窗口**：宿主只在窗口启动时收集并 import 扩展入口（`src/renderer/src/core/host.ts:883-896`），`app://` 动态 import 的模块缓存不会自动失效
+- 断点落在"无源码"位置时，先回看启动日志 `[debug] 调试扩展 N 个: id@路径`（`src/main/debug.ts`）确认加载的确实是 `--debug-extension` 给的目录；调试扩展经 `app://debug/<id>/` 加载（`src/main/protocol.ts:48-58`），打包版（`file://`）没有这条 dev 链路、也没有可 attach 的端口
+
+> `references/guides-user.md` 里那份给**扩展自己仓库**用的 `.vscode/launch.json` 模板（`args` 写死 `--remote-debugging-port=9333`，并带 `pathMapping` / `urlFilter`，见该文 :190-215，`pathMapping` 说法在 :217）**未实机验证**——照抄前先按上面对齐本仓库自带配置。其中 `urlFilter` 依赖 electron-vite dev 端口，而仓库**未固定 `server.port`**（`electron.vite.config.ts:15-20`），端口被占用时 Vite 会顺延换端口，写死端口的 `urlFilter` 会失配。
 
 ## 16. 调试扩展也出现在 userData / 可被卸载
 
@@ -168,7 +171,7 @@ export function uninstall(ctx) {
 
 **失败语义**：`install` 抛错 → 扩展在管理器标红（`activationError`），文件层不回滚；`uninstall` 抛错 → 只告警，**仍然删除目录**（否则写错的钩子会让扩展永远删不掉）。
 
-**兼容**：旧的固定文件 **`.uninstall.cjs`**（`spawn(process.execPath, [hookPath])`，5 秒超时）仍作为**回退**——仅当入口未导出 `uninstall` 时执行。
+**兼容**：旧的固定文件 **`.uninstall.cjs`**（`spawn(process.execPath, [hookPath])`，5 秒超时）仍作为**回退**——触发条件是入口钩子"没送达到 / 被跳过"（`delivered && !deferred && !skipped` 不成立，`src/main/capabilities.ts:102-112`）：入口未导出 `uninstall`、扩展当时未加载到宿主、渲染进程不可用都会走它，不只是"入口没导出"这一种。
 
 **仍不会执行的几种情况**：入口没导出 `uninstall` 且没有 `.uninstall.cjs`；或卸载时主窗口不可用（此时走回退路径，同样不报错）。安装时若宿主还没加载到该扩展（窗口不可用/刚装完还没扫描到），钩子会**留待下次启动、激活之前补跑一次**。
 

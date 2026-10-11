@@ -2,6 +2,8 @@
 
 宿主在激活扩展时构造 `ExtensionActivationApi` 作为插件函数的唯一参数注入（`api`）。本文按其成员逐节说明；类型定义的物理位置见文末「类型文件位置」。
 
+> **代码引用约定**：未写目录的 `xxx.ts` 一律指 `src/renderer/src/core/xxx.ts`（如 `host.ts`、`registry.ts`、`manifest.ts`、`appStore.ts`）；`src/api/*`、`src/main/*`、`src/shared/*` 一律写全相对路径（如 `src/api/types.ts`、`src/main/timer.ts`）。注意 `core/types.ts` 只是 `src/api` 的历史兼容再导出（`core/types.ts:7`），**类型定义在 `src/api/types.ts`**。
+
 ## 入口契约
 
 ```ts
@@ -20,7 +22,7 @@ export default function myExt(api: ExtensionActivationApi): (() => void) | void 
 ## 宿主生命周期语义
 
 - **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表（`host.ts:882-918`）
-- **App 子窗口不激活扩展**：子窗口（`?obox-window=app`）只做"注册贡献点"（主题 token / 语言包 / 导航项数据），**不执行任何扩展代码**——它渲染所需的数据来自贡献点注册表与 localStorage 共享的 App 卡片（`appStore`）（`host.ts:906-908`）。因此 `plugin(api)` **只在主窗口执行一次**；不要假设子窗口里存在激活的扩展实例（子窗口内的交互请走 `api.app.onMessage` 消息桥）
+- **App 子窗口不激活扩展，但仍会 import 入口**：子窗口（`?obox-window=app`）由 `src/renderer/src/main.ts:27` 传 `activateExtensions:false`，**只跳过阶段二**（不调用 `plugin(api)`，`host.ts:902-908`）；**阶段一照常执行**——宿主仍 `await load()` 每个扩展入口模块并 `registerContributions`（`host.ts:883-896`）。也就是说：**入口模块的顶层代码会在每个 App 子窗口重跑**，`default` 插件函数才只在主窗口执行一次。因此**副作用（连 IPC、写盘、起定时器、装监听、注册命令）必须放进插件函数**，写在模块顶层会在每个子窗口重复执行。子窗口渲染所需的数据来自贡献点注册表与（与主窗口同源的）localStorage 里的 App 卡片（`appStore`）；子窗口内的交互请走 `api.app.onMessage` 消息桥
 - **依赖拓扑序**：`extensionDependencies` 先激活依赖；**检测到环不跳过**——环内扩展仍会被激活，只是排到最后（`manifest.ts:165-168` 把环内扩展补进 `ordered`，`host.ts:909` 照常激活）；宿主启动日志末尾会列出环内 id（`host.ts:921-927` 的 `依赖环 …`）。缺失依赖不阻塞，扩展照常激活（`manifest.ts:155`）
 - **命令归属**：命令 id 全局唯一，`api.registerCommand(id, handler)` 只能绑定**本扩展 manifest 声明**的命令；绑定别人声明的 id 会被拒绝（`console.warn` + 返回空 Disposable，`registry.ts:196-201`），绑定完全未声明的 id 直接抛错（见 `registerCommand`）。扩展被热移除/卸载/覆盖安装时，其命令会从注册表**物理移除**，同 id 可被其它版本或扩展重新声明（`registry.ts:179-181`）
 - **停用**：扩展停用（禁用/重启/卸载）时，宿主执行插件返回的 cleanup、dispose 全部注册（命令 handler 清空、App 卡片移除、事件监听移除）
@@ -79,7 +81,7 @@ item.dispose() // 销毁（扩展停用宿主自动清理）
 ```
 
 - 上面前四个方法作用于**已声明**的项：id 不存在时静默无操作（`host.ts:275-290`）
-- `createItem(init?)` 的 `init` 可选字段：`text` / `tooltip` / `alignment`（`'left' | 'right'`）/ `priority`（`types.ts:118-123`）
+- `createItem(init?)` 的 `init` 可选字段：`text` / `tooltip` / `alignment`（`'left' | 'right'`）/ `priority`（`src/api/types.ts:118-123`）
 
 ### navbar（导航栏徽标）
 
@@ -130,9 +132,9 @@ await api.window.setProgressBar(null) // 清除进度
 const focused = await api.window.isFocused() // 见下方"作用窗口"说明
 ```
 
-- **作用窗口**：`minimize` / `toggleMaximize` / `close` 作用于**当前焦点窗口**（主进程取 `BrowserWindow.getFocusedWindow() ?? 主窗口`，`window.ts:97`）；`isMaximized` / `isFocused` 读同一取值（`window.ts:115-118`）。因此焦点在 App 子窗口时，`close()` 关的是**子窗口**，而 `isFocused()` 返回子窗口的聚焦状态（只要有任何窗口聚焦就几乎恒为 `true`）
-- `onFocusChanged(cb) → Disposable` 的口径与 `isFocused()` **不同**：状态变化只由**主窗口**的 `focus` / `blur` / `maximize` 等事件推送（`window.ts:57-62`，子窗口不推送），所以它反映的是**主窗口**是否聚焦
-- `setProgressBar` 也是特例：作用于**主窗口**（取第一个非 `obox-window=app` 的窗口，`ext.ts:136-145`），并被钳到 `0~1`
+- **作用窗口**：`minimize` / `toggleMaximize` / `close` 作用于**当前焦点窗口**（主进程取 `BrowserWindow.getFocusedWindow() ?? 主窗口`，`src/main/window.ts:97`）；`isMaximized` / `isFocused` 读同一取值（`src/main/window.ts:115-118`）。因此焦点在 App 子窗口时，`close()` 关的是**子窗口**，而 `isFocused()` 返回子窗口的聚焦状态（只要有任何窗口聚焦就几乎恒为 `true`）
+- `onFocusChanged(cb) → Disposable` 的口径与 `isFocused()` **不同**：状态变化只由**主窗口**的 `focus` / `blur` / `maximize` 等事件推送（`src/main/window.ts:57-62`，子窗口不推送），所以它反映的是**主窗口**是否聚焦
+- `setProgressBar` 也是特例：作用于**主窗口**（取第一个非 `obox-window=app` 的窗口，`src/main/ext.ts:136-145`），并被钳到 `0~1`
 - 上方 ADR-0019 的托盘 / "询问 / 收进托盘 / 退出"语义描述的是**主窗口**的关窗行为
 
 ### appInfo
@@ -162,15 +164,16 @@ const d = api.app.register({
 })
 ```
 
-- `icon` 必填；`iconUrl` 只接受 `app://extensions/<id>/<rest>` 形状——主进程解析成 `userData/extensions/<id>/<rest>` 设为**子窗口任务栏图标**，其它形状或含 `..` 时静默忽略、回落应用默认图标（`appWindow.ts:33-43,82-85`）
+- `icon` 必填；`iconUrl` 只接受 `app://extensions/<id>/<rest>` 形状——主进程解析成 `userData/extensions/<id>/<rest>` 设为**子窗口任务栏图标**，其它形状或含 `..` 时静默忽略、回落应用默认图标（`src/main/appWindow.ts:33-43,82-85`）
 - `app://` 三个主机名（`src/main/protocol.ts:13-15,46-58`，越出根目录或含 `..` 返回 403/404）：
   - `app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（用户扩展；宿主还会二次校验符号链接解析后的真实路径）
-  - `app://builtin/<id>/<rest>` → `resources/extensions/<id>/<rest>`（`paths.ts:16-19`）；**当前打包配置未产出该目录**（`electron-builder.yml` 无对应 `extraResources`，仓库 `resources/` 只有 `icon.png`/`tray.ico`），故该通道虽注册但无内容可服务
+  - `app://builtin/<id>/<rest>` → `resources/extensions/<id>/<rest>`（`src/main/paths.ts:16-19`）；**当前打包配置未产出该目录**（`electron-builder.yml` 无对应 `extraResources`，仓库 `resources/` 只有 `icon.png`/`tray.ico`），故该通道虽注册但无内容可服务
   - `app://debug/<id>/<rest>` → `--debug-extension` 声明的本地目录首段为 id（调试扩展用）
 - 扩展停用时宿主自动清理其注册的全部卡片
 - 子窗口标题 = `name`（多开时 `name 2`、`name 3`…）
 - 子窗口内容通信：iframe 内 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')` 控制子窗口（**不要用内联 onclick，会被 CSP 阻止**）
-- **url 加载用户扩展静态页**：CSP 已放行 `app:` scheme，`url: 'app://extensions/<id>/todo.html'` 可由 iframe 同源加载（页面可执行脚本、可用 localStorage）；子窗口 iframe 无 allow-modals，禁 alert/confirm/prompt
+- **url 加载用户扩展静态页**：CSP 已放行 `app:` scheme（`src/renderer/index.html:10` 的 `default-src 'self' app:` 也覆盖 `frame-src`，故 iframe 可加载），`url: 'app://extensions/<id>/todo.html'` 的页面可执行脚本、可用 localStorage；子窗口 iframe 无 allow-modals，禁 alert/confirm/prompt
+- **这是跨源加载，不是同源**：父文档在 dev 是 `http://localhost:5173`（`ELECTRON_RENDERER_URL`）、打包是 `file://`（`src/main/appWindow.ts:25-30`），而 `app:` 是独立注册的 standard scheme（`src/main/protocol.ts:18-29`）——`app://extensions` 与父文档**不同源**，靠 CSP 放行而非同源策略。因此该静态页有**自己的 localStorage**，与主窗口/扩展的 localStorage **不共享**（跨窗口传数据请走 `api.app.onMessage` 消息桥）
 
 ### app.onMessage(handler) → Disposable（App 子窗口 ↔ 扩展消息桥）
 
@@ -266,7 +269,7 @@ api.settings.set('my-ext.interval', 60)
 page.dispose() // 注销设置页
 ```
 
-设置字段类型：`text` / `number` / `boolean` / `select`；可选 `default` / `options` / `description`（`contributions.ts:76-89`）。
+设置字段类型：`text` / `number` / `boolean` / `select`；可选 `default` / `options` / `description`（`src/api/contributions.ts:76-89`）。
 
 变更监听（≈VS Code `onDidChangeConfiguration`）：
 
@@ -316,7 +319,7 @@ api.update.onEvent((e) => {
 })
 ```
 
-> `UpdateEvent` 共 5 种：`update-available` / `update-not-available` / `download-progress` / `update-downloaded` / `error`（`shared.ts:7-18`）；`update-not-available` 与 `error` 是 `check()` 之外的独立回调路径，别只处理前三种。
+> `UpdateEvent` 共 5 种：`update-available` / `update-not-available` / `download-progress` / `update-downloaded` / `error`（`src/api/shared.ts:7-18`）；`update-not-available` 与 `error` 是 `check()` 之外的独立回调路径，别只处理前三种。
 >
 > 更新执行由宿主 electron-updater 完成；扩展提供更新源与触发时机。未在设置-更新选中的扩展调用 update API 会抛错。
 >
@@ -338,7 +341,7 @@ obox 主进程的网络请求（更新下载等）自动使用该代理；内置
 
 ### timer（全局定时器，主进程精确计时）
 
-宿主级定时器跑在**主进程**，不受渲染进程后台节流影响（窗口最小化/不可见时渲染进程 `setTimeout` 会被节流到 1s 粒度）。**间隔为整数秒（≥1s，上限 86400 秒 = 1 天）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器（`timer.ts:60-64`）。
+宿主级定时器跑在**主进程**，不受渲染进程后台节流影响（窗口最小化/不可见时渲染进程 `setTimeout` 会被节流到 1s 粒度）。**间隔为整数秒（≥1s，上限 86400 秒 = 1 天）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器（`src/main/timer.ts:60-64`）。
 
 > **秒级倒计时怎么写**：每次 tick 用 `Date.now()` 与目标时间**重算剩余**再 `setText`，不要靠 tick 次数累加——定时器只保证「不小于间隔」，累加会漂移；长计时也不要放在渲染进程的 `setTimeout` 里（最小化会被节流）。
 
@@ -357,9 +360,9 @@ api.timer.clearInterval('tick')
 ```
 
 - 回调在扩展上下文（渲染进程）执行，**无 payload**（纯"到点了"），需要数据的扩展在回调里自行查询
-- 定时器 id 在**扩展内**唯一即可（内部 key = `<扩展id>:<id>`，跨扩展自动隔离，`timer.ts:16-18`）
-- `seconds` 必须是 **1–86400 的整数**（`timer.ts:29-37`）。上限的存在理由：`seconds * 1000` 超过 2³¹−1 时 Node 会把延时钳成 1ms，`setInterval` 退化成"每毫秒广播 `timer:fire`"的事件风暴（`timer.ts:26-27`）
-- **非法 `seconds` 是静默失败，不会抛错**：主进程校验失败只返回 `{ ok:false, error }`（`timer.ts:69-88`），宿主用 `void` 丢弃该结果（`host.ts:604-609`）——既不抛错也不提示，定时器**不会建立**、回调永不触发
+- 定时器 id 在**扩展内**唯一即可（内部 key = `<扩展id>:<id>`，跨扩展自动隔离，`src/main/timer.ts:16-18`）
+- `seconds` 必须是 **1–86400 的整数**（`src/main/timer.ts:29-37`）。上限的存在理由：`seconds * 1000` 超过 2³¹−1 时 Node 会把延时钳成 1ms，`setInterval` 退化成"每毫秒广播 `timer:fire`"的事件风暴（`src/main/timer.ts:26-27`）
+- **非法 `seconds` 是静默失败，不会抛错**：主进程校验失败只返回 `{ ok:false, error }`（`src/main/timer.ts:69-88`），宿主用 `void` 丢弃该结果（`host.ts:604-609`）——既不抛错也不提示，定时器**不会建立**、回调永不触发
 
 ### sqlite（数据库，node:sqlite 内置驱动）
 
@@ -386,7 +389,7 @@ await db.close()
 
 - 默认表名 = 数据库文件名去扩展名（`open('todo.db')` → 表 `todo`）；`query`/`exec` 作用于整个库
 - 条件对象（`get_by`/`update`/`del_by` 的 where）只支持**等值匹配**，多键为 AND；复杂条件用 `query` 写 SQL
-- 除 `exec` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:626-632`）
+- 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:626-632`）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 也**不经 `call()`**，直接返回 IPC 原始结果（`host.ts:656`，主进程侧是无返回值句柄关闭，`src/main/sqlite.ts:78-80`），因此对不存在的库 `close()` 静默无操作、**不会抛错**
 - 全部方法 `async`（经 IPC 到主进程）；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
 
 ### notification（系统提醒，操作系统通知）
@@ -486,8 +489,8 @@ await api.fs.unwatch('watch-1') // 停止监听
 ```
 
 - 除 `watch` 的超限错误外，所有失败都是**抛 `Error`**（宿主把主进程的 `{ok:false}` 转成 `throw new Error(...)`，`host.ts:551-557`）
-- `watch`：**单扩展并发监听上限 16**（`fs.ts:25`）；超限时主进程返回 `{ok:false, error:'监听数量已达上限（16）'}`（`fs.ts:154-156`），宿主**转成抛错**（`host.ts:574-581`）。同 id 重复 `watch` 会先关掉旧监听、不占新增额度（`fs.ts:151-153`）
-- 监听目录被删 / 权限变化 → 宿主记录并自动关闭该监听（`fs.ts:166-170`），扩展侧此后收不到事件（不会崩主进程）
+- `watch`：**单扩展并发监听上限 16**（`src/main/fs.ts:25`）；超限时主进程返回 `{ok:false, error:'监听数量已达上限（16）'}`（`src/main/fs.ts:154-156`），宿主**转成抛错**（`host.ts:574-581`）。同 id 重复 `watch` 会先关掉旧监听、不占新增额度（`src/main/fs.ts:151-153`）
+- 监听目录被删 / 权限变化 → 宿主记录并自动关闭该监听（`src/main/fs.ts:166-170`），扩展侧此后收不到事件（不会崩主进程）
 - 扩展停用/卸载时宿主自动关闭全部监听
 - `api.fs` 只能读写扩展自己的 data 目录；`api.dialog` 选到的外部路径**不能**用 `api.fs` 读写（安全边界）
 
@@ -550,8 +553,8 @@ log.clear() // 清空
 log.dispose() // 关闭并移除通道
 ```
 
-- channel 的方法就这 5 个：`append(text)` / `appendLine(text)` / `show()` / `clear()` / `dispose()`（`types.ts:62-70`）
-- **没有 `api.output.append(...)`**：`append` 只在 `createChannel(name)` 返回的 channel 上（`types.ts:420-422`）
+- channel 的方法就这 5 个：`append(text)` / `appendLine(text)` / `show()` / `clear()` / `dispose()`（`src/api/types.ts:62-70`）
+- **没有 `api.output.append(...)`**：`append` 只在 `createChannel(name)` 返回的 channel 上（`src/api/types.ts:420-422`）
 
 ### secrets（密钥存储，safeStorage 加密）
 
@@ -584,7 +587,7 @@ off.dispose() // 注销数据源
 
 - 节点 `collapsible: true` 展开时才调用 `getChildren(element)` 加载子节点
 - 节点 `command` 点击时执行（`args` 作为参数传给命令 handler；命令须已声明）
-- 节点可选 `icon`（SVG 字符串，`types.ts:84-97`）
+- 节点可选 `icon`（SVG 字符串，`src/api/types.ts:84-97`）
 
 ### api.ipc（与外部进程的端口无关 IPC，见 ADR-0016）
 
@@ -633,15 +636,15 @@ api.ipc.onClose('worker', (err) => console.warn('通道关闭', err.code))
 await api.ipc.close('worker')
 ```
 
-| 项             | 说明                                                                                                                                                                                                                                                                                         |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 限额           | 每扩展最多 **4 条通道**（`ipc.ts:27`）；**每通道并发请求上限 64**（`ipcCore.ts:27`，超出抛 `too-many-requests`）；单条消息上限 **8MB**（`ipcCore.ts:23`）；请求默认 **30s** 超时（`ipcCore.ts:25`，`request(..., { timeoutMs })` 可覆盖）                                                    |
-| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起）                                            |
-| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程）                                                                                                                                                                                     |
-| 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                                                              |
-| stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（`ipc.ts:153-161`，不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`） |
-| 清单声明       | 在 `contributes.ipcChannels` 静态声明后，代码里只写 `api.ipc.connect('<通道id>')`；声明**不自动连接**，非法声明会让清单无效（见 manifest-reference）                                                                                                                                         |
-| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**（扩展与宿主同上下文，属受信代码）                                                                                                                                                                                                             |
+| 项             | 说明                                                                                                                                                                                                                                                                                                  |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 限额           | 每扩展最多 **4 条通道**（`src/main/ipc.ts:27`）；**每通道并发请求上限 64**（`src/main/ipcCore.ts:27`，超出抛 `too-many-requests`）；单条消息上限 **8MB**（`src/main/ipcCore.ts:23`）；请求默认 **30s** 超时（`src/main/ipcCore.ts:25`，`request(..., { timeoutMs })` 可覆盖）                         |
+| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起）                                                     |
+| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程）                                                                                                                                                                                              |
+| 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                                                                       |
+| stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（`src/main/ipc.ts:153-161`，不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`） |
+| 清单声明       | 在 `contributes.ipcChannels` 静态声明后，代码里只写 `api.ipc.connect('<通道id>')`；声明**不自动连接**，非法声明会让清单无效（见 manifest-reference）                                                                                                                                                  |
+| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**（扩展与宿主同上下文，属受信代码）                                                                                                                                                                                                                      |
 
 ### api.python（扩展自带的 Python 运行时，见 ADR-0018）
 
@@ -684,20 +687,20 @@ export function uninstall(ctx) {
 }
 ```
 
-| 项             | 说明                                                                                                                                                                                                                                                                                                     |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 上下文         | `ctx.extensionId` / `ctx.upgraded` / `ctx.previousVersion` / `ctx.api`（与激活时同一套能力面）                                                                                                                                                                                                           |
-| 能力边界       | 钩子期**注册类能力不生效**（命令/视图/状态栏/App 卡片等属"激活后"的注册）；钩子只做环境准备与清理（写自己的 data 目录、准备依赖、删缓存）                                                                                                                                                                |
-| install 时机   | 安装完成后立刻；若此刻主窗口不可用或扩展尚未加载到宿主，则**留待下次启动、激活之前补跑一次**（同一版本只跑一次，升级会重跑且给出 `ctx.previousVersion`）                                                                                                                                                 |
-| uninstall 时机 | 删除目录之前；**禁用态的扩展也会临时加载入口**来跑它。注意：**刚装完（同一个会话内）立刻卸载**时，渲染进程还没有该扩展的加载器 → 入口 `uninstall` 不会执行、回退 `.uninstall.cjs`（重启后再卸载才会走入口钩子）                                                                                          |
-| 钩子超时       | 入口钩子（两阶段都是）默认 **10s**（`hookBridge.ts:16`）；超时按钩子失败处理（`hookBridge.ts:99-105`）——`install` 超时归为激活失败，`uninstall` 超时只告警并继续删目录。渲染进程**没送到**（`send` 抛错）不算钩子失败：返回 `delivered:false`，安装场景据此保留待下次启动补跑（`hookBridge.ts:107-116`） |
-| install 失败   | 归为**激活失败**（扩展标红、写 `activationError`）；文件层不回滚                                                                                                                                                                                                                                         |
-| uninstall 失败 | 只告警（`[capabilities] 扩展 X 的 uninstall 钩子失败：…`），**仍继续删除目录**（否则写错的钩子会让扩展永远删不掉）                                                                                                                                                                                       |
-| 幂等要求       | 宿主保证"同扩展同阶段不并发"；跨安装（升级重跑、补跑）可能再次执行，**钩子需自行保证幂等**                                                                                                                                                                                                               |
-| 旧机制兼容     | 固定文件 `.uninstall.cjs` 仍作为**回退**（仅当入口未导出 `uninstall` 时执行，5 秒超时）                                                                                                                                                                                                                  |
+| 项             | 说明                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 上下文         | `ctx.extensionId` / `ctx.upgraded` / `ctx.previousVersion` / `ctx.api`（与激活时同一套能力面）                                                                                                                                                                                                                                                                                      |
+| 能力边界       | 钩子期**注册类能力不生效**（命令/视图/状态栏/App 卡片等属"激活后"的注册）；钩子只做环境准备与清理（写自己的 data 目录、准备依赖、删缓存）                                                                                                                                                                                                                                           |
+| install 时机   | 安装完成后立刻；若此刻主窗口不可用或扩展尚未加载到宿主，则**留待下次启动、激活之前补跑一次**（同一版本只跑一次，升级会重跑且给出 `ctx.previousVersion`）                                                                                                                                                                                                                            |
+| uninstall 时机 | 删除目录之前；**禁用态的扩展也会临时加载入口**来跑它。注意：**刚装完（同一个会话内）立刻卸载**时，渲染进程还没有该扩展的加载器 → 入口 `uninstall` 不会执行、回退 `.uninstall.cjs`（重启后再卸载才会走入口钩子）                                                                                                                                                                     |
+| 钩子超时       | 入口钩子（两阶段都是）默认 **10s**（`src/main/hookBridge.ts:16`）；超时按钩子失败处理（`src/main/hookBridge.ts:99-105`）——`install` 超时归为激活失败，`uninstall` 超时只告警并继续删目录。渲染进程**没送到**（`send` 抛错）不算钩子失败：返回 `delivered:false`，安装场景据此保留待下次启动补跑（`src/main/hookBridge.ts:107-116`）                                                 |
+| install 失败   | 归为**激活失败**（扩展标红、写 `activationError`）；文件层不回滚                                                                                                                                                                                                                                                                                                                    |
+| uninstall 失败 | 只告警（`[capabilities] 扩展 X 的 uninstall 钩子失败：…`），**仍继续删除目录**（否则写错的钩子会让扩展永远删不掉）                                                                                                                                                                                                                                                                  |
+| 幂等要求       | 宿主保证"同扩展同阶段不并发"；跨安装（升级重跑、补跑）可能再次执行，**钩子需自行保证幂等**                                                                                                                                                                                                                                                                                          |
+| 旧机制兼容     | 固定文件 `.uninstall.cjs` 仍作为**回退**（`spawn(process.execPath, [hookPath])`，5 秒超时）。触发条件不止"入口未导出 `uninstall`"：主进程判定式是 `delivered && !deferred && !skipped`（`src/main/capabilities.ts:102-112`），该式**不成立**时都会回退到该文件——即入口未导出钩子（`skipped`）、**扩展当时未加载到宿主**或**渲染进程/主窗口不可用**（`deferred` / 未送达）同样走回退 |
 
 ## 类型文件位置
 
-- `src/api/`（聚合出口 `src/api/index.ts`）：`types.ts` = `ExtensionActivationApi`；`contributions.ts` = 贡献点类型；`manifest.ts` = `ExtensionManifest`；`registration.ts` = `AppRegistration`；`shared.ts` = `Memento` / `UpdateEvent` / `ProxyConfig` / `IpcChannelDeclaration`；`runtime.ts` = `ExtensionInfo` / `Disposable` / `ExtensionModule` 等
+- `src/api/`（聚合出口 `src/api/index.ts`）：`src/api/types.ts` = `ExtensionActivationApi` / `SqliteDb` / `OutputChannel` / `TreeItem`；`src/api/contributions.ts` = 贡献点类型；`src/api/manifest.ts` = `ExtensionManifest`；`src/api/registration.ts` = `AppRegistration`；`src/api/shared.ts` = `Memento` / `UpdateEvent` / `ProxyConfig` / `IpcChannelDeclaration`；`src/api/runtime.ts` = `ExtensionInfo` / `Disposable` / `ExtensionModule` 等
 - `src/renderer/src/core/types.ts` 是历史兼容入口（再导出 `src/api`，旧 import 零改动）；**新代码直接 import `src/api`**
 - 扩展经相对路径导入类型，如内置扩展入口 `import type { ExtensionActivationApi } from '../../../../api'`
