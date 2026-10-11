@@ -28,9 +28,14 @@ describe('validateManifest 基础字段', () => {
     expect(errors('x')).toHaveLength(1)
   })
 
+  // issue #77：正则原带 `i`，`MyExt`/`MY-EXT` 实际通过；标题写「大写 → error」却没有大写断言。
+  // 现去掉 `i`，大写真正非法。文案与 skill 脚本副本逐字一致（差分门禁会把关）。
   it('name 非法（大写/空格/点开头）→ error', () => {
-    expect(errors({ ...valid, name: 'My Ext' }).some((e) => e.includes('name'))).toBe(true)
-    expect(errors({ ...valid, name: '.abc' }).some((e) => e.includes('name'))).toBe(true)
+    const NAME_ERROR = 'name 必填，且只能含字母/数字/./_/-'
+    expect(errors({ ...valid, name: 'MyExt' })).toEqual([NAME_ERROR])
+    expect(errors({ ...valid, name: 'MY-EXT' })).toEqual([NAME_ERROR])
+    expect(errors({ ...valid, name: 'My Ext' })).toEqual([NAME_ERROR])
+    expect(errors({ ...valid, name: '.abc' })).toEqual([NAME_ERROR])
   })
 
   it('version 非法（非 semver）→ error', () => {
