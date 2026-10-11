@@ -21,7 +21,7 @@
 
 ### Obox 扩展开发（obox-ext-dev）
 
-扩展开发、调试、文档遵循 `skills/obox-ext-dev/SKILL.md` 及 `references/`（workflow / guides-builtin / guides-user / manifest / api / themes-settings / troubleshooting）。
+扩展开发、调试、文档遵循 `skills/obox-ext-dev/SKILL.md` 及 `references/`（`workflow.md` / `guides-builtin.md` / `guides-user.md` / `manifest-reference.md` / `api-reference.md` / `themes-settings.md` / `troubleshooting.md`）。
 
 **开发流程（强制）**：开发或修改 obox 扩展前，**必须先读并按 `skills/obox-ext-dev/references/workflow.md` 走流程**，不得跳过、不得自行扩大范围：
 

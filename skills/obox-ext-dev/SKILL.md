@@ -20,7 +20,8 @@ description: 在 obox 桌面应用（Electron + Vue + Cordis 版，扩展宿主�
 
 ```
 提问（M1–M8）→ spec 写入 tmp/spec/ → 用户确认 → 设计文档 → 开发
-  → 测试 + 独立审视 → ADR 写入 tmp/adr/ → 归档到 <开发目录>/docs/{spec,adr}/ → 清空 tmp/
+  → 测试 + 独立审视（审视报的问题必须逐条处置）→ ADR 写入 tmp/adr/
+  → 归档到 <开发目录>/docs/{spec,adr}/ → 删除整个 tmp/
 ```
 
 改变「对外行为 / 贡献点 / 数据结构」的需求走全流程；只改文案/样式/单点 bug 走轻流程（提问 + 开发 + 测试）。**必问清单、个性化追问、三条硬边界、spec 与设计文档模板见 `references/workflow.md`。**
@@ -29,7 +30,7 @@ description: 在 obox 桌面应用（Electron + Vue + Cordis 版，扩展宿主�
 
 **内置扩展**：① 读 `src/api/` 与已有扩展（`ext-manager`、`app`）→ ② `node skills/obox-ext-dev/scripts/create-extension.mjs <id>` → ③ 写 `manifest.json` 的 `contributes` → ④ 写 `index.ts`（`export default (api) => cleanup` + 具名导出视图组件）→ ⑤ `npm run typecheck && npm run lint && npm test && npm run dev` 验证。
 
-**用户扩展**：① `node skills/obox-ext-dev/scripts/create-user-extension.mjs <id>` → ② 写 `manifest.json`（`main: "./index.js"`）→ ③ 写纯 ESM `index.js`（只用注入的 `api`）→ ④ 富界面用 `app://extensions/<id>/page.html` 装进 App 卡片子窗口 → ⑤ `node --test` + `scripts/pack.mjs` 出 `.oix`，并用 `validate-manifest.mjs` 校验。
+**用户扩展**：① `node skills/obox-ext-dev/scripts/create-user-extension.mjs <id>` → ② 写 `manifest.json`（`main: "./index.js"`）→ ③ 写纯 ESM `index.js`（只用注入的 `api`）→ ④ 富界面用 `app://extensions/<id>/page.html` 装进 App 卡片子窗口 → ⑤ 在**生成的扩展项目内**跑 `node --test` 与 `node scripts/pack.mjs` 出 `.oix`（注意这两个 `scripts/` 指扩展项目自己的目录），再用 `node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json>` 校验清单。
 
 ## 四、铁律
 
