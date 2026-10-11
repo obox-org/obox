@@ -8,12 +8,12 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 `Executing inline event handler violates the following Content Security Policy directive 'script-src 'self''`
 或 `Refused to execute inline script ... 'script-src 'self''`。
 
-**原因**：渲染进程 CSP `script-src 'self'` 无 `'unsafe-inline'`，**内联事件处理器与内联 `<script>` 块都会被拦截**（srcdoc 继承父文档 CSP）。旧文"用外部 `<script>` 块"的说法不成立。
+**原因**：渲染进程 CSP 是 `script-src 'self' app:`、**没有 `'unsafe-inline'`**（`src/renderer/index.html:8-11`），所以内联事件处理器与内联 `<script>` 块都被拦截；srcdoc 继承父文档 CSP，同样受限。注意同一份 CSP 的 `style-src` **有** `'unsafe-inline'`——**内联样式是允许的**，别把样式问题误判成 CSP。
 
 **修复**（按场景）：
 
 - **用户扩展静态页（推荐）**：App 卡片用 `url: 'app://extensions/<id>/todo.html'`——app:// 页面无 CSP 头，脚本正常执行（CSP 已放行 app: scheme 供 iframe 加载）
-- **srcdoc 场景**：把脚本放到同源外部文件（如 public/ 下的静态资源）用 `<script src>` 引用；或改用 `url` 形态
+- **srcdoc 场景**：脚本必须用**绝对 `app://extensions/<id>/x.js`** 引入（`script-src` 放行了 `app:`；srcdoc 里的相对路径按父文档 URL 解析，取不到扩展目录）——该写法**未实机验证**，能用 `url` 形态就别用 srcdoc
 - 窗口控制一律用 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`
 
 ## 2. App 子窗口 iframe 加载 app:// 404 或空白
@@ -22,22 +22,17 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 
 **排查**：
 
-- 该扩展是**用户扩展**（已安装到 `userData/extensions/<id>/`）——app://extensions 只映射 userData；内置扩展没有静态文件通道
+- **内置扩展？**`app://builtin/<id>/<rest>` → `resources/extensions/<id>/<rest>` 这条通道**虽已注册**（`src/main/protocol.ts:14,47`）却**没有任何构建步骤填充**该目录（`electron-builder.yml` 无 `extraResources`；内置扩展由 Vite 的 `import.meta.glob` 静态收集，`src/renderer/src/core/loader.ts:15-17`）→ 打包版与开发版都取不到文件。内置扩展别指望这条通道，App 卡片走 `html`/srcdoc，并受 #1 的 CSP 限制
+- **用户扩展？**确认它已装到 `userData/extensions/<id>/`——`app://extensions` 只映射 userData（`src/main/protocol.ts:46`）
 - `<id>` 是**安装目录名**（`<name>_<author>`，如 `todo_chenzhi`），不是 manifest.name；`index.js` 里用 `new URL('./todo.html', import.meta.url)` 推导，勿硬编码
 - 协议映射：`app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（协议注册在 `src/main/protocol.ts`）
 
-## 3. 子应用构建产物资源路径错（base 非相对）
-
-**症状**：构建出的 todo.html 里是 `<script src="/todo.js">`，iframe 里 404——绝对路径解析到 `app://extensions/todo.js`（丢目录段）。
-
-**修复**：`vite.config.ts` 设 `base: './'`，产物引用变为 `./todo.js` / `./todo.css`。
-
-## 4. iframe 里 alert/confirm/prompt 无效
+## 3. iframe 里 alert/confirm/prompt 无效
 
 **原因**：iframe sandbox 无 `allow-modals`。
 **修复**：交互全部用页面内 UI（行内确认、自定义输入），不依赖浏览器弹窗。
 
-## 5. oix 安装失败
+## 4. oix 安装失败
 
 **排查**（扩展管理器提示的失败信息）：
 
@@ -46,7 +41,7 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 - 包内含非法条目路径（`..` / 绝对路径 / 反斜杠）→ 被 zip-slip 防护拒绝
 - 安装成功但列表标红：manifest 校验失败或入口加载/激活失败（看详情页校验信息与 `activationError`）
 
-## 6. Windows 下 Vite watcher EBUSY 崩溃
+## 5. Windows 下 Vite watcher EBUSY 崩溃
 
 **症状**：`npm run dev` 崩溃，日志：
 `Error: EBUSY: resource busy or locked, watch '...\.NavBar.vue.<pid>.<uuid>.tmpdir\...'`
@@ -59,9 +54,9 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -Recurse -Force
 ```
 
-## 7. 扩展收集到但未激活（激活 0）
+## 6. 扩展收集到但未激活（激活 0）
 
-**症状**：日志 `[host] 启动完成: 1 个扩展（1 启用 / 0 禁用），激活 0`。
+**症状**：启动日志 `[host] 启动完成: 1 个扩展（1 启用 / 0 禁用），激活 0，依赖环 无`（格式见 `src/renderer/src/core/host.ts:921-927`；末尾的"依赖环"是环内扩展 id 列表，正常为 `无`）。
 
 **原因**：入口未导出 `default` 插件函数，或入口加载/执行抛错。
 
@@ -71,99 +66,88 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 - 扩展管理器详情页看 `activationError`（激活失败原因）
 - dev 日志看 `[host] activate <id> failed <error>`
 
-## 8. 命令面板命令不出现
+## 7. 命令面板命令不出现
 
-- `palette: false` 的命令被过滤（设计如此，内部命令用）
+- `palette: false` 的命令被过滤（设计如此，内部命令用；过滤规则 `src/renderer/src/core/registry.ts:259`）
 - 命令未通过校验（缺 `command`/`title`）→ 详情页看校验信息
-- 命令 id 重复 → 宿主 `console.warn('[registry] duplicate command id')`，保留第一个
+- 命令 id 重复 → 宿主 `console.warn('[registry] duplicate command id')`，保留第一个（`src/renderer/src/core/registry.ts:123-127`）
 
-## 9. 导航项点击内容栏空白
+## 8. 导航项点击内容栏空白
 
-- `view` 字段引用的组件未在入口具名导出 → 宿主 warning `导航项 X 声明的视图组件 Y 未在扩展入口导出`
+- `view` 字段引用的组件未在入口具名导出 → 宿主 warning `导航项 X 声明的视图组件 Y 未在扩展入口导出`（`src/renderer/src/core/host.ts:206`）
 - 组件导出名与 `view` 值不一致（大小写敏感）
-- 扩展未激活（见 #7）
+- 扩展未激活（见 #6）
 
-## 10. 注册了未声明命令的 warning
+## 9. 注册了未声明的命令：先 warning，紧接着抛错标红
 
-**症状**：`[host] <id> 注册了未声明的命令 <cmd>（manifest contributes.commands 未包含）`
+**症状**：日志先出现 `[host] <id> 注册了未声明的命令 <cmd>（manifest contributes.commands 未包含）`（`src/renderer/src/core/host.ts:265-269`），紧接着 `[host] activate <id> failed Error: command not declared: <cmd>`，扩展在管理器标红 `activationError`。
 
-**原因**：`api.registerCommand(id, handler)` 的命令 id 不在该扩展 manifest `contributes.commands`。
+**原因**：`api.registerCommand(id, handler)` 的命令 id 不在该扩展 manifest `contributes.commands`。warning 之后 `registry.setCommandHandler` 找不到已声明项会**直接 throw**（`src/renderer/src/core/registry.ts:193`）→ `plugin(api)` 抛错、本次激活失败。**这不是"只打一条 warning"**。
 
-**修复**：把命令加进 manifest 的 `commands` 数组（声明式模型——命令必须先声明，再绑定实现）。
+**修复**：把命令加进 manifest 的 `contributes.commands`（声明式模型——命令必须先声明，再绑定实现）。
 
-## 11. 依赖环
+## 10. 依赖环
 
-**症状**：`[host] 启动完成: ... 依赖环 a,b`（host 日志标注）。
+**症状**：启动日志末尾 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 a,b`（`src/renderer/src/core/host.ts:921-927`）。
 
 **原因**：`extensionDependencies` 成环。
 
-**修复**：打破环（移除其中一个依赖），环内扩展会被跳过激活。
+**行为**：环内扩展**不会被跳过**——拓扑排序仍把它们放进激活序列（`src/renderer/src/core/manifest.ts:163-168`），宿主照常激活（`src/renderer/src/core/host.ts:909-918`），只是排到最后。所以"没激活"要先查 #6 的其它原因，别被这一行误导。
 
-## 12. App 子窗口标题序号不对
+**修复**：打破环（移除其中一个依赖），让依赖顺序可确定。
 
-`multiOpen: true` 时标题应为 `name 2`、`name 3`…。若序号重复，说明主进程 `appWindows` 跟踪残留——重启应用（跟踪随主进程重置）。
-
-## 13. 扩展管理器显示"清单无效"
+## 11. 扩展管理器显示"清单无效"
 
 - `name`/`version`/`main` 缺失或格式错（校验规则见 `references/manifest-reference.md`）
 - 详情页"校验信息"列出具体错误；修复后重启应用重新扫描
 
-## 14. HMR 后重复注册/状态残留
-
-**原因**：热重载时扩展模块重新激活，旧注册未清理。
-
-**修复**：确保插件函数返回 cleanup（dispose 全部注册），或所有注册的 Disposable 有效。必要时候选重启应用（dev 下 F5/重开窗口）。
-
-## 15. 用户扩展加载失败
+## 12. 用户扩展加载失败
 
 **症状**：`[loader] 用户扩展 <id> manifest 读取失败或缺失`。
 
 **原因**：`userData/extensions/<id>/` 下没有 manifest.json，或 manifest 校验失败（含 error 直接跳过）。
 
-**修复**：确认目录结构与 manifest 合法；用户扩展入口按 `manifest.main` 经 `app://extensions/<id>/<main>` 加载。
+**修复**：确认目录结构与 manifest 合法；用户扩展入口按 `manifest.main` 经 `app://extensions/<id>/<main>` 加载（`src/renderer/src/core/loader.ts:104-122`）。
 
-## 16. App 应用里出现重复/残留卡片
+## 13. App 应用里出现重复/残留卡片
 
-**症状**：App 视图里同一插件出现多张卡片，或卸载扩展后卡片仍在。
-
-**原因**（历史 bug，已修复）：`appStore` 的 index Map 未从 localStorage 持久化重建，导致同 id 重复注册不更新而 push 新条目；已卸载扩展的卡片（孤儿）在持久化中残留。
-
-**修复（宿主侧已实现）**：
-
-- `appStore` 构造函数从持久化重建 index，同 id 重复注册只更新不新建
-- `loadPersisted` 去重（同 id 只保留一条）
-- 宿主启动时清理孤儿卡片：`appStore.items` 中 `extensionId` 不在当前扩展列表的卡片被删除
-- 卸载/停用路径调用 `appStore.deactivateExtension(id)` 清理全部匹配卡片
+**结论**（宿主侧已修复，扩展不需要为此写兼容代码）：`appStore` 从 localStorage 恢复时按 id 去重并重建索引（`src/renderer/src/core/appStore.ts:20-50`），同 id 重复注册只更新不新建（`:61-74`），停用/卸载按 `extensionId` 清空其全部卡片（`:92-102`），启动时清理"扩展已不在"的孤儿卡片（`src/renderer/src/core/host.ts:839-845`）。
 
 **扩展侧注意事项**：`api.app.register` 的 `id` 必须是稳定的唯一值（如 `todo.main`）；热重载/覆盖安装时宿主保证不产生重复卡片。
 
-## 17. --debug-extension 调试扩展没被加载
+## 14. --debug-extension 调试扩展没被加载
 
 **排查**：
 
 - **先看这一行**：主进程启动时会打印 `[debug] 调试扩展 N 个: id@路径`；若打印的是
-  `[debug] 未提供 --debug-extension`，说明**参数没传进来**（不是清单或入口的问题）。开发版要注意
-  `npm run dev -- -- --debug-extension ...` 需要两个 `--`（第一个给 npm、第二个给 electron-vite；
-  electron-vite 会用自己的 `--` 之后的参数覆盖 `ELECTRON_CLI_ARGS`，直接设环境变量无效）
-- 参数格式：`--debug-extension <id>@<绝对路径>`，路径必须存在、id 须匹配 `^[a-z0-9][a-z0-9._-]*$`（非法/路径缺失会被主进程忽略并打 warn）
-- manifest 必须能经 `app://debug/<id>/manifest.json` 读到（协议只服务已声明的 id）
-- 看宿主日志 `[host] 启动完成: N 个扩展...` 是否包含调试扩展；激活失败看扩展管理器详情页 `activationError`（调试扩展同样受声明式贡献点校验）
-- 调试扩展的**数据目录**在 `userData/extensions/<id>/data`；主进程会为这类没有 `manifest.json` 的目录打
-  `[capabilities] 跳过没有 manifest.json 的目录: <id>`，属正常提示（它们不会被当成扩展加载）
+  `[debug] 未提供 --debug-extension（仅加载内置/已安装扩展）`，说明**参数没传进来**（不是清单或入口的问题）。
+  开发版要写成 `npm run dev -- -- --debug-extension ...`：第一个 `--` 交给 npm，第二个才是 electron-vite 的 `--`；
+  electron-vite 把 `--` 之后的参数序列化成 `ELECTRON_CLI_ARGS`（`node_modules/electron-vite/dist/cli.js:58-60`），
+  启动 Electron 时再读回（`node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js:224`）——只写一个 `--`
+  （`npm run dev -- --debug-extension ...`）时参数会被 electron-vite 自己的选项解析吃掉，`options['--']` 为空、不会传给 Electron
+- 参数格式：`--debug-extension <id>@<路径>`；id 须匹配 `^[a-z0-9][a-z0-9._-]*$/i`（**不区分大小写**，`src/main/debug.ts:12`）；路径**可相对**（宿主按主进程 cwd `resolve`，`src/main/debug.ts:32`），解析后必须存在，否则该条被忽略并打 warn
+- manifest 必须能经 `app://debug/<id>/manifest.json` 读到（协议只服务已声明的 id，`src/main/protocol.ts:48-58`）
+- 看宿主日志 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 …` 的**计数**是否把调试扩展算进去（该行只给数量、不列 id；id 与路径看 `[debug] 调试扩展 N 个: …`）；激活失败看扩展管理器详情页 `activationError`（调试扩展同样受声明式贡献点校验）
+- 调试扩展**不做 .oix 安装**，文件就在参数给的目录里，所以 `api.ipc` 的 stdio 对端 cwd 是**调试目录/data**（见 #25）；`api.fs` / sqlite / python 的数据目录仍按 `userData/extensions/<id>/data` 走（`src/main/fs.ts:12-14`、`src/main/python.ts:34-36`）。该目录没有 `manifest.json`，主进程会打 `[capabilities] 跳过没有 manifest.json 的目录: <id>（扩展数据目录或调试扩展）`，属正常提示（`src/main/capabilities.ts:47`）
 
-## 18. VS Code 断点不命中（app://debug）
+## 15. VS Code 断点不命中（app://debug）
 
 **排查**：
 
 - launch.json 的 `pathMapping` 前缀必须与 `app://debug/<id>/` 完全一致（id 大小写、目录尾斜杠）；改代码后需**重载 obox 窗口**（宿主在启动时收集扩展）
-- `urlFilter` 只匹配 dev 渲染进程（http://localhost:5173）；打包版（file://）去掉 urlFilter 或改匹配
+- `urlFilter` 只匹配 dev 渲染进程（electron-vite 默认 `http://localhost:5173`）；本仓库未固定 `server.port`（`electron.vite.config.ts:15-20`），端口被占用时 Vite 会顺延换端口 → `urlFilter` 需同步改。`references/guides-user.md` 里的 `launch.json` 模板**未实机验证**，照抄前先确认实际端口
+- 打包版（file://）去掉 urlFilter 或改匹配
 - 确认 attach 的是渲染进程（chrome attach + CDP 端口），不是主进程 inspector
 
-## 19. 调试扩展也出现在 userData / 可被卸载
+## 16. 调试扩展也出现在 userData / 可被卸载
 
-**原因**：混淆了安装态。调试扩展（`--debug-extension`）**不会**写 userData/extensions；若扩展管理器里出现可卸载项，那是以前 .oix 安装的同名扩展——先卸载安装态，再用调试参数加载。
+**原因**：混淆了"安装态"与"数据目录"。调试扩展（`--debug-extension`）**不做安装**——不写 manifest 到 userData、无安装登记、重启即消失。
 
-## 20. 生命周期钩子（install/uninstall）怎么写才生效
+**userData 下为什么还会有同名目录**：`api.fs` / sqlite / python 的数据目录固定按 `userData/extensions/<id>/data` 建（`src/main/fs.ts:12-14`、`src/main/sqlite.ts:34-37`、`src/main/python.ts:34-36`），调试扩展也照此写盘。这类只有 `data/`、没有 `manifest.json` 的目录不会被当成扩展加载（主进程按有无 manifest 过滤，`src/main/capabilities.ts:38-51`）。
+
+**若管理器里出现可卸载项**：那是以前用同名 id 做的 .oix 安装态——先卸载安装态，再用调试参数加载。管理器里的调试扩展本身来源是 `debug`，调卸载会直接抛"调试扩展不占用安装态，无需卸载"（`src/renderer/src/core/host.ts:1088`）。
+
+## 17. 生命周期钩子（install/uninstall）怎么写才生效
 
 **症状**：在 manifest 里声明 `"uninstall": "./scripts/clean.js"`，卸载后脚本从未执行，也没有任何报错。
 
@@ -188,7 +172,7 @@ export function uninstall(ctx) {
 
 **仍不会执行的几种情况**：入口没导出 `uninstall` 且没有 `.uninstall.cjs`；或卸载时主窗口不可用（此时走回退路径，同样不报错）。安装时若宿主还没加载到该扩展（窗口不可用/刚装完还没扫描到），钩子会**留待下次启动、激活之前补跑一次**。
 
-## 21. sqlite 用嵌套相对路径在 Windows 报"数据库未打开"
+## 18. sqlite 用嵌套相对路径在 Windows 报"数据库未打开"
 
 **症状**：`api.sqlite.open('sub/a.db')` 返回 `{ok:true}`（看似成功），随后 `query/insert` 等操作报"数据库未打开"（`requireHandle` 抛错）。仅 Windows 复现，Linux/macOS 正常。
 
@@ -196,7 +180,7 @@ export function uninstall(ctx) {
 
 **扩展侧注意事项**：升级到包含该修复的版本后，`open('sub/a.db')` 与后续操作传**同一个字符串**即可正常使用；若仍异常，确认 open 与后续调用传入的 name 完全一致（不要一处写 `sub/a.db`、另一处写 `sub\a.db`）。
 
-## 22. window.eval / window.capture 在生产构建不可用
+## 19. window.eval / window.capture 在生产构建不可用
 
 **症状**：用 `window.api.eval(...)` 或 `window.api.capture(...)` 做 UI 验证时，开发模式正常，**打包后报"没有注册处理器"**（`No handler registered for 'window:eval'`）。
 
@@ -204,7 +188,7 @@ export function uninstall(ctx) {
 
 **建议**：不要在扩展里依赖它们；需要截图/自检请在 `npm run dev` 下做，或改用正式的 `api.output` / `api.fs` 等能力。
 
-## 23. 代理（设置-网络）配了却"没走代理"
+## 20. 代理（设置-网络）配了却"没走代理"
 
 **症状**：设置-网络里填了代理并启用，但 `api.net.fetch` 与更新检查/下载看起来仍**直连**（代理服务器上没有请求日志；或内外网混合环境下请求照旧成功/照旧失败）。
 
@@ -217,7 +201,7 @@ export function uninstall(ctx) {
 
 **扩展侧注意事项**：不要自己读写代理环境变量——用 `api.proxy.get()` 读取配置，联网统一走 `api.net.fetch`（宿主自动应用）；`ignoreSSL` 现只作用于上述 session，不再是进程级全局开关。
 
-## 24. 安装 .oix 失败：怎么判断是包的问题还是路径的问题
+## 21. 安装 .oix 失败：怎么判断是包的问题还是路径的问题
 
 **症状**：扩展管理器提示"安装失败：…"，但看不到具体原因分类；或覆盖安装失败后担心旧版本被删。
 
@@ -239,7 +223,7 @@ export function uninstall(ctx) {
 
 **扩展侧注意事项**：打包时只放分发必需文件（`manifest.json`、入口 `index.js`、图标与静态资源），不要把源码、`node_modules/`、构建缓存打进 `.oix`——既是限额要求，也能避免把 `main` 之外的路径写错。
 
-## 25. 热安装带 extensionDependencies 的扩展后，跨扩展命令调用失败
+## 22. 热安装带 extensionDependencies 的扩展后，跨扩展命令调用失败
 
 **症状**：扩展 A 声明 `extensionDependencies: ["B"]`。冷启动（`npm run dev` 重启）一切正常；但经 .oix **热安装 A** 后，A 调用 `api.executeCommand('B.do')` 报"命令不存在"，B 看起来也没激活。
 
@@ -249,7 +233,7 @@ export function uninstall(ctx) {
 
 **扩展侧注意事项**：声明依赖后仍需对"依赖缺失"做兜底（宿主不阻塞），例如命令调用前 `try/catch` 或用 `api.on/emit` 做就绪通知。
 
-## 26. 扩展激活失败后，副作用残留（事件监听还在、设置页/卡片仍在）
+## 23. 扩展激活失败后，副作用残留（事件监听还在、设置页/卡片仍在）
 
 **症状**：扩展 `apply(api)` 中途抛错 → 扩展管理器显示激活失败（`activationError`），但它的部分注册仍生效（如状态栏项被更新、设置页仍出现、事件监听仍在响应、App 卡片仍在）。
 
@@ -259,7 +243,7 @@ export function uninstall(ctx) {
 
 **扩展侧注意事项**：仍应自己保证注册顺序合理——把"可能抛错"的初始化逻辑放在注册副作用**之前**（`apply` 内先校验配置/依赖，再注册）。
 
-## 27. 想重装同一版本或回退到旧版本，但"检查更新"说无更新
+## 24. 想重装同一版本或回退到旧版本，但"检查更新"说无更新
 
 **症状**：安装损坏想重装，或想从新版回退到旧版，但 `api.update.check()` 总是返回"无更新"；`install()` 也无从下手。
 
@@ -275,7 +259,7 @@ export function uninstall(ctx) {
 
 **扩展侧注意事项**：`force` 会真的启动安装程序，建议放在显式命令（如命令面板项）里，由用户主动触发；不要放在自动检查流程里。
 
-## 28. `api.ipc` 连不上对端 / 请求超时 / 通道莫名关闭
+## 25. `api.ipc` 连不上对端 / 请求超时 / 通道莫名关闭
 
 **症状**：`api.ipc.connect()` 抛 `connect-failed`，或连上后 `request()` 报 `timeout`，或对端一启动就 `peer-crashed`。
 
@@ -298,10 +282,10 @@ export function uninstall(ctx) {
 **清单声明的通道（`contributes.ipcChannels`，issue #45）**：
 
 - `connect('<id>')` 报 `invalid-declaration 清单里没有声明通道 x` → 检查 manifest 的 `contributes.ipcChannels`（名字、拼写）；非法声明会让**清单无效**（扩展标红），先看扩展管理器详情页的 `activationError`/校验信息
-- **`connect()` 成功但请求立刻报 `not-connected`** → 十有八九是**对端一启动就退出了**，最常见原因是 `args` 里的相对路径写错：stdio 对端的 **cwd 是 `<扩展>/data`**，而 `program` 相对**扩展目录**解析。脚本在 `<扩展>/scripts/x.py` 时应写 `args: ['../scripts/x.py']`（写成 `scripts/x.py` 会让对端找不到文件后退出）。用 `api.ipc.onStderr()` 能看到对端报错文本
+- **`connect()` 成功但请求立刻报 `not-connected`** → 十有八九是**对端一启动就退出了**，最常见原因是 `args` 里的相对路径写错：stdio 对端的 **cwd 是 `<扩展源目录>/data`**，而 `program` 相对**扩展源目录**解析（`src/main/ipc.ts:149-163`）。已安装扩展的扩展源目录是 `userData/extensions/<id>`，**调试扩展则是 `--debug-extension` 给的那个目录**——两者都由 `extensionSourceDir(id)` 决定（`src/main/paths.ts:29-31`）。脚本在 `<扩展源目录>/scripts/x.py` 时应写 `args: ['../scripts/x.py']`（写成 `scripts/x.py` 会让对端找不到文件后退出）。用 `api.ipc.onStderr()` 能看到对端报错文本
 - 宿主旧实例被强杀后，它拉起的对端可能成为**孤儿进程**并占着同名端点，新实例会连到"没人应答"的旧连接上 → 先清掉残留子进程再重试
 
-## 29. 生命周期钩子（install / uninstall）没执行、或执行了两次
+## 26. 生命周期钩子（install / uninstall）没执行、或执行了两次
 
 **先分清是"哪种没执行"**——宿主日志里有直接线索：
 
@@ -316,7 +300,7 @@ export function uninstall(ctx) {
 
 **其它检查点**：钩子必须是入口的**具名导出函数**（`export function install(ctx) {}`），不是 manifest 字段（`manifest.uninstall` 早已不读取）；`ctx` 里有 `extensionId`/`upgraded`/`previousVersion`/`api`，其中 `api` 与激活时同一套，但**钩子期注册类操作会在钩子结束后立即释放**（命令/视图/状态栏等请留到 `plugin(api)` 里做）。
 
-## 30. 点了关闭窗口但应用没退出 / 托盘图标不见 / 设置里没有"通用"
+## 27. 点了关闭窗口但应用没退出 / 托盘图标不见 / 设置里没有"通用"
 
 **先分清是"设计如此"还是"真的没生效"**（ADR-0019，**仅 Windows** 有托盘）：
 
