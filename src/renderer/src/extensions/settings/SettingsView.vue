@@ -19,7 +19,14 @@ import type { RegisteredSettingsPage } from '../../core/extensionSettings'
 const { t } = useI18n()
 
 type TreeKey =
-  'appearance' | 'language' | 'keyboard' | 'update' | 'network' | 'notification' | 'extension'
+  | 'appearance'
+  | 'general'
+  | 'language'
+  | 'keyboard'
+  | 'update'
+  | 'network'
+  | 'notification'
+  | 'extension'
 
 const active = ref<TreeKey>('appearance')
 const activeExt = ref<string | null>(null)
@@ -148,6 +155,7 @@ onUnmounted(() => offUpdate?.())
 
 // ---- 网络（代理） ----
 import type { ProxyConfig } from '../../core/types'
+import type { CloseBehavior } from '../../../../shared/types'
 const proxyConfig = ref<ProxyConfig>(
   stateStore.getSetting<ProxyConfig>('network.proxy') ?? { enabled: false, host: '', noProxy: [] }
 )
@@ -170,6 +178,19 @@ function isNotifDisabled(id: string): boolean {
 
 function toggleNotif(id: string, disabled: boolean): void {
   stateStore.setNotificationDisabled(id, disabled)
+}
+
+// ---- 通用：关闭行为（偏好存主进程 userData/window-behavior.json；仅 Windows 有托盘，见 ADR-0019） ----
+const isWindows = window.api.env.platform === 'win32'
+const closeBehavior = ref<CloseBehavior>('ask')
+void window.api.getCloseBehavior().then((value) => {
+  closeBehavior.value = value
+})
+
+async function onCloseBehaviorChange(e: Event): Promise<void> {
+  const value = (e.target as HTMLSelectElement).value as CloseBehavior
+  closeBehavior.value = value
+  await window.api.setCloseBehavior(value)
 }
 
 // ---- 扩展设置 ----
@@ -200,6 +221,9 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
         @click="active = 'appearance'"
       >
         <span class="tree-label">{{ t('settings.tree.appearance') }}</span>
+      </div>
+      <div class="tree-node" :class="{ active: active === 'general' }" @click="active = 'general'">
+        <span class="tree-label">{{ t('settings.tree.general') }}</span>
       </div>
       <div
         class="tree-node"
@@ -259,6 +283,21 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
           </select>
           <p class="config-desc">{{ t('settings.appearance.themeDesc') }}</p>
         </div>
+      </div>
+
+      <!-- 通用：关闭行为（仅 Windows 有系统托盘，非 Windows 显示说明） -->
+      <div v-if="active === 'general'" class="config-block">
+        <h2>{{ t('settings.general.title') }}</h2>
+        <div v-if="isWindows" class="config-row">
+          <label>{{ t('settings.general.closeBehavior') }}</label>
+          <select :value="closeBehavior" @change="onCloseBehaviorChange">
+            <option value="ask">{{ t('settings.general.closeAsk') }}</option>
+            <option value="hide">{{ t('settings.general.closeHide') }}</option>
+            <option value="quit">{{ t('settings.general.closeQuit') }}</option>
+          </select>
+          <p class="config-desc">{{ t('settings.general.closeBehaviorDesc') }}</p>
+        </div>
+        <p v-else class="config-desc">{{ t('settings.general.windowsOnly') }}</p>
       </div>
 
       <!-- 语言 -->

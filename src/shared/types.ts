@@ -6,6 +6,13 @@
 /** 窗口控制动作 */
 export type WindowAction = 'minimize' | 'toggle-maximize' | 'close'
 
+/**
+ * 关闭行为偏好（ADR-0019）：`ask` 关闭时弹原生提示让用户选 / `hide` 收进托盘 / `quit` 退出。
+ * 由**主进程**持有（`userData/window-behavior.json`），设置页经 IPC 读写——关闭拦截发生在主进程，
+ * 而主进程读不到渲染进程的 localStorage 设置。
+ */
+export type CloseBehavior = 'ask' | 'hide' | 'quit'
+
 /** 窗口状态快照（渲染进程自绘标题栏需要） */
 export interface WindowState {
   isMaximized: boolean
@@ -124,6 +131,10 @@ export interface MainApi {
   /** 窗口控制 */
   windowAction(action: WindowAction): Promise<void>
   getWindowState(): Promise<WindowState>
+  /** 读取关闭行为偏好（主进程是唯一权威，见 ADR-0019） */
+  getCloseBehavior(): Promise<CloseBehavior>
+  /** 写入关闭行为偏好（非 Windows 无托盘，写入后关闭仍直接退出） */
+  setCloseBehavior(behavior: CloseBehavior): Promise<void>
   /** 应用信息 */
   getAppInfo(): Promise<AppInfo>
   /** 用户扩展目录扫描（返回 userData/extensions 下的扩展目录清单） */
@@ -457,6 +468,8 @@ export type IpcEvent =
 export interface MainEvents {
   /** 窗口状态变化（最大化/还原/全屏/聚焦） */
   'window:state-changed': (state: WindowState) => void
+  /** 主进程要求渲染进程打开某个导航项（托盘"设置"→ 切到设置页；ADR-0019 决策 8） */
+  'nav:open': (navId: string) => void
   /** 生命周期钩子执行请求（宿主执行后经 api.hookResult 回传，见 issue #52） */
   'extension:hook-request': (e: ExtensionHookRunRequest) => void
   /** 更新事件（检查结果/下载进度/下载完成/错误） */
