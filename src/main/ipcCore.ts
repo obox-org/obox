@@ -595,6 +595,34 @@ function toCoreError(err: unknown, fallback: IpcErrorCode): IpcCoreError {
 // ---------------------------------------------------------------------------
 
 /** 校验通道/扩展 id 片段：只允许字母数字与 . _ -，禁止路径分隔符与 .. */
+/**
+ * 解析 stdio 助手的启动参数（纯函数，便于单测）。
+ *
+ * **为什么需要注入 `ELECTRON_RUN_AS_NODE`**：宿主用 `process.execPath`（Electron 可执行文件）来跑
+ * 扩展随包的 `.js/.cjs/.mjs` 助手。若只给可执行文件加脚本路径、不给这个环境变量，Electron 会以
+ * **应用模式**启动脚本——脚本确实会执行（`process.versions.electron` 有值），但 **stdin 不会接上**、
+ * 进程也永不退出，于是 stdio 传输层的 JSON-RPC 请求根本送不进去（实测：无该变量时收不到任何请求、
+ * 20s 不退出；加上后 stdin 正常、`node:sqlite` 可用、`process.exit(0)` 立即退出）。
+ *
+ * `execPath` 由调用方注入（保持本模块不依赖 electron，也不读全局）。
+ */
+export function resolveStdioSpawn(input: { program: string; args?: string[]; execPath: string }): {
+  program: string
+  args: string[]
+  env?: Record<string, string>
+  isJs: boolean
+} {
+  const args = [...(input.args ?? [])]
+  const isJs = /\.(c?js|mjs)$/i.test(input.program)
+  if (!isJs) return { program: input.program, args, isJs }
+  return {
+    program: input.execPath,
+    args: [input.program, ...args],
+    env: { ELECTRON_RUN_AS_NODE: '1' },
+    isJs
+  }
+}
+
 export function sanitizeIpcName(raw: unknown, what = 'ipc 名称'): string {
   if (!isValidIpcName(raw)) {
     throw new IpcCoreError(

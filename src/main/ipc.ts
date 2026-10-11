@@ -13,7 +13,13 @@ import { join } from 'node:path'
 import type { IpcChannelDeclaration, IpcEvent, IpcReplyOutcome } from '../shared/types'
 import { extensionSourceDir } from './paths'
 import type { Readable, Writable } from 'node:stream'
-import { IpcCoreError, ipcEndpoint, isIpcCoreError, validateIpcDeclaration } from './ipcCore'
+import {
+  IpcCoreError,
+  ipcEndpoint,
+  isIpcCoreError,
+  resolveStdioSpawn,
+  validateIpcDeclaration
+} from './ipcCore'
 import type { Framing } from './ipcCore'
 import {
   openPipeClientTransport,
@@ -153,13 +159,20 @@ export async function openExtensionChannel(
     const cwd = join(extensionDir, 'data')
     await fs.mkdir(cwd, { recursive: true })
     // 便利约定：`.js/.cjs/.mjs` 用宿主自带的 Node 运行（扩展无需自带解释器）；
-    // 其它一律直接执行（Rust/Python/Go 等编译产物或系统可执行文件）
-    const isJsProgram = /\.(c?js|mjs)$/i.test(program)
+    // 其它一律直接执行（Rust/Python/Go 等编译产物或系统可执行文件）。
+    // 注意：必须带上 ELECTRON_RUN_AS_NODE（见 resolveStdioSpawn 的注释），否则脚本跑在
+    // Electron 应用模式下——stdin 不接、stdio 协议不通。
+    const spawn = resolveStdioSpawn({
+      program,
+      args: declaration.args,
+      execPath: process.execPath
+    })
     transport = openStdioTransport({
-      program: isJsProgram ? process.execPath : program,
-      args: isJsProgram ? [program, ...(declaration.args ?? [])] : declaration.args,
+      program: spawn.program,
+      args: spawn.args,
       cwd,
-      framing: declaration.framing
+      framing: declaration.framing,
+      env: spawn.env
     })
   } else {
     const socketDir = ipcSocketDir()

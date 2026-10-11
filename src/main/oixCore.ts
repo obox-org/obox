@@ -28,6 +28,12 @@ const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 export const DEFAULT_MAX_ENTRIES = 10000
 export const DEFAULT_MAX_TOTAL_BYTES = 512 * 1024 * 1024
 
+/**
+ * 扩展**运行时数据目录**名（`<扩展目录>/data`）：`api.fs` 与 `api.sqlite` 的落点。
+ * 两条规则共用它：① 覆盖安装时保留旧 `data/`（升级不丢数据）；② 包内不得含 `data/`。
+ */
+export const EXT_DATA_DIR = 'data'
+
 export interface OixInstallOptions {
   /** 扩展安装根目录（electron 层传 userData/extensions） */
   targetRoot: string
@@ -157,6 +163,17 @@ async function extractToStage(
     throw new OixInstallError(
       'too-large',
       `oix 包条目过多（${entries.length} > ${opts.maxEntries}），已拒绝安装`
+    )
+  }
+  // 包内不得含 data/：那是扩展的**运行时数据目录**（api.fs / api.sqlite 的落点），
+  // 由宿主在覆盖安装时保留（见下方 rename 段）。若允许打进包里，旧包会用陈旧数据覆盖用户数据。
+  const forbidden = entries.find(
+    (e) => e.entryName === EXT_DATA_DIR || e.entryName.startsWith(`${EXT_DATA_DIR}/`)
+  )
+  if (forbidden) {
+    throw new OixInstallError(
+      'forbidden-entry',
+      `包内不得包含 ${EXT_DATA_DIR}/ 目录：它是扩展运行时数据目录，升级时由宿主保留`
     )
   }
   let total = 0
@@ -299,6 +316,22 @@ export async function installFromPackage(
         'write-failed',
         `写入安装目录失败：${err instanceof Error ? err.message : String(err)}`
       )
+    }
+    // **保留扩展运行时数据**：旧目录已整体挪到 backup，新目录只有包内内容。
+    // 在删 backup 之前把旧 data/ 搬回来，否则升级即丢库（api.sqlite）与文件（api.fs）。
+    // stage 与 target 同在 extensions/ 下（同卷），rename 原子；失败只记日志，不阻断安装、不丢新版本。
+    if (replaced) {
+      const oldData = join(backup, EXT_DATA_DIR)
+      const newData = join(target, EXT_DATA_DIR)
+      try {
+        if ((await pathExists(oldData)) && !(await pathExists(newData))) {
+          await fs.rename(oldData, newData)
+        }
+      } catch (err) {
+        console.warn(
+          `[oix] 保留旧 ${EXT_DATA_DIR}/ 目录失败（不影响本次安装）：${err instanceof Error ? err.message : String(err)}`
+        )
+      }
     }
     await fs.rm(backup, { recursive: true, force: true }).catch(() => {})
 
