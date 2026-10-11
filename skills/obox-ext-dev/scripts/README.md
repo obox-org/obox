@@ -8,7 +8,7 @@
 
 ## 为什么 `validate-manifest.mjs` 是"自包含副本"
 
-宿主规则分散在 `src/renderer/src/core/manifest.ts`（error）、`src/shared/ipcDeclaration.ts`（`ipcChannels`）、`src/renderer/src/core/host.ts:125-207`（warning）三处，而脚本**不能 import 它们**（上面的约束）。规则因此在这里重写一份副本，代价是可能漂移，防线是仓库内的差分测试：
+宿主规则分散在 `src/renderer/src/core/manifest.ts`（error）、`src/shared/ipcDeclaration.ts`（`ipcChannels`）、`src/renderer/src/core/host.ts:143-231`（warning）三处，而脚本**不能 import 它们**（上面的约束）。规则因此在这里重写一份副本，代价是可能漂移，防线是仓库内的差分测试：
 
 ```bash
 npx vitest run test/manifest-script-parity.test.ts

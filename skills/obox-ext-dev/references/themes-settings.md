@@ -7,9 +7,9 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 ### 机制
 
 - 主题 = 主题扩展 `contributes.themes` 声明的 CSS 变量 token 组（`src/api/contributions.ts:63-70`）
-- 宿主收集所有主题扩展的贡献（`src/renderer/src/core/host.ts:151`），设置"外观"节点下拉选择；选中后把 token `setProperty` 到 `document.documentElement`（`:root`）并持久化（`src/renderer/src/core/theme.ts:50-77`）。持久化值失效时缺省取 id 含 `dark` 的主题（`theme.ts:37-44`）
+- 宿主收集所有主题扩展的贡献（`src/renderer/src/core/host.ts:169`），设置"外观"节点下拉选择；选中后把 token `setProperty` 到 `document.documentElement`（`:root`）并持久化（`src/renderer/src/core/theme.ts:50-77`）。持久化值失效时缺省取 id 含 `dark` 的主题（`theme.ts:37-44`）
 - 宿主 UI 组件用 `var(--token, fallback)` 引用 token，主题切换即时生效
-- **每个渲染窗口各有一份 `:root`**：App 子窗口（`?obox-window=app`）启动时由 `host.start()` 收尾的 `applyCurrent()` 应用一次（`src/renderer/src/core/host.ts:933`）；主窗口此后切主题时，新快照经 `storage` 事件合并进子窗口（`src/renderer/src/core/state.ts` 的 `applyExternal`）并重新应用、再下发给 iframe（见下条与 ADR-0022）
+- **每个渲染窗口各有一份 `:root`**：App 子窗口（`?obox-window=app`）启动时由 `host.start()` 收尾的 `applyCurrent()` 应用一次（`src/renderer/src/core/host.ts:952`）；主窗口此后切主题时，新快照经 `storage` 事件合并进子窗口（`src/renderer/src/core/state.ts` 的 `applyExternal`）并重新应用、再下发给 iframe（见下条与 ADR-0022）
 - **App 子窗口的主题 token 投递（ADR-0022）分两条路**：
   1. **`srcdoc`（`html`）卡片**：宿主把当前 token 拼成 `<style>:root{…}</style>` 注入**同一份文档**（`src/renderer/src/AppWindow.vue` 的 `iframeSrcdoc`）。CSS 自定义属性不跨文档继承，`srcdoc` 能生效正因为它与宿主同文档；切主题时 iframe **重渲染**（`:key="srcdoc:<themeId>"`）。
   2. **`url` 卡片（新增）**：iframe 是 `app://extensions|debug/<id>/…`，与父文档**跨源** ⇒ `iframe.contentDocument` 恒为 `null`，宿主**注入不了** CSS/`<style>`，也继承不到变量。因此宿主在三个时机向 `iframe.contentWindow` **单向推送**消息（协议与载荷见下）：① iframe `load` 完成；② 主题变化；③ 收到子页面的 `obox-theme-request`。扩展侧把 `tokens` 逐条 `document.documentElement.style.setProperty(k, v)` 即跟随主题——**不再需要**用 `var(--token, fallback)` 的 fallback 当实际色值（兜底只用于"推送到达前/老宿主"的首帧）。
@@ -142,20 +142,20 @@ for (const ms of [0, 300, 1000]) {
 - **快捷键**：内置快捷键修改 + 冲突检测
 - **更新**：选择"更新提供者扩展"（manifest `contributes.updater`，只能一个生效，`src/renderer/src/core/updaterStore.ts:54-62`）+ 显示当前版本 + 检查 / 下载 / 安装（`SettingsView.vue:388-444`）；未选择提供者时不检查更新
 - **网络**：代理设置（启用 / 主机 / 端口 / 用户名 / 密码 / 忽略 SSL 校验 / 排除列表），存设置存储 `network.proxy`（`SettingsView.vue:159-170`），由宿主 session 级生效（`api.proxy`，见 `api-reference.md`）
-- **通知**：逐扩展的系统通知开关（`SettingsView.vue:172-181`）；被关闭的扩展其 `api.notification.show` 直接返回 `{ ok: true }` 不弹出（`src/renderer/src/core/host.ts:679-681`）
+- **通知**：逐扩展的系统通知开关（`SettingsView.vue:172-181`）；被关闭的扩展其 `api.notification.show` 直接返回 `{ ok: true }` 不弹出（`src/renderer/src/core/host.ts:701-703`）
 - **扩展**：注册了设置页的扩展（按扩展名展开）。点该节点回到扩展分区**列表态**（`@click="selectExtensions()"` 置 `active = 'extension'` 并清 `activeExt`，`SettingsView.vue:272-278`、`:34-38`）；再点子项才在右侧显示该扩展的设置页（`:280-290`）。此前该节点漏了 `@click` 导致整个分区不可达（issue #80，已修复，回归门禁见 `test/settings-view-wiring.test.ts`）
 
 ### 扩展设置页（双通道）
 
-1. **运行时**：`api.settings.register({ id, title, fields })`，返回的 `Disposable` 只注销自己那一页（`src/renderer/src/core/host.ts:410-415`）
-2. **manifest 声明**：`contributes.settings`，形状是**单个** `{ id, title, fields }`（与 `api.settings.register` 的参数同型，不是数组；`src/api/contributions.ts:144-145`），由 `host.ts:161` 注册
+1. **运行时**：`api.settings.register({ id, title, fields })`，返回的 `Disposable` 只注销自己那一页（`src/renderer/src/core/host.ts:432-437`）
+2. **manifest 声明**：`contributes.settings`，形状是**单个** `{ id, title, fields }`（与 `api.settings.register` 的参数同型，不是数组；`src/api/contributions.ts:144-145`），由 `host.ts:179` 注册
 
-字段类型 `SettingField`（`src/api/contributions.ts:76-89`）：`key` / `label` / `type`（`text` / `number` / `boolean` / `select`）/ `default?` / `options?`（select 的 `{ value, label }[]`）/ `description?`（设置页在字段下方渲染为说明文字，`SettingsView.vue:570`）。设置值存统一设置存储（`stateStore.settings`），`api.settings.set` 立即持久化并通知（`host.ts:416-424`）；落盘是渲染进程 localStorage 的 `obox:state:v1`（Electron 下位于 userData，`src/renderer/src/core/state.ts:1-15`），**不是**可直接编辑的 JSON 文件。凡注册了设置页的扩展都列在"扩展"节点下，代码未按内置/用户过滤（`src/renderer/src/core/extensionSettings.ts:47-49`）。
+字段类型 `SettingField`（`src/api/contributions.ts:76-89`）：`key` / `label` / `type`（`text` / `number` / `boolean` / `select`）/ `default?` / `options?`（select 的 `{ value, label }[]`）/ `description?`（设置页在字段下方渲染为说明文字，`SettingsView.vue:570`）。设置值存统一设置存储（`stateStore.settings`），`api.settings.set` 立即持久化并通知（`host.ts:438-446`）；落盘是渲染进程 localStorage 的 `obox:state:v1`（Electron 下位于 userData，`src/renderer/src/core/state.ts:1-15`），**不是**可直接编辑的 JSON 文件。凡注册了设置页的扩展都列在"扩展"节点下，代码未按内置/用户过滤（`src/renderer/src/core/extensionSettings.ts:47-49`）。
 
 ### 快捷键
 
-- 内置：`app.showCommands` 默认 `Ctrl+Shift+P`（`src/renderer/src/core/host.ts:759-762`）
-- 扩展：manifest `contributes.keybindings` 把已声明命令绑定默认键，注册进同一个 `keybindingStore`（`host.ts:187`）；该键已被其他命令占用时**不注册**并记 warning（`host.ts:174-186`，重名按 `normalizeKey` 归一后比较）
+- 内置：`app.showCommands` 默认 `Ctrl+Shift+P`（`src/renderer/src/core/host.ts:779-782`）
+- 扩展：manifest `contributes.keybindings` 把已声明命令绑定默认键，注册进同一个 `keybindingStore`（`host.ts:205`）；该键已被其他命令占用时**不注册**并记 warning（`host.ts:192-204`，重名按 `normalizeKey` 归一后比较）
 - 修改：设置"快捷键"页点编辑，按下新组合（Esc 取消，`SettingsView.vue:63-81`）
 - 冲突检测：同键被其他命令占用时提示且**不写入**（`src/renderer/src/core/keybindings.ts:39-46`）；比较走 `normalizeKey`，**大小写与修饰键名会归一**（issue #79：`Ctrl+Shift+k` 与 `Ctrl+Shift+K` 视为同一绑定，`keybindings.ts:87-149`）
 - 持久化：设置存储 `keybinding.<command>`；重置即删除该键、回落默认（`keybindings.ts:17,47,53`）

@@ -75,6 +75,11 @@ const requiredFixtures = [
   'bad-name-space.json',
   // issue #77：去掉 NAME_RE 的 `i` 后大写 id 必须两侧同样报 error
   'bad-name-uppercase.json',
+  // issue #84：navItems / statusBarItems / commands / themes 的非数组形状（四类各取 {}/5/true 之一）
+  'bad-nav-items-shape.json',
+  'bad-status-bar-items-shape.json',
+  'bad-commands-shape.json',
+  'bad-themes-shape.json',
   'self-dep.json',
   'high-api-version.json',
   'missing-main.json'

@@ -99,6 +99,24 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
       messages.push({ severity: 'error', message: 'views 必须是 [{id, title, icon, group?}] 数组' })
     }
   }
+  // issue #84：以下四类此前**完全不校验**形状，`"navItems": {}` 这种会让宿主注册期
+  // `for...of` 抛 `TypeError: … is not iterable` 的清单能通过校验并进入激活阶段。
+  // 这里只补"必须是数组"（与上面四类同风格）；数组里逐项缺字段仍是宿主侧的 warning，不是 error。
+  if (contributes?.navItems !== undefined && !Array.isArray(contributes.navItems)) {
+    messages.push({
+      severity: 'error',
+      message: 'navItems 必须是 [{id, title, icon, view?}] 数组'
+    })
+  }
+  if (contributes?.statusBarItems !== undefined && !Array.isArray(contributes.statusBarItems)) {
+    messages.push({ severity: 'error', message: 'statusBarItems 必须是 [{id, name}] 数组' })
+  }
+  if (contributes?.commands !== undefined && !Array.isArray(contributes.commands)) {
+    messages.push({ severity: 'error', message: 'commands 必须是 [{command, title}] 数组' })
+  }
+  if (contributes?.themes !== undefined && !Array.isArray(contributes.themes)) {
+    messages.push({ severity: 'error', message: 'themes 必须是 [{id, label, tokens}] 数组' })
+  }
   const deps = m.extensionDependencies as unknown
   const invalidShape = !Array.isArray(deps) || deps.some((d) => typeof d !== 'string')
   if (deps !== undefined && invalidShape) {
@@ -109,6 +127,18 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
     messages.push({ severity: 'error', message: '扩展不能依赖自身' })
   }
   return messages
+}
+
+/**
+ * 贡献点数组形状防御（issue #84）：宿主消费 `contributes` 前统一走这里。
+ *
+ * manifest 把某类贡献点写成非数组（`{}` / `5` / `true`）时，`c.x ?? []` 只做空值兜底，
+ * `for...of` 会抛 `TypeError: … is not iterable` 并打断整轮注册/激活。
+ * 校验层已为 8 类贡献点补了 error（本文件上方），但宿主侧仍要自保：
+ * 校验只在扫描期跑一次，热重载、旧清单快照、将来新增的读取点都可能绕过它。
+ */
+export function contributesArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
 }
 
 /** 构建 ExtensionInfo（扫描/加载后统一构造） */

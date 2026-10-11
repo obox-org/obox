@@ -1,0 +1,8 @@
+{
+  "name": "bad-status-bar-items-shape",
+  "version": "1.0.0",
+  "main": "./index.js",
+  "contributes": {
+    "statusBarItems": 5
+  }
+}

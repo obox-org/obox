@@ -58,7 +58,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 6. 扩展收集到但未激活（激活 0）
 
-**症状**：启动日志 `[host] 启动完成: 1 个扩展（1 启用 / 0 禁用），激活 0，依赖环 无`（格式见 `src/renderer/src/core/host.ts:921-927`；末尾的"依赖环"是环内扩展 id 列表，正常为 `无`）。
+**症状**：启动日志 `[host] 启动完成: 1 个扩展（1 启用 / 0 禁用），激活 0，依赖环 无`（格式见 `src/renderer/src/core/host.ts:943-949`；末尾的"依赖环"是环内扩展 id 列表，正常为 `无`）。
 
 **原因**：入口未导出 `default` 插件函数，或入口加载/执行抛错。
 
@@ -76,13 +76,13 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 8. 导航项点击内容栏空白
 
-- `view` 字段引用的组件未在入口具名导出 → 宿主 warning `导航项 X 声明的视图组件 Y 未在扩展入口导出`（`src/renderer/src/core/host.ts:206`）
+- `view` 字段引用的组件未在入口具名导出 → 宿主 warning `导航项 X 声明的视图组件 Y 未在扩展入口导出`（`src/renderer/src/core/host.ts:227`）
 - 组件导出名与 `view` 值不一致（大小写敏感）
 - 扩展未激活（见 #6）
 
 ## 9. 注册了未声明的命令：先 warning，紧接着抛错标红
 
-**症状**：日志先出现 `[host] <id> 注册了未声明的命令 <cmd>（manifest contributes.commands 未包含）`（`src/renderer/src/core/host.ts:265-269`），紧接着 `[host] activate <id> failed Error: command not declared: <cmd>`，扩展在管理器标红 `activationError`。
+**症状**：日志先出现 `[host] <id> 注册了未声明的命令 <cmd>（manifest contributes.commands 未包含）`（`src/renderer/src/core/host.ts:287-291`），紧接着 `[host] activate <id> failed Error: command not declared: <cmd>`，扩展在管理器标红 `activationError`。
 
 **原因**：`api.registerCommand(id, handler)` 的命令 id 不在该扩展 manifest `contributes.commands`。warning 之后 `registry.setCommandHandler` 找不到已声明项会**直接 throw**（`src/renderer/src/core/registry.ts:203`）→ `plugin(api)` 抛错、本次激活失败。**这不是"只打一条 warning"**。
 
@@ -90,11 +90,11 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 10. 依赖环
 
-**症状**：启动日志末尾 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 a,b`（`src/renderer/src/core/host.ts:921-927`）。
+**症状**：启动日志末尾 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 a,b`（`src/renderer/src/core/host.ts:943-949`）。
 
 **原因**：`extensionDependencies` 成环。
 
-**行为**：环内扩展**不会被跳过**——拓扑排序仍把它们放进激活序列（`src/renderer/src/core/manifest.ts:163-168`），宿主照常激活（`src/renderer/src/core/host.ts:909-918`），只是排到最后。所以"没激活"要先查 #6 的其它原因，别被这一行误导。
+**行为**：环内扩展**不会被跳过**——拓扑排序仍把它们放进激活序列（`src/renderer/src/core/manifest.ts:195-200`），宿主照常激活（`src/renderer/src/core/host.ts:931-940`），只是排到最后。所以"没激活"要先查 #6 的其它原因，别被这一行误导。
 
 **修复**：打破环（移除其中一个依赖），让依赖顺序可确定。
 
@@ -113,7 +113,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 13. App 应用里出现重复/残留卡片
 
-**结论**（宿主侧已修复，扩展不需要为此写兼容代码）：`appStore` 从 localStorage 恢复时按 id 去重并重建索引（`src/renderer/src/core/appStore.ts:20-50`），同 id 重复注册只更新不新建（`:61-74`），停用/卸载按 `extensionId` 清空其全部卡片（`:92-102`），启动时清理"扩展已不在"的孤儿卡片（`src/renderer/src/core/host.ts:839-845`）。
+**结论**（宿主侧已修复，扩展不需要为此写兼容代码）：`appStore` 从 localStorage 恢复时按 id 去重并重建索引（`src/renderer/src/core/appStore.ts:20-50`），同 id 重复注册只更新不新建（`:61-74`），停用/卸载按 `extensionId` 清空其全部卡片（`:92-102`），启动时清理"扩展已不在"的孤儿卡片（`src/renderer/src/core/host.ts:861-867`）。
 
 **扩展侧注意事项**：`api.app.register` 的 `id` 必须是稳定的唯一值（如 `todo.main`）；热重载/覆盖安装时宿主保证不产生重复卡片。
 
@@ -139,7 +139,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 - 用 compound **`Debug All`**：`Debug Main Process`（由 electron-vite 启动，`env` 里设 `REMOTE_DEBUGGING_PORT=9222`，`.vscode/launch.json:14-16`）+ `Debug Renderer Process`（`type: chrome` + `request: attach` + `port: 9222`，`.vscode/launch.json:18-28`）
 - **CDP 端口是怎么来的**：`npm run dev` 就是 `electron-vite dev`（`package.json:19`），**它自己不开**调试端口；electron-vite 在 dev 下读环境变量 `REMOTE_DEBUGGING_PORT` 并给 Electron 追加 `--remote-debugging-port=<port>`（`node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js:225-226`，仅 `isDev` 生效；也可用 `electron-vite dev --remoteDebuggingPort 9222`，`node_modules/electron-vite/dist/cli.js:42,46-48`）。因此"断点完全不命中 / 附加失败"的**第一嫌疑是没有这个端口**：确认 9222 在监听（`netstat -ano | findstr 9222`），没有就补上环境变量或命令行参数
 - attach 的是**渲染进程**（chrome 协议），不是主进程 inspector；`webRoot` 指 `${workspaceFolder}/src/renderer`
-- 改扩展代码后需**重载 obox 窗口**：宿主只在窗口启动时收集并 import 扩展入口（`src/renderer/src/core/host.ts:883-896`），`app://` 动态 import 的模块缓存不会自动失效
+- 改扩展代码后需**重载 obox 窗口**：宿主只在窗口启动时收集并 import 扩展入口（`src/renderer/src/core/host.ts:905-918`），`app://` 动态 import 的模块缓存不会自动失效
 - 断点落在"无源码"位置时，先回看启动日志 `[debug] 调试扩展 N 个: id@路径`（`src/main/debug.ts`）确认加载的确实是 `--debug-extension` 给的目录；调试扩展经 `app://debug/<id>/` 加载（`src/main/protocol.ts:48-58`），打包版（`file://`）没有这条 dev 链路、也没有可 attach 的端口
 
 > `references/guides-user.md` 里那份给**扩展自己仓库**用的 `.vscode/launch.json` 模板（`args` 写死 `--remote-debugging-port=9333`，并带 `pathMapping` / `urlFilter`，见该文 :190-215，`pathMapping` 说法在 :217）**未实机验证**——照抄前先按上面对齐本仓库自带配置。其中 `urlFilter` 依赖 electron-vite dev 端口，而仓库**未固定 `server.port`**（`electron.vite.config.ts:15-20`），端口被占用时 Vite 会顺延换端口，写死端口的 `urlFilter` 会失配。
@@ -150,7 +150,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **userData 下为什么还会有同名目录**：`api.fs` / sqlite / python 的数据目录固定按 `userData/extensions/<id>/data` 建（`src/main/fs.ts:12-14`、`src/main/sqlite.ts:34-37`、`src/main/python.ts:34-36`），调试扩展也照此写盘。这类只有 `data/`、没有 `manifest.json` 的目录不会被当成扩展加载（主进程按有无 manifest 过滤，`src/main/capabilities.ts:38-51`）。
 
-**若管理器里出现可卸载项**：那是以前用同名 id 做的 .oix 安装态——先卸载安装态，再用调试参数加载。管理器里的调试扩展本身来源是 `debug`，调卸载会直接抛"调试扩展不占用安装态，无需卸载"（`src/renderer/src/core/host.ts:1088`）。
+**若管理器里出现可卸载项**：那是以前用同名 id 做的 .oix 安装态——先卸载安装态，再用调试参数加载。管理器里的调试扩展本身来源是 `debug`，调卸载会直接抛"调试扩展不占用安装态，无需卸载"（`src/renderer/src/core/host.ts:1110`）。
 
 ## 17. 生命周期钩子（install/uninstall）怎么写才生效
 

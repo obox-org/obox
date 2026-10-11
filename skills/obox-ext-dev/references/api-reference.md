@@ -21,13 +21,13 @@ export default function myExt(api: ExtensionActivationApi): (() => void) | void 
 
 ## 宿主生命周期语义
 
-- **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表（`host.ts:882-918`）
-- **App 子窗口不激活扩展，但仍会 import 入口**：子窗口（`?obox-window=app`）由 `src/renderer/src/main.ts:27` 传 `activateExtensions:false`，**只跳过阶段二**（不调用 `plugin(api)`，`host.ts:902-908`）；**阶段一照常执行**——宿主仍 `await load()` 每个扩展入口模块并 `registerContributions`（`host.ts:883-896`）。也就是说：**入口模块的顶层代码会在每个 App 子窗口重跑**，`default` 插件函数才只在主窗口执行一次。因此**副作用（连 IPC、写盘、起定时器、装监听、注册命令）必须放进插件函数**，写在模块顶层会在每个子窗口重复执行。子窗口渲染所需的数据来自贡献点注册表与（与主窗口同源的）localStorage 里的 App 卡片（`appStore`）；子窗口内的交互请走 `api.app.onMessage` 消息桥
-- **依赖拓扑序**：`extensionDependencies` 先激活依赖；**检测到环不跳过**——环内扩展仍会被激活，只是排到最后（`manifest.ts:165-168` 把环内扩展补进 `ordered`，`host.ts:909` 照常激活）；宿主启动日志末尾会列出环内 id（`host.ts:921-927` 的 `依赖环 …`）。缺失依赖不阻塞，扩展照常激活（`manifest.ts:155`）
+- **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表（`host.ts:904-940`）
+- **App 子窗口不激活扩展，但仍会 import 入口**：子窗口（`?obox-window=app`）由 `src/renderer/src/main.ts:27` 传 `activateExtensions:false`，**只跳过阶段二**（不调用 `plugin(api)`，`host.ts:924-930`）；**阶段一照常执行**——宿主仍 `await load()` 每个扩展入口模块并 `registerContributions`（`host.ts:905-918`）。也就是说：**入口模块的顶层代码会在每个 App 子窗口重跑**，`default` 插件函数才只在主窗口执行一次。因此**副作用（连 IPC、写盘、起定时器、装监听、注册命令）必须放进插件函数**，写在模块顶层会在每个子窗口重复执行。子窗口渲染所需的数据来自贡献点注册表与（与主窗口同源的）localStorage 里的 App 卡片（`appStore`）；子窗口内的交互请走 `api.app.onMessage` 消息桥
+- **依赖拓扑序**：`extensionDependencies` 先激活依赖；**检测到环不跳过**——环内扩展仍会被激活，只是排到最后（`manifest.ts:197-200` 把环内扩展补进 `ordered`，`host.ts:931` 照常激活）；宿主启动日志末尾会列出环内 id（`host.ts:943-949` 的 `依赖环 …`）。缺失依赖不阻塞，扩展照常激活（`manifest.ts:187`）
 - **命令归属**：命令 id 全局唯一，`api.registerCommand(id, handler)` 只能绑定**本扩展 manifest 声明**的命令；绑定别人声明的 id 会被拒绝（`console.warn` + 返回空 Disposable，`registry.ts:206-211`），绑定完全未声明的 id 直接抛错（见 `registerCommand`）。扩展被热移除/卸载/覆盖安装时，其命令会从注册表**物理移除**，同 id 可被其它版本或扩展重新声明（`registry.ts:189-191`）
 - **停用**：扩展停用（禁用/重启/卸载）时，宿主执行插件返回的 cleanup、dispose 全部注册（命令 handler 清空、App 卡片移除、事件监听移除）
 - **热生效**：安装 .oix 后宿主立即热加载（扫描→注册贡献点→激活），无需重启；禁用/卸载未激活扩展立即热移除，已激活扩展显示"立即重启"按钮（重载渲染进程生效）
-- **激活失败**：`plugin(api)` 抛错 → `activationError` 记录（`host.ts:915-917`），扩展管理器详情页展示，不影响其他扩展
+- **激活失败**：`plugin(api)` 抛错 → `activationError` 记录（`host.ts:937-939`），扩展管理器详情页展示，不影响其他扩展
 - **热重载（dev）**：Vite HMR 会重载扩展模块；注册必须可清理，否则重复注册冲突
 
 ## 方法总览
@@ -46,7 +46,7 @@ const d = api.registerCommand('my-ext.do', async (arg) => {
 // d.dispose() 解除绑定
 ```
 
-- **命令必须已在 `manifest.contributes.commands` 声明**：未声明时宿主先打一条 `console.warn`（`host.ts:265-269`），紧接着 `registry.setCommandHandler` **抛错**（`registry.ts:203`）——错误从 `plugin(api)` 冒出，扩展被标红 `activationError`，host 捕获后**不再继续激活该扩展**（`host.ts:915-917`）
+- **命令必须已在 `manifest.contributes.commands` 声明**：未声明时宿主先打一条 `console.warn`（`host.ts:287-291`），紧接着 `registry.setCommandHandler` **抛错**（`registry.ts:203`）——错误从 `plugin(api)` 冒出，扩展被标红 `activationError`，host 捕获后**不再继续激活该扩展**（`host.ts:937-939`）
 - 归属校验：id 已被别的扩展声明时只 `console.warn` 并返回空 Disposable，即**静默不绑定**（`registry.ts:206-211`）
 
 ### executeCommand<T>(id, ...args) → Promise<T>
@@ -80,7 +80,7 @@ item.show() // 显示
 item.dispose() // 销毁（扩展停用宿主自动清理）
 ```
 
-- 上面前四个方法作用于**已声明**的项：id 不存在时静默无操作（`host.ts:275-290`）
+- 上面前四个方法作用于**已声明**的项：id 不存在时静默无操作（`host.ts:297-312`）
 - `createItem(init?)` 的 `init` 可选字段：`text` / `tooltip` / `alignment`（`'left' | 'right'`）/ `priority`（`src/api/types.ts:118-123`）
 
 ### navbar（导航栏徽标）
@@ -213,7 +213,7 @@ window.parent.postMessage(
 ```
 
 - `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；**60s 超时**（放宽以容纳 handler 内弹模态框等需用户填写的场景）
-- `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销（每个扩展只保留**最后一个** handler，`host.ts:378-384`）
+- `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销（每个扩展只保留**最后一个** handler，`host.ts:400-406`）
 - `app.onMessage` 是**请求/响应**桥（经主进程 IPC、需要扩展注册 handler、有 `requestId` 与超时）。**主题是宿主单向推送**，不经该桥、**不需要** handler、也没有 `requestId`（见上面 `app.register` 的"主题下发"一条）——两者**不要混用**
 
 ### i18n（扩展多语言）
@@ -282,7 +282,7 @@ const off = api.settings.onChanged((key) => {
 off.dispose()
 ```
 
-> 回调参数是**变更的设置项 key**（如 `my-ext.interval`）；无具体 key 的场景（如语言切换）传空字符串（`host.ts:421`）。监听者仍可用 `api.settings.get` 读取当前值。
+> 回调参数是**变更的设置项 key**（如 `my-ext.interval`）；无具体 key 的场景（如语言切换）传空字符串（`host.ts:443`）。监听者仍可用 `api.settings.get` 读取当前值。
 
 ### update（更新能力，仅更新提供者扩展可用）
 
@@ -364,13 +364,13 @@ api.timer.clearInterval('tick')
 - 回调在扩展上下文（渲染进程）执行，**无 payload**（纯"到点了"），需要数据的扩展在回调里自行查询
 - 定时器 id 在**扩展内**唯一即可（内部 key = `<扩展id>:<id>`，跨扩展自动隔离，`src/main/timer.ts:16-18`）
 - `seconds` 必须是 **1–86400 的整数**（`src/main/timer.ts:29-37`）。上限的存在理由：`seconds * 1000` 超过 2³¹−1 时 Node 会把延时钳成 1ms，`setInterval` 退化成"每毫秒广播 `timer:fire`"的事件风暴（`src/main/timer.ts:26-27`）
-- **非法 `seconds` 是静默失败，不会抛错**：主进程校验失败只返回 `{ ok:false, error }`（`src/main/timer.ts:69-88`），宿主用 `void` 丢弃该结果（`host.ts:604-609`）——既不抛错也不提示，定时器**不会建立**、回调永不触发
+- **非法 `seconds` 是静默失败，不会抛错**：主进程校验失败只返回 `{ ok:false, error }`（`src/main/timer.ts:69-88`），宿主用 `void` 丢弃该结果（`host.ts:626-631`）——既不抛错也不提示，定时器**不会建立**、回调永不触发
 
 ### sqlite（数据库，node:sqlite 内置驱动）
 
 宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。相对路径可含子目录（如 `sub/a.db`，Windows 上写 `/` 亦可）；**不同子目录下的同名库互不干扰**（列类型元数据按库路径隔离）。
 
-> **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的沙箱。两者的失败形态不同：`exec` **原样返回** `{ ok:false, error:'不允许的 SQL 语句：…' }`（`host.ts:634`），`query` 经内部 `call()` **抛 `Error`**（`host.ts:626-632,635-637`）。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
+> **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的沙箱。两者的失败形态不同：`exec` **原样返回** `{ ok:false, error:'不允许的 SQL 语句：…' }`（`host.ts:656`），`query` 经内部 `call()` **抛 `Error`**（`host.ts:648-654,657-659`）。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
 
 ```ts
 const db = await api.sqlite.open('todo.db') // → userData/extensions/todo_chenzhi/data/todo.db
@@ -391,7 +391,7 @@ await db.close()
 
 - 默认表名 = 数据库文件名去扩展名（`open('todo.db')` → 表 `todo`）；`query`/`exec` 作用于整个库
 - 条件对象（`get_by`/`update`/`del_by` 的 where）只支持**等值匹配**，多键为 AND；复杂条件用 `query` 写 SQL
-- 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:626-632`）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 也**不经 `call()`**，直接返回 IPC 原始结果（`host.ts:656`，主进程侧是无返回值句柄关闭，`src/main/sqlite.ts:78-80`），因此对不存在的库 `close()` 静默无操作、**不会抛错**
+- 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:648-654`）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 也**不经 `call()`**，直接返回 IPC 原始结果（`host.ts:678`，主进程侧是无返回值句柄关闭，`src/main/sqlite.ts:78-80`），因此对不存在的库 `close()` 静默无操作、**不会抛错**
 - 全部方法 `async`（经 IPC 到主进程）；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
 - **数据目录的生命周期**：库文件在 `<扩展>/data/<name>.db`（安装态即 `userData/extensions/<扩展id>/data/`）；**覆盖安装（升级）时宿主保留 `data/`**，所以数据不会因升级丢失；**卸载时 `data/` 随扩展目录一起删除**。因此打包时不要把 `data/` 放进 `.oix`——宿主会直接拒收（见 [guides-user.md](guides-user.md) §6）
 
@@ -493,8 +493,8 @@ await api.fs.watch('watch-1', '.', (e) => {
 await api.fs.unwatch('watch-1') // 停止监听
 ```
 
-- 除 `watch` 的超限错误外，所有失败都是**抛 `Error`**（宿主把主进程的 `{ok:false}` 转成 `throw new Error(...)`，`host.ts:551-557`）
-- `watch`：**单扩展并发监听上限 16**（`src/main/fs.ts:25`）；超限时主进程返回 `{ok:false, error:'监听数量已达上限（16）'}`（`src/main/fs.ts:154-156`），宿主**转成抛错**（`host.ts:574-581`）。同 id 重复 `watch` 会先关掉旧监听、不占新增额度（`src/main/fs.ts:151-153`）
+- 除 `watch` 的超限错误外，所有失败都是**抛 `Error`**（宿主把主进程的 `{ok:false}` 转成 `throw new Error(...)`，`host.ts:573-579`）
+- `watch`：**单扩展并发监听上限 16**（`src/main/fs.ts:25`）；超限时主进程返回 `{ok:false, error:'监听数量已达上限（16）'}`（`src/main/fs.ts:154-156`），宿主**转成抛错**（`host.ts:596-603`）。同 id 重复 `watch` 会先关掉旧监听、不占新增额度（`src/main/fs.ts:151-153`）
 - 监听目录被删 / 权限变化 → 宿主记录并自动关闭该监听（`src/main/fs.ts:166-170`），扩展侧此后收不到事件（不会崩主进程）
 - 扩展停用/卸载时宿主自动关闭全部监听
 - `api.fs` 只能读写扩展自己的 data 目录；`api.dialog` 选到的外部路径**不能**用 `api.fs` 读写（安全边界）
@@ -571,7 +571,7 @@ const token = await api.secrets.get('github_token') // undefined = 未设置
 await api.secrets.delete('github_token')
 ```
 
-> 系统加密不可用（或 Linux 上后端回落为明文 `basic_text`）时，`api.secrets.*` **抛 `Error`**（`host.ts:502-516`），而不是明文落盘（fail-closed），也不是返回错误对象——调用方需 `try/catch` 并把该功能视为不可用。
+> 系统加密不可用（或 Linux 上后端回落为明文 `basic_text`）时，`api.secrets.*` **抛 `Error`**（`host.ts:524-538`），而不是明文落盘（fail-closed），也不是返回错误对象——调用方需 `try/catch` 并把该功能视为不可用。
 
 ### views（树视图，contributes.views 声明 + 数据源注册）
 
