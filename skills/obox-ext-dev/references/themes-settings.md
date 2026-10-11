@@ -9,7 +9,59 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 - 主题 = 主题扩展 `contributes.themes` 声明的 CSS 变量 token 组（`src/api/contributions.ts:63-70`）
 - 宿主收集所有主题扩展的贡献（`src/renderer/src/core/host.ts:151`），设置"外观"节点下拉选择；选中后把 token `setProperty` 到 `document.documentElement`（`:root`）并持久化（`src/renderer/src/core/theme.ts:42-55`）。持久化值失效时缺省取 id 含 `dark` 的主题（`theme.ts:29-35`）
 - 宿主 UI 组件用 `var(--token, fallback)` 引用 token，主题切换即时生效
-- 用户扩展的 App 子窗口 iframe（srcdoc）**自动注入当前主题 token**，扩展页面用 `var(--token)` 即可跟随主题；`url` 场景由扩展自行处理（`src/renderer/src/AppWindow.vue:6`、`:150-157`）
+- **每个渲染窗口各有一份 `:root`**：App 子窗口（`?obox-window=app`）启动时由 `host.start()` 收尾的 `applyCurrent()` 应用一次（`src/renderer/src/core/host.ts:930`）；主窗口此后切主题时，新快照经 `storage` 事件合并进子窗口（`src/renderer/src/core/state.ts` 的 `applyExternal`）并重新应用、再下发给 iframe（见下条与 ADR-0022）
+- **App 子窗口的主题 token 投递（ADR-0022）分两条路**：
+  1. **`srcdoc`（`html`）卡片**：宿主把当前 token 拼成 `<style>:root{…}</style>` 注入**同一份文档**（`src/renderer/src/AppWindow.vue` 的 `iframeSrcdoc`）。CSS 自定义属性不跨文档继承，`srcdoc` 能生效正因为它与宿主同文档；切主题时 iframe **重渲染**（`:key="srcdoc:<themeId>"`）。
+  2. **`url` 卡片（新增）**：iframe 是 `app://extensions|debug/<id>/…`，与父文档**跨源** ⇒ `iframe.contentDocument` 恒为 `null`，宿主**注入不了** CSS/`<style>`，也继承不到变量。因此宿主在三个时机向 `iframe.contentWindow` **单向推送**消息（协议与载荷见下）：① iframe `load` 完成；② 主题变化；③ 收到子页面的 `obox-theme-request`。扩展侧把 `tokens` 逐条 `document.documentElement.style.setProperty(k, v)` 即跟随主题——**不再需要**用 `var(--token, fallback)` 的 fallback 当实际色值（兜底只用于"推送到达前/老宿主"的首帧）。
+  - **`url` 型卡片切主题不再重渲染**：iframe 的 `:key` 是 `url:<url>`，与主题无关（表单里正在填的内容不会被清空）；`srcdoc` 型仍是 `srcdoc:<themeId>`，切主题重建。判据实现为纯函数 `appFrameKey`（`src/renderer/src/core/appTheme.ts`）。
+
+### App 子窗口（`url` 型）主题下发协议
+
+宿主 `postMessage` 的消息形状（实现在 `src/renderer/src/core/appTheme.ts` + `src/renderer/src/AppWindow.vue`）：
+
+| 方向          | 消息                                                          | 触发                                                  |
+| ------------- | ------------------------------------------------------------- | ----------------------------------------------------- |
+| 宿主 → 子窗口 | `{ source:'obox-app', action:'obox-theme', themeId, tokens }` | iframe `load` / 主题变化 / 收到请求                   |
+| 子窗口 → 宿主 | `{ source:'obox-app', action:'obox-theme-request' }`          | 扩展启动后（建议 0/300/1000 ms 各一次，收到推送即停） |
+
+- `themeId`：当前主题 id（如 `theme-dark`；空串表示当前没有主题扩展）。**不要**把它当色值用；要决定原生控件深浅请按 `/light/i` 判 `'light'` / 否则 `'dark'` 设 `documentElement.style.colorScheme`
+- `tokens`：`Record<token 名, 生效值>`，键形如 `--bg`；**值**取自宿主 `:root` 上 `getComputedStyle` 的**生效值**（`collectThemeTokens`，25 个 token 白名单），因此与宿主主窗口所见一致。非法键名 / 非字符串 / 空串会被宿主在构造时丢弃，扩展侧建议**再过滤一次**（双保险）
+- 这条推送**不经** `api.app.onMessage` 桥（那条要经主进程 IPC、需要扩展注册 handler）——它是"宿主渲染进程 → iframe"的直连消息，**不需要**在扩展入口做任何事
+- 扩展页里**没有** `api` 对象，也**读不到** token 值（`api.theme.getCurrent()` 只给 id，见 `api-reference.md`）；上面这条推送是 `url` 型页面拿到 token 的**唯一**途径
+
+最小接收代码（复制到你的静态页入口，**在挂载 UI 之前**先同步写一份兜底，首帧就不会白闪）：
+
+```js
+const FALLBACK = { '--bg': '#1e1e1e', '--fg': '#cccccc' /* …按 themes-settings 的 token 表补齐… */ }
+
+function applyTokens(tokens, root = document.documentElement) {
+  for (const [k, v] of Object.entries(tokens)) {
+    if (/^--[a-z0-9-]+$/.test(k) && typeof v === 'string' && v) root.style.setProperty(k, v)
+  }
+}
+
+// ① 同步兜底（老宿主 / 推送未达时不空白）
+applyTokens(FALLBACK)
+document.documentElement.style.colorScheme = 'dark'
+
+// ② 收推送（只认 parent 发来的本协议消息）
+window.addEventListener('message', (e) => {
+  const d = e.data
+  if (!d || d.source !== 'obox-app' || d.action !== 'obox-theme') return
+  if (e.source !== window.parent) return
+  applyTokens(d.tokens)
+})
+
+// ③ 请求重发（宿主若先于监听就绪发过一次，这里补上）
+for (const ms of [0, 300, 1000]) {
+  setTimeout(
+    () => window.parent.postMessage({ source: 'obox-app', action: 'obox-theme-request' }, '*'),
+    ms
+  )
+}
+```
+
+> 收到推送后可以停掉后续重试（记一个 `received` 标志）。`scripts/create-user-extension.mjs` 生成的骨架已内置这段逻辑（`installAppThemeBridge()`）。
 
 ### Token 全量参考
 
@@ -73,6 +125,7 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 ```
 
 - 只需声明想覆盖的 token；未声明的由 `main.css` 的 `:root` 兜底。注意 `apply()` 只写主题声明过的键、**不清除**上一个主题写入的行内值（`src/renderer/src/core/theme.ts:50-55`），因此从"全量主题"切到"部分 token 主题"时，未声明的键会保留上一个主题的值，直到重载页面
+  - 该残留语义**同样体现在下发给 App 子窗口的 token 快照里**：快照取自 `getComputedStyle(document.documentElement)` 的**生效值**（`src/renderer/src/core/appTheme.ts` 的 `collectThemeTokens`），而不是"主题声明值"，因此子窗口与主窗口**所见一致**（一致性优先于洁癖）
 - 主题扩展入口保持最小：`export default function themeDark() { return () => undefined }`（`src/renderer/src/extensions/theme-dark/index.ts:5-7`）
 - 宿主已内置 `theme-dark`（深色）/ `theme-light`（浅色）；设置"外观"下拉列出所有主题扩展
 

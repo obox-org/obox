@@ -174,6 +174,7 @@ const d = api.app.register({
 - 子窗口内容通信：iframe 内 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')` 控制子窗口（**不要用内联 onclick，会被 CSP 阻止**）
 - **url 加载用户扩展静态页**：CSP 已放行 `app:` scheme（`src/renderer/index.html:10` 的 `default-src 'self' app:` 也覆盖 `frame-src`，故 iframe 可加载），`url: 'app://extensions/<id>/todo.html'` 的页面可执行脚本、可用 localStorage；子窗口 iframe 无 allow-modals，禁 alert/confirm/prompt
 - **这是跨源加载，不是同源**：父文档在 dev 是 `http://localhost:5173`（`ELECTRON_RENDERER_URL`）、打包是 `file://`（`src/main/appWindow.ts:25-30`），而 `app:` 是独立注册的 standard scheme（`src/main/protocol.ts:18-29`）——`app://extensions` 与父文档**不同源**，靠 CSP 放行而非同源策略。因此该静态页有**自己的 localStorage**，与主窗口/扩展的 localStorage **不共享**（跨窗口传数据请走 `api.app.onMessage` 消息桥）
+- **主题下发（宿主 → 子窗口，单向）**：`url` 型卡片跨源，宿主**注入不了** CSS（`iframe.contentDocument` 恒为 `null`），CSS 变量也不跨文档继承 ⇒ token 只能经消息送达。宿主在 iframe `load` 完成、每次主题变化、以及收到子页面请求这三个时机，向 `iframe.contentWindow` 发 `{source:'obox-app', action:'obox-theme', themeId, tokens}`：`tokens` 是宿主 25 个 token 的**生效值**快照（与主窗口所见一致），扩展侧把每条 `documentElement.style.setProperty(k, v)` 即跟随主题；拿不到时用**内置兜底**（不报错、不空白）。子页面可用 `{source:'obox-app', action:'obox-theme-request'}` 请宿主重发。**`url` 型卡片切主题不再重渲染**（`:key` 为 `url:<url>`，与主题无关 ⇒ 页内表单内容不丢），**`srcdoc` 型仍靠重渲染**（`:key` 为 `srcdoc:<themeId>`）。协议细节、最小接收代码与降级行为见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)；实现见 `src/renderer/src/core/appTheme.ts` 与 `src/renderer/src/AppWindow.vue`
 
 ### app.onMessage(handler) → Disposable（App 子窗口 ↔ 扩展消息桥）
 
@@ -213,6 +214,7 @@ window.parent.postMessage(
 
 - `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；**60s 超时**（放宽以容纳 handler 内弹模态框等需用户填写的场景）
 - `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销（每个扩展只保留**最后一个** handler，`host.ts:378-384`）
+- `app.onMessage` 是**请求/响应**桥（经主进程 IPC、需要扩展注册 handler、有 `requestId` 与超时）。**主题是宿主单向推送**，不经该桥、**不需要** handler、也没有 `requestId`（见上面 `app.register` 的"主题下发"一条）——两者**不要混用**
 
 ### i18n（扩展多语言）
 
@@ -471,6 +473,8 @@ const off = api.theme.onChanged((id) => {
 })
 off.dispose()
 ```
+
+`api.theme` **只提供主题 id**，**不提供 token 值**（这是有意的边界，见 ADR-0022）。App 子窗口里的页面**没有** `api` 对象，取 token 请用上面 `app.register` 小节的**主题下发协议**（`obox-theme` 推送，详见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)）。
 
 ### fs（文件系统，限定扩展数据目录）
 

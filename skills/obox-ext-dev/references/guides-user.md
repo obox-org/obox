@@ -123,7 +123,7 @@ export default function myHello(api) {
 - **内容一律用 `url`，不要用 `html` 内联 `<script>`**：`html` 走 iframe `srcdoc`，而 srcdoc 继承主文档 CSP `script-src 'self' app:`（`src/renderer/index.html:9-10`），内联脚本**必被拦**（按钮点了没反应）。静态页里写**外部脚本** `<script src="./page.js"></script>`：`app://` 文档由协议直出、没有 CSP 头（`main/protocol.ts:33-82`），脚本正常执行。
 - `iconUrl`（可选）：**只接受 `app://extensions/…`**，主进程据此转磁盘路径设任务栏图标（`main/appWindow.ts:33-43,82-85`）；其它协议/主机名（含调试态的 `app://debug/…`）会被忽略，回退应用默认图标。
 - iframe sandbox 为 `allow-scripts allow-same-origin allow-forms allow-popups`（`AppWindow.vue:150-157`）：**没有 `allow-modals` → 页内 `alert` / `confirm` / `prompt` 全部无效**，交互一律自绘 UI。
-- 主题：宿主只给 `html`/`srcdoc` 那条路注入主题 token（`AppWindow.vue:38-52`），`url` 静态页拿不到宿主 token —— 自备样式，或写 `var(--token, fallback)` 兜底。
+- 主题：`srcdoc` 由宿主**自动注入**；**`url` 静态页由宿主经 `obox-theme` 消息下发**（跨源注入不了 CSS，协议与最小接收代码见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)）。仍**建议保留一份兜底**（老宿主 / 推送未达时不空白），但兜底值应集中在**一处**常量而不是散在 CSS 里。另：`url` 型卡片切主题**不重渲染**（变量更新，页内表单内容不丢），`html`/`srcdoc` 型**仍重渲染**。
 - 数据持久化用该页面自己的 `localStorage`（按 `app://` 源隔离，跨窗口/重启保留）。
 - 子窗口**不跑扩展代码**（`core/host.ts:907` 只注册贡献点不激活）：页面里没有 `api`，一切能力都靠下面这座消息桥。
 - 子窗口日志转发到主进程终端，前缀 `[child-renderer:<level>]`（`main/appWindow.ts:107-112`）。
