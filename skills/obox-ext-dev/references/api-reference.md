@@ -83,6 +83,10 @@ api.emit('my-ext:changed', { some: 'data' })
 
 ### window（经 preload IPC 到主进程）
 
+> 宿主行为（ADR-0019，**仅 Windows**）：主窗口**不在任务栏显示**并常驻系统托盘；`api.window.close()` 按用户偏好
+> "询问 / 收进托盘 / 退出"处理（询问时弹原生对话框），`api.window.minimize()` 同样是**收进托盘**而非系统最小化。
+> 关窗不再等于退出，因此**不要**把清理逻辑只挂在窗口关闭上——扩展停用/卸载仍会走 `extension:cleanup`。
+
 ```ts
 await api.window.minimize()
 await api.window.toggleMaximize()

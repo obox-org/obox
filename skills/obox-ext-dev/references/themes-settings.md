@@ -78,6 +78,9 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 
 ### 左侧树节点
 
+- **通用**（新增，ADR-0019）：关闭行为偏好（询问 / 收进托盘 / 退出），**仅 Windows 显示**。
+  值存在**主进程** `userData/window-behavior.json`（不是 `stateStore`），设置页经 `window.api.get/setCloseBehavior` 读写。
+
 - **外观**：主题下拉（主题扩展贡献）
 - **语言**：语言下拉（本地化名称：中文 → "中文"、English → "English"）
 - **快捷键**：内置快捷键修改 + 冲突检测
