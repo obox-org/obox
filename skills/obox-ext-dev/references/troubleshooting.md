@@ -70,9 +70,9 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 7. 命令面板命令不出现
 
-- `palette: false` 的命令被过滤（设计如此，内部命令用；过滤规则 `src/renderer/src/core/registry.ts:259`）
+- `palette: false` 的命令被过滤（设计如此，内部命令用；过滤规则 `src/renderer/src/core/registry.ts:269`）
 - 命令未通过校验（缺 `command`/`title`）→ 详情页看校验信息
-- 命令 id 重复 → 宿主 `console.warn('[registry] duplicate command id')`，保留第一个（`src/renderer/src/core/registry.ts:123-127`）
+- 命令 id 重复 → 宿主 `console.warn('[registry] duplicate command id')`，保留第一个；冲突也会写进**后注册方**扩展的 `validations`（warning，详情页可见，`src/renderer/src/core/registry.ts:129-137`）
 
 ## 8. 导航项点击内容栏空白
 
@@ -84,7 +84,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **症状**：日志先出现 `[host] <id> 注册了未声明的命令 <cmd>（manifest contributes.commands 未包含）`（`src/renderer/src/core/host.ts:265-269`），紧接着 `[host] activate <id> failed Error: command not declared: <cmd>`，扩展在管理器标红 `activationError`。
 
-**原因**：`api.registerCommand(id, handler)` 的命令 id 不在该扩展 manifest `contributes.commands`。warning 之后 `registry.setCommandHandler` 找不到已声明项会**直接 throw**（`src/renderer/src/core/registry.ts:193`）→ `plugin(api)` 抛错、本次激活失败。**这不是"只打一条 warning"**。
+**原因**：`api.registerCommand(id, handler)` 的命令 id 不在该扩展 manifest `contributes.commands`。warning 之后 `registry.setCommandHandler` 找不到已声明项会**直接 throw**（`src/renderer/src/core/registry.ts:203`）→ `plugin(api)` 抛错、本次激活失败。**这不是"只打一条 warning"**。
 
 **修复**：把命令加进 manifest 的 `contributes.commands`（声明式模型——命令必须先声明，再绑定实现）。
 

@@ -61,7 +61,7 @@ node skills/obox-ext-dev/scripts/create-extension.mjs my-hello --title "你好" 
 三条硬规则：
 
 - **元数据只写在 manifest**，代码里不做注册（`core/host.ts:142` 按声明注册贡献点），代码只 `api.registerCommand` 绑实现。
-- **命令必须先声明**：未声明的命令由 `registry.setCommandHandler` **直接抛错**（`core/registry.ts:193`），会让 `plugin(api)` 抛错、扩展标红 `activationError`（`core/host.ts:249-256`）——不是 warning。
+- **命令必须先声明**：未声明的命令由 `registry.setCommandHandler` **直接抛错**（`core/registry.ts:203`），会让 `plugin(api)` 抛错、扩展标红 `activationError`（`core/host.ts:249-256`）——不是 warning。
 - **状态栏项 id 必须与声明一致**：`api.statusBar.setText` 找不到条目时静默无效（`core/host.ts:274-278`）。
 
 命名与数组形状（`ipcChannels` / `keybindings` / `menus` / `views` 等）见 [manifest-reference.md](manifest-reference.md)。
@@ -109,7 +109,7 @@ export default function myHello(api: ExtensionActivationApi): () => void {
 - 类型从 `../../../../api` 导入（单包共享类型，`src/api/index.ts:1-12`）。
 - `default` 插件函数在激活时调用，返回的清理函数被收集；激活抛错时宿主**立即释放本次已注册的副作用**（`core/host.ts:243-256`）。
 - **视图必须具名导出**：`navItems[].view` 只在入口模块里按名字取（`core/host.ts:201-206`），缺失只有 warning，表现为点开导航项是空白占位（`components/ContentArea.vue:19-21`）。
-- 命令 / 导航 id **全局唯一**：命令同名时只允许声明它的扩展绑定实现，别的扩展绑会被静默忽略（`core/registry.ts:196-201`）。
+- 命令 / 导航 id **全局唯一**：命令同名时只允许声明它的扩展绑定实现，别的扩展绑会被静默忽略（`core/registry.ts:206-211`）；**命令 id 跨扩展重复**时保留先注册者，冲突写进后注册方扩展的 `validations`（warning，`core/registry.ts:122-140`）。
 
 ## 5. 视图组件
 

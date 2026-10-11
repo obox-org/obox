@@ -24,7 +24,7 @@ export default function myExt(api: ExtensionActivationApi): (() => void) | void 
 - **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表（`host.ts:882-918`）
 - **App 子窗口不激活扩展，但仍会 import 入口**：子窗口（`?obox-window=app`）由 `src/renderer/src/main.ts:27` 传 `activateExtensions:false`，**只跳过阶段二**（不调用 `plugin(api)`，`host.ts:902-908`）；**阶段一照常执行**——宿主仍 `await load()` 每个扩展入口模块并 `registerContributions`（`host.ts:883-896`）。也就是说：**入口模块的顶层代码会在每个 App 子窗口重跑**，`default` 插件函数才只在主窗口执行一次。因此**副作用（连 IPC、写盘、起定时器、装监听、注册命令）必须放进插件函数**，写在模块顶层会在每个子窗口重复执行。子窗口渲染所需的数据来自贡献点注册表与（与主窗口同源的）localStorage 里的 App 卡片（`appStore`）；子窗口内的交互请走 `api.app.onMessage` 消息桥
 - **依赖拓扑序**：`extensionDependencies` 先激活依赖；**检测到环不跳过**——环内扩展仍会被激活，只是排到最后（`manifest.ts:165-168` 把环内扩展补进 `ordered`，`host.ts:909` 照常激活）；宿主启动日志末尾会列出环内 id（`host.ts:921-927` 的 `依赖环 …`）。缺失依赖不阻塞，扩展照常激活（`manifest.ts:155`）
-- **命令归属**：命令 id 全局唯一，`api.registerCommand(id, handler)` 只能绑定**本扩展 manifest 声明**的命令；绑定别人声明的 id 会被拒绝（`console.warn` + 返回空 Disposable，`registry.ts:196-201`），绑定完全未声明的 id 直接抛错（见 `registerCommand`）。扩展被热移除/卸载/覆盖安装时，其命令会从注册表**物理移除**，同 id 可被其它版本或扩展重新声明（`registry.ts:179-181`）
+- **命令归属**：命令 id 全局唯一，`api.registerCommand(id, handler)` 只能绑定**本扩展 manifest 声明**的命令；绑定别人声明的 id 会被拒绝（`console.warn` + 返回空 Disposable，`registry.ts:206-211`），绑定完全未声明的 id 直接抛错（见 `registerCommand`）。扩展被热移除/卸载/覆盖安装时，其命令会从注册表**物理移除**，同 id 可被其它版本或扩展重新声明（`registry.ts:189-191`）
 - **停用**：扩展停用（禁用/重启/卸载）时，宿主执行插件返回的 cleanup、dispose 全部注册（命令 handler 清空、App 卡片移除、事件监听移除）
 - **热生效**：安装 .oix 后宿主立即热加载（扫描→注册贡献点→激活），无需重启；禁用/卸载未激活扩展立即热移除，已激活扩展显示"立即重启"按钮（重载渲染进程生效）
 - **激活失败**：`plugin(api)` 抛错 → `activationError` 记录（`host.ts:915-917`），扩展管理器详情页展示，不影响其他扩展
@@ -46,8 +46,8 @@ const d = api.registerCommand('my-ext.do', async (arg) => {
 // d.dispose() 解除绑定
 ```
 
-- **命令必须已在 `manifest.contributes.commands` 声明**：未声明时宿主先打一条 `console.warn`（`host.ts:265-269`），紧接着 `registry.setCommandHandler` **抛错**（`registry.ts:193`）——错误从 `plugin(api)` 冒出，扩展被标红 `activationError`，host 捕获后**不再继续激活该扩展**（`host.ts:915-917`）
-- 归属校验：id 已被别的扩展声明时只 `console.warn` 并返回空 Disposable，即**静默不绑定**（`registry.ts:196-201`）
+- **命令必须已在 `manifest.contributes.commands` 声明**：未声明时宿主先打一条 `console.warn`（`host.ts:265-269`），紧接着 `registry.setCommandHandler` **抛错**（`registry.ts:203`）——错误从 `plugin(api)` 冒出，扩展被标红 `activationError`，host 捕获后**不再继续激活该扩展**（`host.ts:915-917`）
+- 归属校验：id 已被别的扩展声明时只 `console.warn` 并返回空 Disposable，即**静默不绑定**（`registry.ts:206-211`）
 
 ### executeCommand<T>(id, ...args) → Promise<T>
 

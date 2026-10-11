@@ -139,7 +139,7 @@ class ExtensionHost {
         })
     }
     for (const cmd of c.commands ?? []) {
-      if (cmd.command && cmd.title) registry.registerCommand(ext.id, cmd)
+      if (cmd.command && cmd.title) registry.registerCommand(ext.id, cmd, ext.validations)
       else
         ext.validations.push({
           severity: 'warning',

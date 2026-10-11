@@ -72,7 +72,7 @@
 
 | 字段        | 必填 | 说明                                                                                                                                                                                  |
 | ----------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`        | ✅   | **全局唯一**（不是"扩展内唯一"）：宿主按全局 id 查找状态栏项（`core/registry.ts:210`），同名会被后注册者 `Object.assign` 覆盖（`registry.ts:100-119`）→ 必须带扩展前缀                |
+| `id`        | ✅   | **全局唯一**（不是"扩展内唯一"）：宿主按全局 id 查找状态栏项（`core/registry.ts:220`），同名会被后注册者 `Object.assign` 覆盖（`registry.ts:101-120`）→ 必须带扩展前缀                |
 | `name`      | ✅   | 显示名（hover tooltip 兜底）                                                                                                                                                          |
 | `text`      | ❌   | 初始文本；**按 HTML 渲染**（`components/StatusBar.vue:41,53` 用 `v-html`）→ 文本里的 `<`/`>` 必须自行转义；**`$(icon)` 语法未实现**（只在类型注释里写着，仓库无实现），写了会原样显示 |
 | `alignment` | ❌   | `left` / `right`（默认 `right`）                                                                                                                                                      |
@@ -100,7 +100,7 @@
 | `when`     | ❌   | 显隐控制（首版仅 `'false'` 即隐藏有效，其余字符串恒真） |
 
 > 命令实现（handler）不在 manifest 里，由扩展激活时 `api.registerCommand(id, handler)` 绑定。
-> 命令 id 重复时**保留先注册者**、丢弃后者，且只打 `console.warn`——**不写进 `validations`**（`core/registry.ts:121-130` 的注释说"会写进 validations"，实际没有）。
+> 命令 id 重复时**保留先注册者**、丢弃后者：既打 `console.warn`，也把冲突写进该扩展的 `validations`（`severity: 'warning'`，文案含命令 id 与双方扩展 id，管理器详情页可见——`core/registry.ts:122-140` 的 `messages?.push(...)`，宿主在 `core/host.ts:142` 传入 `ext.validations`）。
 
 ### themes（主题贡献点）
 
@@ -222,7 +222,7 @@
 | `command` | ✅   | 命令 id（**必须**在 contributes.commands 声明，否则 warning 且不注册） |
 | `when`    | ❌   | 显隐条件（首版仅 `'false'` 即隐藏，其余恒真）                          |
 
-- 菜单按**注册 App 卡片的那个扩展**匹配（`core/registry.ts:136-139`）：右键该扩展的 App 卡片即弹出菜单，菜单项执行命令 handler（`extensions/app/AppView.vue:16-35`）
+- 菜单按**注册 App 卡片的那个扩展**匹配（`core/registry.ts:146-149`）：右键该扩展的 App 卡片即弹出菜单，菜单项执行命令 handler（`extensions/app/AppView.vue:16-35`）
 
 ### views（树视图，manifest 声明）
 
