@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createWindow, getMainWindow, registerWindowIpc } from './window'
-import { createTray, isTrayActive } from './tray'
+import { createTray, destroyTray, isTrayActive } from './tray'
 import {
   installWindowBehavior,
   isQuitting,
@@ -10,6 +10,8 @@ import {
   registerWindowBehaviorIpc,
   showAboutDialog
 } from './windowBehavior'
+import { cleanupAllExtensionResources, cleanupExtensionResources } from './extensionCleanup'
+import { secondaryInstanceNotice } from './singleInstanceCore'
 import { registerCapabilityIpc } from './capabilities'
 import { registerExtensionProtocol } from './protocol'
 import { registerAppWindowIpc, closeAllAppWindowsOnMainClose } from './appWindow'
@@ -17,18 +19,53 @@ import { registerOixIpc } from './oix'
 import { registerUpdateIpc, onUpdateEvent } from './updater'
 import { parseDebugExtensions, registerDebugIpc } from './debug'
 import { registerDebugExtensionDirs } from './extensionDirs'
-import { registerSqliteIpc, closeExtensionDbs } from './sqlite'
-import { registerTimerIpc, closeExtensionTimers } from './timer'
-import { registerNotificationIpc, closeExtensionNotifications } from './notification'
+import { registerSqliteIpc } from './sqlite'
+import { registerTimerIpc } from './timer'
+import { registerNotificationIpc } from './notification'
 import { registerNetIpc } from './net'
-import { registerFsIpc, closeExtensionWatchers } from './fs'
+import { registerFsIpc } from './fs'
 import { registerExtIpc } from './ext'
 import { registerSecretsIpc } from './secrets'
 import { registerUiIpc } from './ui'
-import { registerIpcBridge, closeExtensionIpc } from './ipc'
-import { registerPythonIpc, closeExtensionPython } from './python'
+import { registerIpcBridge } from './ipc'
+import { registerPythonIpc } from './python'
+
+/**
+ * 确保主窗口存在并可见（启动、托盘"打开/设置"、第二实例唤前台与 macOS activate 共用）。
+ * 窗口被销毁时重建——托盘常驻模式下"窗口没了"不该等于"应用没了"（ADR-0019 决策 6）。
+ */
+function ensureMainWindow(): BrowserWindow {
+  const existing = getMainWindow()
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return existing
+  }
+  const created = createWindow()
+  // 关闭拦截（收进托盘/弹提示）与"主窗口关闭时关闭所有 App 子窗口"
+  installWindowBehavior(created, { trayAvailable: isTrayActive })
+  closeAllAppWindowsOnMainClose(created)
+  return created
+}
+
+// 单实例（ADR-0019 决策 9）：第二个进程不转发参数，只把已有主窗口唤到前台，并把"参数被忽略"写进日志
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  console.warn('[single-instance] ' + secondaryInstanceNotice(process.argv.slice(1), app.getName()))
+}
+if (gotSingleInstanceLock) {
+  app.on('second-instance', (_event, argv) => {
+    console.warn('[single-instance] ' + secondaryInstanceNotice(argv, app.getName()))
+    ensureMainWindow()
+  })
+}
 
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) {
+    app.exit(0)
+    return
+  }
   electronApp.setAppUserModelId('com.obox.app')
 
   // 关闭行为偏好（ADR-0019）：在主窗口创建前读入，坏文件回落默认
@@ -63,12 +100,7 @@ app.whenReady().then(() => {
 
   // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接 + 文件监听 + 系统通知 + IPC 通道 + Python 进程）
   ipcMain.handle('extension:cleanup', (_e, extId: string): void => {
-    closeExtensionTimers(String(extId))
-    closeExtensionDbs(String(extId))
-    closeExtensionWatchers(String(extId))
-    closeExtensionNotifications(String(extId))
-    closeExtensionIpc(String(extId))
-    closeExtensionPython(String(extId))
+    cleanupExtensionResources(String(extId))
   })
 
   // 更新事件广播到所有窗口（渲染进程扩展订阅）
@@ -96,25 +128,6 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  /**
-   * 确保主窗口存在并可见（托盘"打开/设置"与 macOS activate 共用）。
-   * 窗口被销毁时重建——托盘常驻模式下"窗口没了"不该等于"应用没了"（ADR-0019 决策 6）。
-   */
-  const ensureMainWindow = (): BrowserWindow => {
-    const existing = getMainWindow()
-    if (existing && !existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore()
-      existing.show()
-      existing.focus()
-      return existing
-    }
-    const created = createWindow()
-    // 关闭拦截（收进托盘/弹提示）与"主窗口关闭时关闭所有 App 子窗口"
-    installWindowBehavior(created, { trayAvailable: isTrayActive })
-    closeAllAppWindowsOnMainClose(created)
-    return created
-  }
-
   ensureMainWindow()
 
   // 系统托盘（仅 Windows）：右键 打开/设置/关于/退出，双击打开（ADR-0019 决策 3/4）
@@ -134,6 +147,18 @@ app.whenReady().then(() => {
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) ensureMainWindow()
+  })
+})
+
+// 退出前统一清理（ADR-0019 决策 10）：遍历"已知扩展"跑与热移除同一组清理。
+// 动机有实测证据：宿主被强杀时 Python 对端会成为孤儿进程并占住 IPC 端点，下次启动报 not-connected。
+app.on('before-quit', () => {
+  markQuitting()
+  destroyTray()
+  void cleanupAllExtensionResources().then((result) => {
+    const tail =
+      (result.failed ? '，失败 ' + result.failed : '') + (result.timedOut ? '（超时兜底）' : '')
+    console.log('[quit] 主进程资源清理完成：' + result.cleaned + ' 个扩展' + tail)
   })
 })
 
