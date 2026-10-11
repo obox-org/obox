@@ -106,7 +106,7 @@ _Avoid_: 版本字符串、API level
 扩展的状态存储 API（workspaceState/globalState），get/update 键值，底层存 userData JSON。
 
 **oix / 扩展包**:
-用户扩展的分发格式，本质是 zip 压缩包（根目录含 manifest.json + 入口 + 静态资源）。宿主校验 manifest、防路径穿越解压、覆盖安装，重启后生效。
+用户扩展的分发格式，本质是 zip 压缩包（根目录含 manifest.json + 入口 + 静态资源）。宿主校验 manifest、防路径穿越解压，**安装（含同名覆盖）热生效**——立即注册贡献点并激活，无需重启；禁用/卸载已激活的扩展才需要重启。
 _Avoid_: 安装包、插件包
 
 **Sidecar / 边车**:
