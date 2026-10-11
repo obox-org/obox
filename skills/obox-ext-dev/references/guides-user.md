@@ -47,7 +47,7 @@ export default function myHello(api) {
 - **不许 `import 'vue'` 或任何裸模块**：`app://` 下没有模块解析器，运行时只有注入的 `api`、标准 JS 与 `fetch` 等。
 - 生命周期钩子（可选具名导出 `install` / `uninstall`）见 [api-reference.md](api-reference.md) 的「生命周期钩子」。
 - **界面怎么来**：`navItems[].view` 需要 Vue 组件对象（宿主按入口具名导出取组件，`core/host.ts:222-226`），而你的入口没有 Vue —— 用户扩展的界面用 **App 卡片静态页**（下一节）或 **`contributes.views` 树**（宿主内置树视图渲染，数据源 `api.views.registerTreeProvider(viewId, provider)`，`api/types.ts:449-451`）；纯命令 / 状态栏 / 通知类扩展不需要界面。
-- 贡献点声明与内置扩展同构（`contributes` 里写 `commands` / `statusBarItems` / `views` / `keybindings` / `menus` / `settings` / `themes` / `ipcChannels` / `i18n` / `updater` 等）。**命令必须先声明**：未声明的 `registerCommand` 会被 `registry.setCommandHandler` 抛错（`core/registry.ts:193`），扩展标红 `activationError`。
+- 贡献点声明与内置扩展同构（`contributes` 里写 `commands` / `statusBarItems` / `views` / `keybindings` / `menus` / `settings` / `themes` / `ipcChannels` / `i18n` / `updater` 等），但 **`titleKey` 对你无效**——它由宿主语言包解析（`components/NavBar.vue:14`、`components/TreeView.vue:65`），而用户扩展改不了 `src/renderer/src/i18n/locales/`，写了只会显示原始 key；要双语用 `api.i18n` 自己的命名空间。**命令必须先声明**：未声明的 `registerCommand` 会被 `registry.setCommandHandler` 抛错（`core/registry.ts:193`），扩展标红 `activationError`。
 
 ## 3. 两种形态
 

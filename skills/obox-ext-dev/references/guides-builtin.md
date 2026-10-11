@@ -68,7 +68,7 @@ node skills/obox-ext-dev/scripts/create-extension.mjs my-hello --title "你好" 
 
 ### 中英双语：`titleKey` + 宿主词条
 
-`titleKey` 由**宿主** vue-i18n 解析（`components/NavBar.vue:13-16`、`components/StatusBar.vue:15-19`），所以词条要加进宿主语言包，而不是扩展自己的语言包：
+`titleKey` 由**宿主** vue-i18n 解析，而且**只有导航项与树视图支持它**（`components/NavBar.vue:13-16`、`components/TreeView.vue:65`；`components/StatusBar.vue:15-19` 解析的是**当前导航项**的 key，不是状态栏项），所以词条要加进宿主语言包，而不是扩展自己的语言包：
 
 | 文件                                  | key              | 值      |
 | ------------------------------------- | ---------------- | ------- |
@@ -76,6 +76,8 @@ node skills/obox-ext-dev/scripts/create-extension.mjs my-hello --title "你好" 
 | `src/renderer/src/i18n/locales/en.ts` | `navbar.myHello` | `Hello` |
 
 现有 `navbar.extensions` / `navbar.apps` / `navbar.settings` 就是这类词条（`i18n/locales/zh.ts:33-37`）。**`contributes.i18n` 与 `api.i18n.*` 是扩展自己的命名空间**（`core/extensionI18n.ts:29-34`，`core/host.ts:388`），只服务 `api.i18n.t()`，**不会被 `titleKey` 命中**；不写 `titleKey` 则回退 `title` 原文（英文界面会显示中文）。
+
+**命令（`contributes.commands`）与状态栏项（`contributes.statusBarItems`）没有 `titleKey` 字段**（`api/contributions.ts:33-60`）——给它们加词条是静默无效的。要双语只能自己接 `api.i18n`，并在语言变更时重新刷新文本（命令面板标题直接取 `title` 原文，状态栏文本用 `setText` 覆盖）。
 
 ## 4. 入口 `index.ts`
 

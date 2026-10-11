@@ -28,9 +28,9 @@ description: 在 obox 桌面应用（Electron + Vue + Cordis 版，扩展宿主�
 
 ## 三、最小路径
 
-**内置扩展**：① 读 `src/api/` 与已有扩展（`ext-manager`、`app`）→ ② `node skills/obox-ext-dev/scripts/create-extension.mjs <id>` → ③ 写 `manifest.json` 的 `contributes` → ④ 写 `index.ts`（`export default (api) => cleanup` + 具名导出视图组件）→ ⑤ `npm run typecheck && npm run lint && npm test && npm run dev` 验证。
+**内置扩展**：① 读 `src/api/` 与已有扩展（`ext-manager`、`app`）→ ② `node skills/obox-ext-dev/scripts/create-extension.mjs <id>`（脚手架会生成导航项 + 示例命令 + 视图，需求用不到就删掉——多一个也算越界）→ ③ 写 `manifest.json` 的 `contributes` → ④ 写 `index.ts`（`export default (api) => cleanup` + 具名导出视图组件）→ ⑤ `npm run typecheck && npm run lint && npm test && npm run dev` 验证。
 
-**用户扩展**：① `node skills/obox-ext-dev/scripts/create-user-extension.mjs <id>` → ② 写 `manifest.json`（`main: "./index.js"`）→ ③ 写纯 ESM `index.js`（只用注入的 `api`）→ ④ 富界面用 `app://extensions/<id>/page.html` 装进 App 卡片子窗口 → ⑤ 在**生成的扩展项目内**跑 `node --test` 与 `node scripts/pack.mjs` 出 `.oix`（注意这两个 `scripts/` 指扩展项目自己的目录），再用 `node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json>` 校验清单。
+**用户扩展**：① `node skills/obox-ext-dev/scripts/create-user-extension.mjs <id>`（默认生成零构建纯 JS；要 Vue 富界面加 `--vue` 生成 Vite+Vue 子应用骨架；`--dir <父目录>` 改生成位置，默认落在本地 `extensions/`）→ ② 写 `manifest.json`（`main: "./index.js"`）→ ③ 写纯 ESM `index.js`（只用注入的 `api`）→ ④ 富界面用 `app://extensions/<id>/page.html` 装进 App 卡片子窗口 → ⑤ 在**生成的扩展项目内**跑 `node --test` 与 `node scripts/pack.mjs` 出 `.oix`（这两个 `scripts/` 指扩展项目自己的目录），再用 `node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json>` 校验清单。
 
 ## 四、铁律
 
@@ -42,10 +42,11 @@ description: 在 obox 桌面应用（Electron + Vue + Cordis 版，扩展宿主�
 6. **只在主窗口激活**：App 子窗口（`?obox-window=app`）只注册贡献点、**不跑扩展代码**；子窗口交互走 `api.app.onMessage` 消息桥。
 7. **命令 id 全局唯一**：跨扩展同名会被拒绝并记日志；扩展热移除/覆盖安装时其命令从注册表物理移除，同 id 可重新声明。
 8. **生命周期钩子**：入口具名导出 `install(ctx)` / `uninstall(ctx)`，两者都可选。`install` 在 `.oix` 安装完成后立刻执行（覆盖安装会重跑，`ctx.upgraded === true`），失败按激活失败处理；`uninstall` 在删除目录**之前**执行（禁用态扩展也会临时加载入口来跑），失败只告警但仍继续删目录。两者都要自行保证幂等。
-9. **i18n**：内置扩展的导航项与命令用 `titleKey`，词条加在 `src/renderer/src/i18n/locales/{zh,en}.ts`。
+9. **i18n**：只有**导航项与树视图**支持 `titleKey`（词条加在 `src/renderer/src/i18n/locales/{zh,en}.ts`，**用户扩展改不了宿主语言包，所以对它无效**）；命令与状态栏项**没有**这个字段，要双语得自己接 `api.i18n` 并随语言变更刷新文本。
 10. **平台**：托盘、开机自启、系统通知**仅 Windows**；其余平台按缺失处理，不要假设存在。
 11. **扩展是受信代码（无沙箱）**：入口被动态 `import` 进宿主渲染进程，与宿主同进程同上下文；`ExtensionActivationApi` 是能力封装、**不是安全边界**（扩展可直接摸到 `window.api`）。不要用它承载不可信第三方代码，需要强隔离时改用独立进程/子窗口（`docs/adr/0015`）。
-12. **用户扩展零运行时依赖**：入口只依赖注入的 `api`；带 Vue 的富界面属于**构建期**（编译成静态页），不是运行时依赖。
+12. **用户扩展零运行时依赖，且没有主窗口 Vue 视图**：入口只依赖注入的 `api`；带 Vue 的富界面属于**构建期**（编译成静态页，只能落在 App 卡片子窗口里），**不能**给主窗口贡献 `navItems[].view` 组件——用户扩展没有宿主的 Vue 构建管线。
+13. **内置扩展没有磁盘目录、也没有系统信息能力**：它跑在渲染进程且 `nodeIntegration:false` + `contextIsolation:true`，没有 `child_process` / `fs`；`app://builtin` 通道虽注册但无人填充，所以它也**取不到自己的文件目录**。要执行命令、读系统信息（例如 git 分支）**只能新增主进程 API**——命中 M7，停下来问用户。
 
 ## 五、references 索引
 

@@ -61,7 +61,7 @@ const result = await api.executeCommand('other-ext.act', payload)
 操作 manifest 声明的状态栏项（`id` 对应 `statusBarItems[].id`）：
 
 ```ts
-api.statusBar.setText('my-ext.status', '运行中') // 更新文本（支持 $(icon)）
+api.statusBar.setText('my-ext.status', '运行中') // 更新文本（按 HTML 渲染，见下）
 api.statusBar.setTooltip('my-ext.status', '提示')
 api.statusBar.show('my-ext.status') // 显示
 api.statusBar.hide('my-ext.status') // 隐藏
@@ -71,7 +71,7 @@ api.statusBar.hide('my-ext.status') // 隐藏
 
 ```ts
 const item = api.statusBar.createItem({ text: '同步中…', alignment: 'right', priority: 10 })
-item.text = '完成 ✓' // 更新文本（支持 $(icon)）
+item.text = '完成 ✓' // 更新文本（按 HTML 渲染，见下）
 item.tooltip = '点击打开'
 item.hide() // 隐藏
 item.show() // 显示
@@ -339,6 +339,8 @@ obox 主进程的网络请求（更新下载等）自动使用该代理；内置
 ### timer（全局定时器，主进程精确计时）
 
 宿主级定时器跑在**主进程**，不受渲染进程后台节流影响（窗口最小化/不可见时渲染进程 `setTimeout` 会被节流到 1s 粒度）。**间隔为整数秒（≥1s，上限 86400 秒 = 1 天）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器（`timer.ts:60-64`）。
+
+> **秒级倒计时怎么写**：每次 tick 用 `Date.now()` 与目标时间**重算剩余**再 `setText`，不要靠 tick 次数累加——定时器只保证「不小于间隔」，累加会漂移；长计时也不要放在渲染进程的 `setTimeout` 里（最小化会被节流）。
 
 ```ts
 // 一次性：5 秒后执行一次
