@@ -1,0 +1,8 @@
+{
+  "name": "bad-menus",
+  "version": "1.0.0",
+  "main": "./index.js",
+  "contributes": {
+    "menus": [{}]
+  }
+}

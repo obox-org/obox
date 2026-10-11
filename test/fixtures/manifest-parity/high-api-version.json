@@ -1,0 +1,6 @@
+{
+  "name": "high-api-version",
+  "version": "1.0.0",
+  "apiVersion": 999,
+  "main": "./index.js"
+}
