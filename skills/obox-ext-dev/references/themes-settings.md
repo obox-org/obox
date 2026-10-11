@@ -7,9 +7,9 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 ### 机制
 
 - 主题 = 主题扩展 `contributes.themes` 声明的 CSS 变量 token 组（`src/api/contributions.ts:63-70`）
-- 宿主收集所有主题扩展的贡献（`src/renderer/src/core/host.ts:151`），设置"外观"节点下拉选择；选中后把 token `setProperty` 到 `document.documentElement`（`:root`）并持久化（`src/renderer/src/core/theme.ts:42-55`）。持久化值失效时缺省取 id 含 `dark` 的主题（`theme.ts:29-35`）
+- 宿主收集所有主题扩展的贡献（`src/renderer/src/core/host.ts:151`），设置"外观"节点下拉选择；选中后把 token `setProperty` 到 `document.documentElement`（`:root`）并持久化（`src/renderer/src/core/theme.ts:50-77`）。持久化值失效时缺省取 id 含 `dark` 的主题（`theme.ts:37-44`）
 - 宿主 UI 组件用 `var(--token, fallback)` 引用 token，主题切换即时生效
-- **每个渲染窗口各有一份 `:root`**：App 子窗口（`?obox-window=app`）启动时由 `host.start()` 收尾的 `applyCurrent()` 应用一次（`src/renderer/src/core/host.ts:930`）；主窗口此后切主题时，新快照经 `storage` 事件合并进子窗口（`src/renderer/src/core/state.ts` 的 `applyExternal`）并重新应用、再下发给 iframe（见下条与 ADR-0022）
+- **每个渲染窗口各有一份 `:root`**：App 子窗口（`?obox-window=app`）启动时由 `host.start()` 收尾的 `applyCurrent()` 应用一次（`src/renderer/src/core/host.ts:933`）；主窗口此后切主题时，新快照经 `storage` 事件合并进子窗口（`src/renderer/src/core/state.ts` 的 `applyExternal`）并重新应用、再下发给 iframe（见下条与 ADR-0022）
 - **App 子窗口的主题 token 投递（ADR-0022）分两条路**：
   1. **`srcdoc`（`html`）卡片**：宿主把当前 token 拼成 `<style>:root{…}</style>` 注入**同一份文档**（`src/renderer/src/AppWindow.vue` 的 `iframeSrcdoc`）。CSS 自定义属性不跨文档继承，`srcdoc` 能生效正因为它与宿主同文档；切主题时 iframe **重渲染**（`:key="srcdoc:<themeId>"`）。
   2. **`url` 卡片（新增）**：iframe 是 `app://extensions|debug/<id>/…`，与父文档**跨源** ⇒ `iframe.contentDocument` 恒为 `null`，宿主**注入不了** CSS/`<style>`，也继承不到变量。因此宿主在三个时机向 `iframe.contentWindow` **单向推送**消息（协议与载荷见下）：① iframe `load` 完成；② 主题变化；③ 收到子页面的 `obox-theme-request`。扩展侧把 `tokens` 逐条 `document.documentElement.style.setProperty(k, v)` 即跟随主题——**不再需要**用 `var(--token, fallback)` 的 fallback 当实际色值（兜底只用于"推送到达前/老宿主"的首帧）。
@@ -124,8 +124,9 @@ for (const ms of [0, 300, 1000]) {
 }
 ```
 
-- 只需声明想覆盖的 token；未声明的由 `main.css` 的 `:root` 兜底。注意 `apply()` 只写主题声明过的键、**不清除**上一个主题写入的行内值（`src/renderer/src/core/theme.ts:50-55`），因此从"全量主题"切到"部分 token 主题"时，未声明的键会保留上一个主题的值，直到重载页面
-  - 该残留语义**同样体现在下发给 App 子窗口的 token 快照里**：快照取自 `getComputedStyle(document.documentElement)` 的**生效值**（`src/renderer/src/core/appTheme.ts` 的 `collectThemeTokens`），而不是"主题声明值"，因此子窗口与主窗口**所见一致**（一致性优先于洁癖）
+- 只需声明想覆盖的 token；未声明的由 `main.css` 的 `:root` 兜底。**切换主题时会清掉上一主题写入、本次不再声明的键（issue #81）**：`apply()` 记录上一次写入的键集合，对"上次有、这次没有"的键调 `removeProperty`（`src/renderer/src/core/theme.ts:58-77`），因此从"全量主题"切到"部分 token 主题"时，未声明的键会**回落到 `main.css` 的默认值**，不会保留上一个主题的值。（修复前是"只写不清"，旧文档记的残留行为已作废。）
+  - 因此下发给 App 子窗口的 token 快照也更干净：快照取自 `getComputedStyle(document.documentElement)` 的**生效值**（`src/renderer/src/core/appTheme.ts` 的 `collectThemeTokens`），现在等于"`main.css` 默认值 + **当前主题**覆盖"，子窗口与主窗口**所见一致**且无上一主题残留
+  - 时序边界：首启（没有上一主题）不清任何键；同一主题重复 `apply()` 集合相同、不误删；新主题声明更多键时只写不删
 - 主题扩展入口保持最小：`export default function themeDark() { return () => undefined }`（`src/renderer/src/extensions/theme-dark/index.ts:5-7`）
 - 宿主已内置 `theme-dark`（深色）/ `theme-light`（浅色）；设置"外观"下拉列出所有主题扩展
 
