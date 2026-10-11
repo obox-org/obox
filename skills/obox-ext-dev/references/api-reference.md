@@ -17,7 +17,7 @@ export default function myExt(api: ExtensionActivationApi): (() => void) | void 
 
 - `default` 导出插件函数：宿主以 `plugin(api)` 调用；返回值（函数）作为清理函数被宿主收集，扩展停用时执行
 - 具名导出：视图组件（`view` 字段引用）；宿主把具名导出组件登记进注册表
-- 扩展 id（目录名与 `manifest.name`）的合法字符集是 `^[a-z0-9][a-z0-9._-]*$`，且该正则**带 `i` 标志**（`core/manifest.ts:9`）——大写字母同样合法（`MyExt` 通过）。完整校验规则见 `manifest-reference.md`
+- 扩展 id（目录名与 `manifest.name`）的合法字符集是 `^[a-z0-9][a-z0-9._-]*$`，该正则**不带 `i` 标志**（`core/manifest.ts:11`，issue #77）——**只接受小写**，含大写（如 `MyExt`）即清单无效。完整校验规则见 `manifest-reference.md`
 
 ## 宿主生命周期语义
 

@@ -73,6 +73,8 @@ const requiredFixtures = [
   'bad-keybindings.json',
   'bad-menus.json',
   'bad-name-space.json',
+  // issue #77：去掉 NAME_RE 的 `i` 后大写 id 必须两侧同样报 error
+  'bad-name-uppercase.json',
   'self-dep.json',
   'high-api-version.json',
   'missing-main.json'

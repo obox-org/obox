@@ -6,7 +6,9 @@ import type { ExtensionInfo, ExtensionManifest, ExtensionSource, ValidationMessa
 import { checkIpcChannelList } from '../../../shared/ipcDeclaration'
 import oboxPackage from '../../../../package.json'
 
-const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
+// issue #77：此前带 `i`，`MyExt`/`MY-EXT` 这类大写 id 会被接受；现按测试意图收紧为**仅小写**，
+// 大写 id 一律「清单无效」。这是行为变更（已安装的大写 id 用户扩展会变成无效清单）。
+const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 
 /** 校验 manifest，返回错误消息列表（空 = 合法） */

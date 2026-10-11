@@ -32,8 +32,8 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 /** 默认仓库根：skills/obox-ext-dev/scripts → 上三级 */
 const DEFAULT_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
 
-/** 与 core/manifest.ts:9 一致（注意带 i） */
-const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
+/** 与 core/manifest.ts:11 一致（**不带 i**：大写 id 非法，issue #77） */
+const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/
 /** 与 core/manifest.ts:10 一致 */
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 /** 与 shared/ipcDeclaration.ts:40 一致 */
