@@ -507,6 +507,10 @@ const packJs = `#!/usr/bin/env node
  * .oix 就是普通 zip，**根目录**必须放 manifest.json + 入口文件（manifest.main）+ 静态资源：
  * 安装器按根 manifest.json 读 id/version/main 并检查入口在包内（src/main/oixCore.ts:198-222）。
  *
+ * **data/ 不进包**：它是扩展运行时数据目录（覆盖安装时由宿主保留），含 data/ 的包会被安装器
+ * 以 forbidden-entry 直接拒收（见 skills/obox-ext-dev/references/guides-user.md 第 6 节）；
+ * 本脚本的 SKIP_DIRS 已显式排除 data/、out/、node_modules/、.git/，并在收集后兜底拒绝。
+ *
  * 零依赖：只用 node:zlib 自己写 zip —— 用户扩展不引入任何 npm 依赖。
  * 用法：npm run pack
  */
@@ -530,10 +534,17 @@ const FILES = [
 /** 打进包的目录（递归）；dist/ 是 Vue 子应用构建产物 */
 const DIRS = ['dist', 'assets']
 
+/**
+ * 永不进包的目录名（任意层级）：data/ 是扩展运行时数据目录 —— 宿主升级时保留它，
+ * 且安装器对含 data/ 的包直接报 forbidden-entry 拒收（guides-user.md 第 6 节）。
+ */
+const SKIP_DIRS = new Set(['data', 'out', 'node_modules', '.git'])
+
 /** 目录下所有文件（zip 内路径用 / 分隔） */
 function walk(dir, prefix) {
   const out = []
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIRS.has(entry.name)) continue
     const full = join(dir, entry.name)
     const name = prefix ? prefix + '/' + entry.name : entry.name
     if (entry.isDirectory()) out.push(...walk(full, name))
@@ -552,6 +563,14 @@ function collect() {
   for (const dir of DIRS) {
     const full = join(root, dir)
     if (existsSync(full) && statSync(full).isDirectory()) entries.push(...walk(full, dir))
+  }
+  // 兜底：即使有人把 data 写进 FILES/DIRS，也在这里拒绝，避免产出装不上的 .oix
+  const forbidden = entries.filter((entry) => entry.name === 'data' || entry.name.startsWith('data/'))
+  if (forbidden.length > 0) {
+    throw new Error(
+      '包内不得包含 data/ 目录（宿主安装器会以 forbidden-entry 拒收）：' +
+        forbidden.map((entry) => entry.name).join(', ')
+    )
   }
   return entries
 }
@@ -710,6 +729,7 @@ ${vue ? 'npm install && npm run build   # 构建 Vue 子应用（构建期依赖
 ## 打包与安装
 
 - \`npm run pack\` → \`out/${id}-${version}.oix\`（zip 根目录 = manifest.json + 入口 + 静态资源）。
+- **不要把 \`data/\` 打进包**：\`data/\` 是扩展的运行时数据目录（\`<userData>/extensions/<id>/data\`，**覆盖安装时由宿主保留**），含 \`data/\` 的 \`.oix\` 会被宿主以 \`forbidden-entry\` 直接拒收。\`scripts/pack.mjs\` 已显式排除 \`data/\`（连同 \`out/\`、\`node_modules/\`、\`.git/\`）。
 - 安装：扩展管理器点「安装」选 \`.oix\`，或把 \`.oix\` 拖进 obox 窗口。
 - 安装位置：\`<userData>/extensions/${id}${author ? `_${author.toLowerCase().replace(/[^a-z0-9._-]/g, '')}` : ''}/\`（目录名 = \`<name>_<author>\`）。
 - 开发期也可以不走安装：宿主启动参数 \`--debug-extension ${id}@<本目录绝对路径>\`，
