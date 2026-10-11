@@ -624,6 +624,14 @@ await api.ipc.connect({ id: 'svc', transport: 'pipe' })
 const sum = await api.ipc.request('worker', 'sum', { a: 1, b: 2 }) // → 3
 await api.ipc.notify('worker', 'log', { text: 'hello' })
 
+// 3b) 服务端：宿主 listen 一个端点并接受**多条**连接（issue #43；对端是拨号方）
+await api.ipc.listen({ id: 'svc', transport: 'pipe' }) // 端点 = \\.\pipe\obox-<扩展id>-svc（POSIX 为 <userData>/ipc/obox-<扩展id>-svc.sock）
+api.ipc.onConnection('svc', (connectionId) => console.log('连入', connectionId))
+api.ipc.onDisconnect('svc', (connectionId, err) => console.log('断开', connectionId, err.code))
+const pong = await api.ipc.request('svc', 'ping', {}, { connectionId: 1 }) // 定向到某条连接
+await api.ipc.broadcast('svc', 'tick', { n: 1 }) // 向所有连接各发一条**通知**（不收集回包）
+await api.ipc.close('svc') // 停止监听并断开它的**全部**连接
+
 // 4) 查询当前已打开的通道名
 const open = await api.ipc.channels() // → ['worker']
 
@@ -650,13 +658,53 @@ await api.ipc.close('worker')
 
 | 项             | 说明                                                                                                                                                                                                                                                                                                  |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 限额           | 每扩展最多 **4 条通道**（`src/main/ipc.ts:27`）；**每通道并发请求上限 64**（`src/main/ipcCore.ts:27`，超出抛 `too-many-requests`）；单条消息上限 **8MB**（`src/main/ipcCore.ts:23`）；请求默认 **30s** 超时（`src/main/ipcCore.ts:25`，`request(..., { timeoutMs })` 可覆盖）                         |
-| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起）                                                     |
-| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程）                                                                                                                                                                                              |
+| 限额           | 每扩展最多 **4 条通道**（`src/main/ipc.ts:43`；**server 与 client 共用同一名字空间**，一条 server 只占 1 条）；**单个 server 最多 16 条连接**（`src/main/ipc.ts:45`，连接**不计入** 4 条上限，第 17 条被拒）；**每通道并发请求上限 64**（`src/main/ipcCore.ts:27`，超出抛 `too-many-requests`）；单条消息上限 **8MB**（`src/main/ipcCore.ts:23`）；请求默认 **30s** 超时（`src/main/ipcCore.ts:25`，`request(..., { timeoutMs })` 可覆盖） |
+| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `too-many-connections` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起）                                                     |
+| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程；server 则停止监听并断开全部连接）                                                                                                                                                              |
 | 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                                                                       |
-| stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（`src/main/ipc.ts:153-161`，不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`） |
+| stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（`src/main/ipc.ts:262`，不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`） |
 | 清单声明       | 在 `contributes.ipcChannels` 静态声明后，代码里只写 `api.ipc.connect('<通道id>')`；声明**不自动连接**，非法声明会让清单无效（见 manifest-reference）                                                                                                                                                  |
 | 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**（扩展与宿主同上下文，属受信代码）                                                                                                                                                                                                                      |
+
+#### api.ipc 服务端（多连接，issue #43）
+
+宿主也可以当**服务端**：`listen` 一个 pipe 端点，接受**多条**对端连接。适合"扩展起一个本地服务，多个外部进程/工具连进来"的场景。
+
+```ts
+await api.ipc.listen({ id: 'svc', transport: 'pipe', framing: 'content-length' })
+
+api.ipc.onConnection('svc', (connectionId) => console.log('连入', connectionId))
+api.ipc.onDisconnect('svc', (connectionId, err) => console.log('断开', connectionId, err.code))
+
+api.ipc.onRequest('svc', (method, params) => ({ echo: params })) // client / server 通道都可用
+const pong = await api.ipc.request('svc', 'ping', {}, { connectionId }) // **必须**指定 connectionId
+api.ipc.notify('svc', 'log', { t: 1 }, { connectionId })
+await api.ipc.broadcast('svc', 'tick', { n: 1 }) // 全部连接各收一条通知
+
+for (const name of await api.ipc.channels()) console.log(name) // server 名也在其中
+await api.ipc.close('svc') // 停止监听 + 断开全部连接；不存在时静默成功、可重复调用
+```
+
+约束与语义（逐条都有测试锁死，见 `test/ipc-server.test.ts`）：
+
+- **只支持 pipe**：`listen({ transport: 'stdio' })` 报 `invalid-declaration`（服务端不能拉起子进程；stdio 请用 `connect`）。
+- **名字唯一且与 client 通道共用命名空间**：同名再 `connect` 或 `listen` 都报 `invalid-declaration`；一条 server 只占"每扩展 4 条通道"里的 1 条。
+- **端点不带随机后缀**：Windows `\\.\pipe\obox-<扩展id>-<通道名>`；POSIX `<userData>/ipc/obox-<扩展id>-<通道名>.sock`。对端必须按这个约定拨号。
+- **`connectionId`**：进程内单调递增的**正数**，从 1 起、**永不复用**（同名 server 关闭后重建也不复用）；在 `(扩展id, 通道名, connectionId)` 三元组内解释，可直接打印进日志。宿主**不自动重连**服务端连接——对端回来就是一次新连入、拿一个新 ID。
+- **定向 vs 广播**：server 名字下 `request` / `notify` **必须**给 `opts.connectionId`（省略报 `invalid-declaration`，避免"静默挑一条"的误投）；指向已断开/不存在的连接报 `not-connected`。反过来，**client 通道**传 `connectionId` 也报 `invalid-declaration`。
+  **广播是通知语义**：`broadcast(name, method, params)` 不收集回包（返回 `Promise<void>`），已断开的连接跳过，**无连接时静默成功**；要"定向请求"请用 `request(..., { connectionId })`。
+- **连接上限 16**：第 17 条由宿主回一条 `{jsonrpc:'2.0', id:null, error:{code:-32603, message:'[too-many-connections] …'}}`（用该 server 声明的 `framing` 编码）后关闭，**不触发** `onConnection` / `onDisconnect`，已建立的 16 条不受影响。该错误码只对**对端**可见（扩展侧不触发事件）。
+- **断开与在途请求**：每条已被接受的连接**恰好触发一次** `onDisconnect(connectionId, { code, message })`；`code` 为 `peer-crashed`（对端崩溃/断开）、`protocol-error`（对端发非法帧）、`channel-closed`（扩展 `close()` / 扩展停用 / 应用退出）。断开瞬间该连接上**双向**的在途请求立即以断因码失败，**绝不重放**到后续新连接；同一 server 的其它连接完全不受影响。
+- **`close(name)` 统一语义**：按名字关闭该名字下的**一切**（client 通道或 server），**幂等**，都不存在时静默成功。
+- **每连接独立会话**：本期 `onRequest(name, handler)` **不**传 `connectionId`（回包按内部 requestId 路由，响应方向不需要 ID）。服务端扩展若要做到"每连接独立会话"，只能在 `onConnection` / `onDisconnect` 里自行维护计数/顺序。
+- **平台差异**：
+  - **Windows**：命名管道在内核命名空间、**无落盘文件** → 服务端不探测陈旧端点、不 `chmod`；
+  - **POSIX**：`listen` 前会**试连探测**端点——连得上说明有活着的服务端 → 报 `connect-failed`（文案含"已被占用"）且**不删除**该文件；连不上（陈旧 `.sock`）→ `unlink` 后重新 `listen`；`listen` 成功后 `chmod 0600`；`close()` / 停用时 `unlink`。
+- **能力边界**：服务端意味着"**任何同机进程**都能连上"（POSIX 的 `0600` 只能挡其它用户），**不做**对端身份校验（ADR-0015：能力封装不是安全边界）。
+- **旧宿主兼容**：`api.ipc.listen` 是**新增**方法且 `apiVersion` 仍为 1，旧宿主上调用会得到 `TypeError`。请先做特性检测：
+  ```ts
+  if (typeof api.ipc.listen !== 'function') throw new Error('当前宿主版本不支持 pipe 服务端（需要 api.ipc.listen）')
+  ```
 
 ### api.python（扩展自带的 Python 运行时，见 ADR-0018）
 

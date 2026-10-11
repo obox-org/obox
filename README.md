@@ -38,9 +38,10 @@ src/
 │   ├── updateFeed.ts # 更新元数据 latest.yml 解析与按架构挑产物（强制重装/降级用；不依赖 electron，可单测）
 │   ├── proxy.ts     # 代理与证书的 session 级应用（扩展联网 obox-net 与更新下载 electron-updater 共用）
 │   ├── secrets.ts   # 扩展密钥存储（api.secrets，safeStorage 加密）
-│   ├── ipc.ts       # 扩展 ↔ 外部进程 IPC 薄壳（通道注册表/限额/生命周期/Electron 接线）
+│   ├── ipc.ts       # 扩展 ↔ 外部进程 IPC 薄壳（通道注册表/限额/生命周期/Electron 接线；client 通道与 server 通道共用命名空间）
 │   ├── ipcCore.ts   # IPC 协议核心（JSON-RPC 2.0 + 两种分帧 + 通道状态机 + 平台命名；不依赖 electron，可单测）
-│   ├── ipcTransport.ts # IPC 传输层（stdio 子进程 / 命名管道·Unix 域套接字 / 已有流；**不使用 TCP 端口**）
+│   ├── ipcTransport.ts # IPC **客户端**传输层（stdio 子进程 / 命名管道·Unix 域套接字 / 已有流；**不使用 TCP 端口**）
+│   ├── ipcServer.ts # IPC **服务端**传输（listen 一个端点接受多连接 + 连接 ID + 16 条上限 + POSIX 陈旧 .sock 清理与 0600；不依赖 electron，可单测）
 │   ├── hookBridge.ts # 生命周期钩子的请求/应答桥（10s 超时 + 送达/未送达三态；不依赖 electron，可单测）
 │   ├── hookRunner.ts # 钩子执行的主进程接线（找主窗口发请求、结算回包、补跑后落账）
 │   ├── paths.ts     # 主进程路径约定（扩展目录等；独立成模块以打破 capabilities ↔ hookRunner 的循环依赖）

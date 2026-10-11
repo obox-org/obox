@@ -374,7 +374,12 @@ export interface ExtensionActivationApi {
 
   /**
    * 与外部进程的**端口无关**双向 IPC（stdio / 命名管道 / Unix 域套接字，不使用 TCP 端口）。
-   * 规格见 issue #40；协议为 JSON-RPC 2.0，两种分帧（content-length 默认 / ndjson）。
+   * 规格见 issue #40；pipe 服务端（多连接，`listen`）见 issue #43。
+   *
+   * 通道分两类，**共用同一命名空间**（同一扩展内名字唯一）：
+   * - **client 通道**（`connect`）：宿主作为拨号方，一对一；没有连接 ID；
+   * - **server 通道**（`listen`）：宿主作为服务端接受**多条**连接；每条连接有一个
+   *   进程内单调递增、**永不复用**的 `connectionId`。
    *
    * ```ts
    * await api.ipc.connect({ id: 'worker', transport: 'stdio', program: 'bin/worker.exe' })
@@ -384,37 +389,110 @@ export interface ExtensionActivationApi {
    * api.ipc.onStderr('worker', (text) => api.output.append('worker', text))
    * api.ipc.onClose('worker', (err) => {})
    * await api.ipc.close('worker')
+   *
+   * // 服务端：接受多条连接（issue #43）
+   * await api.ipc.listen({ id: 'svc', transport: 'pipe' })
+   * api.ipc.onConnection('svc', (connectionId) => {})
+   * const pong = await api.ipc.request('svc', 'ping', {}, { connectionId: 1 })
+   * await api.ipc.broadcast('svc', 'tick', { n: 1 }) // 通知语义：不收集回包
+   * api.ipc.onDisconnect('svc', (connectionId, err) => {})
    * ```
    *
    * 稳定错误码：`invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` /
    * `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` /
-   * `peer-crashed` / `channel-closed`。
+   * `too-many-connections` / `peer-crashed` / `channel-closed`。
    * 注意：本能力是**能力封装而非安全边界**（扩展与宿主同上下文，见 ADR-0015）。
    */
   ipc: {
     /** 打开通道：`stdio` 由宿主拉起子进程（program 必须是扩展目录内相对路径）；`pipe` 连接已在运行的进程 */
     connect(declaration: IpcChannelDeclaration | string): Promise<void>
-    /** 关闭通道（幂等） */
+
+    /**
+     * 以**服务端**身份 listen 一个 pipe 端点（issue #43）：
+     * - `declaration.transport` 必须是 `'pipe'`（传 `'stdio'` → `invalid-declaration`）；
+     * - `declaration.id` 与既有 client 通道**共用命名空间**（重名 → `invalid-declaration`）；
+     * - 端点**不带 suffix**：Windows `\\.\pipe\obox-<扩展id>-<通道名>`；
+     *   POSIX `<userData>/ipc/obox-<扩展id>-<通道名>.sock`（服务端会自行清理陈旧 `.sock` 并 `chmod 0600`）；
+     * - 该 server 的**所有连接共用** `declaration.framing`；
+     * - 最多接受 16 条连接，第 17 条由宿主回一条 JSON-RPC 错误帧后关闭（不触发任何事件）。
+     */
+    listen(declaration: IpcChannelDeclaration): Promise<void>
+
+    /**
+     * 关闭该名字下的**一切**（issue #43）：
+     * - 该名字是 client 通道 → 断开该通道；
+     * - 该名字是 server → 停止监听并断开它**全部**连接；
+     * - 两类都不存在 → **静默成功**；
+     * - **幂等**（重复调用无副作用、不抛错）。
+     */
     close(name: string): Promise<void>
-    /** 当前已打开的通道名 */
+
+    /** 当前通道名集合（**含** server 名；server 与 client 都在其中） */
     channels(): Promise<string[]>
-    /** 发请求并等响应；超时默认 30s，可逐请求覆盖 */
+
+    /**
+     * 发请求并等响应；超时默认 30s，可逐请求覆盖。
+     * - `name` 是 **server**：必须给 `opts.connectionId`，否则 `invalid-declaration`；
+     *   指向已断开/不存在的连接 → `not-connected`；
+     * - `name` 是 **client 通道**：不得给 `connectionId`（客户端通道没有连接 ID 命名空间）→ `invalid-declaration`。
+     */
     request(
       name: string,
       method: string,
       params?: unknown,
-      opts?: { timeoutMs?: number }
+      opts?: {
+        /** 逐请求超时（毫秒；缺省 30s） */
+        timeoutMs?: number
+        /** 定向到 server 通道的某条连接（server 名字下必填） */
+        connectionId?: number
+      }
     ): Promise<unknown>
-    /** 发通知（无应答） */
-    notify(name: string, method: string, params?: unknown): Promise<void>
-    /** 处理**对端发来的请求**（双向）：返回值作为 JSON-RPC result 回给对端 */
+
+    /** 发通知（无应答）；`opts.connectionId` 的规则与 `request` 完全一致 */
+    notify(
+      name: string,
+      method: string,
+      params?: unknown,
+      opts?: { connectionId?: number }
+    ): Promise<void>
+
+    /**
+     * 向该 **server** 当前**全部已连接**对端各发**一条通知**（JSON-RPC notification，
+     * **不收集回包**，因此返回 `Promise<void>`）：
+     * - 要"定向请求"请用 `request(name, method, params, { connectionId })`；
+     * - 已断开的连接**跳过**（不报错）；**无连接时静默成功**（不报 `not-connected`）；
+     * - 单条连接写失败按**该连接断开**处理（触发 `onDisconnect`），`broadcast` 本身不抛错；
+     * - `name` 存在但是 **client 通道** → `invalid-declaration`；`name` **不存在** → `not-connected`。
+     */
+    broadcast(name: string, method: string, params?: unknown): Promise<void>
+
+    /** 处理**对端发来的请求**（双向）：返回值作为 JSON-RPC result 回给对端（client / server 通道都可用） */
     onRequest(name: string, handler: (method: string, params: unknown) => unknown): Disposable
     /** 订阅对端通知 */
     onNotification(name: string, cb: (method: string, params: unknown) => void): Disposable
-    /** 订阅通道关闭（含对端崩溃） */
+    /** 订阅通道关闭（含对端崩溃）；每扩展主动 `close()` 与每次断连各触发一次 */
     onClose(name: string, cb: (err: { code: string; message: string }) => void): Disposable
     /** 订阅对端日志（stdio 的 stderr；pipe 传输没有独立日志流） */
     onStderr(name: string, cb: (text: string) => void): Disposable
+
+    /**
+     * 订阅 server 通道**接受了一条新连接**（issue #43）：
+     * `connectionId` = 进程内单调递增、**永不复用**的正整数；被超限拒绝的连接**不触发**。
+     * 宿主**不自动重连**服务端连接：对端回来就是一次新连入、拿一个新 ID。
+     */
+    onConnection(name: string, cb: (connectionId: number) => void): Disposable
+
+    /**
+     * 订阅 server 通道上一条**已被接受的连接断开**（issue #43）：
+     * - 每条连接**恰好触发一次**；`err.code` 为断因（`peer-crashed` / `protocol-error` /
+     *   宿主关闭 server 或 `close()` 时为 `channel-closed`）；
+     * - 断开瞬间该连接上的**双向**挂起请求立即以断因码失败，**绝不重放**；
+     * - 同一 server 的其它连接不受影响。
+     */
+    onDisconnect(
+      name: string,
+      cb: (connectionId: number, err: { code: string; message: string }) => void
+    ): Disposable
   }
   /** 输出通道（底部输出面板，多通道 tab） */
   output: {

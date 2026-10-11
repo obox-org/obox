@@ -29,14 +29,17 @@ const api: MainApi = {
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   forceInstallUpdate: (opts) => ipcRenderer.invoke('update:force-install', opts),
-  // 扩展能力：与外部进程的端口无关 IPC（stdio / 命名管道）
+  // 扩展能力：与外部进程的端口无关 IPC（stdio / 命名管道；客户端连接 · 服务端 listen）
   ipcConnect: (extId, declaration) => ipcRenderer.invoke('ipc:connect', extId, declaration),
+  ipcListen: (extId, declaration) => ipcRenderer.invoke('ipc:listen', extId, declaration),
   ipcClose: (extId, name) => ipcRenderer.invoke('ipc:close', extId, name),
   ipcList: (extId) => ipcRenderer.invoke('ipc:list', extId),
-  ipcRequest: (extId, name, method, params, timeoutMs) =>
-    ipcRenderer.invoke('ipc:request', extId, name, method, params, timeoutMs),
-  ipcNotify: (extId, name, method, params) =>
-    ipcRenderer.invoke('ipc:notify', extId, name, method, params),
+  ipcRequest: (extId, name, method, params, timeoutMs, connectionId) =>
+    ipcRenderer.invoke('ipc:request', extId, name, method, params, timeoutMs, connectionId),
+  ipcNotify: (extId, name, method, params, connectionId) =>
+    ipcRenderer.invoke('ipc:notify', extId, name, method, params, connectionId),
+  ipcBroadcast: (extId, name, method, params) =>
+    ipcRenderer.invoke('ipc:broadcast', extId, name, method, params),
   ipcReply: (requestId, outcome) => ipcRenderer.invoke('ipc:reply', requestId, outcome),
   // 扩展能力：定时器
   setTimerTimeout: (extId, id, seconds) =>

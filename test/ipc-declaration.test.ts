@@ -119,6 +119,30 @@ describe('checkIpcDeclaration（不抛错形式，供清单校验汇总）', () 
   })
 })
 
+/**
+ * issue #43（Q2 = 方案 A）：清单声明面**一字不动**，`mode` 这类"角色键"在本方案里根本不存在
+ * （服务端由独立的 `api.ipc.listen()` 建立，不需要清单里的角色位）。
+ *
+ * 该用例把"写了 `mode` 既不报错也不生效"这一**静默行为**锁死：将来若有人真的给声明加 `mode` 语义，
+ * 必须先让这条红，从而被迫回到 spec/设计。
+ */
+describe('未知键静默忽略（issue #43 Q2=A 锁死）', () => {
+  it('未知键：清单形状带 mode 不报错，且归一化后的声明不含 mode', () => {
+    const raw = { id: 'bus', transport: 'pipe', mode: 'server' }
+    // ① 逐键白名单读取：不抛错，且返回的声明里没有 mode
+    expect(validateIpcDeclaration(raw)).toEqual({ id: 'bus', transport: 'pipe' })
+    // ② 清单列表校验同样通过
+    const checked = checkIpcChannelList([raw])
+    expect(checked.ok).toBe(true)
+    if (checked.ok) {
+      expect('mode' in checked.declarations[0]).toBe(false)
+      expect(checked.declarations[0]).toEqual({ id: 'bus', transport: 'pipe' })
+    }
+    // ③ 也不产生任何"服务端角色"信息
+    expect(JSON.stringify(validateIpcDeclaration(raw))).not.toContain('mode')
+  })
+})
+
 describe('checkIpcChannelList（contributes.ipcChannels）', () => {
   const ok = { id: 'worker', transport: 'stdio', program: 'bin/worker.js' }
 

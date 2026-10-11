@@ -273,15 +273,24 @@ export function uninstall(ctx) {
 
 | 错误码                | 常见原因与处理                                                                                                                                                                                                                                                                                                 |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid-declaration` | `program` 不是**扩展目录内的相对路径**（绝对路径/盘符/`..` 都会被拒）；`pipe` 声明里不要写 `program`；传了 `tcp`/`http` 之类传输（本能力**只用 stdio 或 pipe，不含端口**）                                                                                                                                     |
-| `connect-failed`      | stdio：程序不存在/不可执行（Windows 上**不能直接执行 `.cjs` 文本文件**——用 `.js/.cjs/.mjs` 由宿主 Node 运行，或编译成可执行文件）；pipe：对端没在监听，或端点名不一致（端点由宿主按 **扩展 id + 通道名** 推导：Windows `\\.\pipe\obox-<扩展id>-<通道名>`，POSIX `<userData>/ipc/obox-<扩展id>-<通道名>.sock`） |
+| `invalid-declaration` | `program` 不是**扩展目录内的相对路径**（绝对路径/盘符/`..` 都会被拒）；`pipe` 声明里不要写 `program`；传了 `tcp`/`http` 之类传输（本能力**只用 stdio 或 pipe，不含端口**）；**服务端专属**：`listen` 传了 `stdio`、server 名字下 `request`/`notify` 没给 `connectionId`、或反过来给 client 通道传了 `connectionId`（见下方「服务端专属排查」） |
+| `connect-failed`      | stdio：程序不存在/不可执行（Windows 上**不能直接执行 `.cjs` 文本文件**——用 `.js/.cjs/.mjs` 由宿主 Node 运行，或编译成可执行文件）；pipe：对端没在监听，或端点名不一致（端点由宿主按 **扩展 id + 通道名** 推导：Windows `\\.\pipe\obox-<扩展id>-<通道名>`，POSIX `<userData>/ipc/obox-<扩展id>-<通道名>.sock`）；**服务端 `listen`**：端点已被占用（文案含"已被占用"，见下方「服务端专属排查」） |
 | `timeout`             | 对端没回包：检查它的分帧是否与声明一致（默认 `Content-Length: <n>\r\n\r\n`，不是换行分隔——除非你声明了 `framing: 'ndjson'`）；慢任务请在 `request(..., { timeoutMs })` 里放宽                                                                                                                                  |
 | `protocol-error`      | 分帧或 JSON-RPC 形状不对（对端把日志打到 stdout 也会触发——**日志请写 stderr**）；缺 `jsonrpc: "2.0"`                                                                                                                                                                                                           |
 | `message-too-large`   | 单条消息超过 8MB：拆成多条或用通知流式发送                                                                                                                                                                                                                                                                     |
+| `too-many-connections` | **服务端专属**：该 server 已经有 **16 条**连接，第 17 条被拒（扩展侧**不触发**任何事件，只有**对端**能看到这条线上错误帧的 `[too-many-connections]` 前缀）。处理：断开不再用的对端，或让对端侧限流                                                                                                              |
 | `peer-crashed`        | 对端进程退出/连接被关闭：stdio 场景下对端崩溃即断连（宿主不自动重连，需扩展自行 `connect()` 重建）；先看 `api.ipc.onStderr()` 收到的对端日志                                                                                                                                                                   |
-| `not-connected`       | 通道没打开或已关闭；`close()` 后要重新 `connect()`                                                                                                                                                                                                                                                             |
+| `not-connected`       | 通道没打开或已关闭；`close()` 后要重新 `connect()`；**服务端专属**：`connectionId` 指向的连接**已断开或不存在**（连接 ID 永不复用，旧 ID 不会"复活"）                                                                                                                                                         |
 
-**平台细节**：Windows 命名管道**不留文件**（内核命名空间）；POSIX 的 `.sock` 在进程崩溃后会残留，需由**服务端**在 listen 前清理——客户端（本能力）只负责连接，不会替你删除别人的套接字文件。
+**平台细节**：Windows 命名管道**不留文件**（内核命名空间）；POSIX 的 `.sock` 在进程崩溃后会残留，需由**服务端**在 listen 前清理——客户端（`connect`）只负责连接，不会替你删除别人的套接字文件；而**服务端**（`listen`，issue #43）会**自己**处理：试连探测（连得上 = 有活着的服务端 → 报 `connect-failed` 且**不删**）+ 连不上才 `unlink` + `listen` 成功后 `chmod 0600`。
+
+**服务端（`listen`）专属排查（issue #43）**：
+
+- **`listen` 报 `connect-failed` 且文案含"已被占用"** → 端点被占着：POSIX 看 `<userData>/ipc/obox-<扩展id>-<通道名>.sock` 是否有**活着的**服务端（宿主**不会**删除活着的端点——删了会把别人的服务端打断）；Windows 看是否还有旧实例活着（命名管道随进程消失，但旧实例在就仍然占用）。
+- **POSIX 的陈旧 `.sock`**：宿主在上一次被强杀后可能残留 `.sock`；宿主**下一次 `listen` 会自愈**（探测到没人应答就 unlink 后重新 listen），无需手工删文件。若手工确认过没人监听，也可以自行删除该文件。权限为 `0600`（`srw-------`），**由服务端设置**。
+- **对端收到 `[too-many-connections]`**：该 server 已有 16 条连接（上限见 api-reference 的限额表）。扩展侧看不到这个错误（不触发 `onConnection`），需要自己通过 `onConnection`/`onDisconnect` 的计数判断是否长期满载。
+- **`invalid-declaration` 的服务端原因**：`listen` 传了 `transport: 'stdio'`（服务端只能是 pipe）；server 名字下 `request`/`notify` **省略** `connectionId`（服务端没有"唯一对端"，宿主不会静默挑一条）；反过来给 **client 通道**传 `connectionId` 同样报错。
+- **不要在清单里写 `mode`**：`contributes.ipcChannels` 的声明面没有"角色"字段，写了会被**静默忽略**（不报错也不生效）；要起服务端请显式调用 `api.ipc.listen(...)`。
 
 **调试建议**：先用 `api.ipc.onStderr()` 打印对端日志；对端可先用最简单的"回声"实现（读一行、回一行）验证分帧，再接入真实逻辑。
 
@@ -289,7 +298,7 @@ export function uninstall(ctx) {
 
 - `connect('<id>')` 报 `invalid-declaration 清单里没有声明通道 x` → 检查 manifest 的 `contributes.ipcChannels`（名字、拼写）；非法声明会让**清单无效**（扩展标红），先看扩展管理器详情页的 `activationError`/校验信息
 - **`connect()` 成功但请求立刻报 `not-connected`** → 十有八九是**对端一启动就退出了**，最常见原因是 `args` 里的相对路径写错：stdio 对端的 **cwd 是 `<扩展源目录>/data`**，而 `program` 相对**扩展源目录**解析（`src/main/ipc.ts:149-163`）。已安装扩展的扩展源目录是 `userData/extensions/<id>`，**调试扩展则是 `--debug-extension` 给的那个目录**——两者都由 `extensionSourceDir(id)` 决定（`src/main/paths.ts:29-31`）。脚本在 `<扩展源目录>/scripts/x.py` 时应写 `args: ['../scripts/x.py']`（写成 `scripts/x.py` 会让对端找不到文件后退出）。用 `api.ipc.onStderr()` 能看到对端报错文本
-- 宿主旧实例被强杀后，它拉起的对端可能成为**孤儿进程**并占着同名端点，新实例会连到"没人应答"的旧连接上 → 先清掉残留子进程再重试
+- 宿主旧实例被强杀后，它拉起的对端可能成为**孤儿进程**并占着同名端点，新实例会连到"没人应答"的旧连接上 → 先清掉残留子进程再重试。**服务端侧**同理但会自愈：POSIX 残留的 `.sock` 在下一次 `listen` 时被探测清理（有活着的服务端则报 `connect-failed` 且不删）；Windows 命名管道随进程消失
 
 ## 26. 生命周期钩子（install / uninstall）没执行、或执行了两次
 

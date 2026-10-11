@@ -351,26 +351,40 @@ export interface MainApi {
   ): Promise<{ local: boolean; canceled?: boolean; value?: unknown }>
   /** 子窗口把模态框结果回传主进程（ui:show 的回复侧） */
   uiResult(requestId: number, r: { canceled: boolean; value?: unknown }): void
-  // ---- 扩展能力：与外部进程的端口无关 IPC（stdio / 命名管道；见 issue #40） ----
+  // ---- 扩展能力：与外部进程的端口无关 IPC（stdio / 命名管道；见 issue #40 / #43） ----
   /** 打开一条通道（stdio：宿主拉起子进程；pipe：连接已在运行的进程） */
   ipcConnect(
     extId: string,
     declaration: IpcChannelDeclaration
   ): Promise<{ ok: boolean; code?: string; error?: string }>
-  /** 关闭一条通道（幂等） */
+  /** listen 一个 pipe 端点（**服务端**，接受多条连接；见 issue #43） */
+  ipcListen(
+    extId: string,
+    declaration: IpcChannelDeclaration
+  ): Promise<{ ok: boolean; code?: string; error?: string }>
+  /** 关闭该名字下的**一切**（client 通道或 server）；不存在时静默成功、幂等 */
   ipcClose(extId: string, name: string): Promise<void>
-  /** 列出已打开的通道名 */
+  /** 列出已打开的通道名（**含** server 名） */
   ipcList(extId: string): Promise<string[]>
-  /** 发请求并等响应（超时/取消/断开以稳定错误码返回） */
+  /** 发请求并等响应（超时/取消/断开以稳定错误码返回）；`connectionId` 仅对 server 名字有意义 */
   ipcRequest(
     extId: string,
     name: string,
     method: string,
     params?: unknown,
-    timeoutMs?: number
+    timeoutMs?: number,
+    connectionId?: number
   ): Promise<{ ok: boolean; result?: unknown; code?: string; error?: string }>
-  /** 发通知（无应答） */
+  /** 发通知（无应答）；`connectionId` 规则同上 */
   ipcNotify(
+    extId: string,
+    name: string,
+    method: string,
+    params?: unknown,
+    connectionId?: number
+  ): Promise<{ ok: boolean; code?: string; error?: string }>
+  /** 向 server 的全部连接各发一条**通知**（不收集回包） */
+  ipcBroadcast(
     extId: string,
     name: string,
     method: string,
@@ -478,9 +492,25 @@ export type IpcEvent =
       requestId: string
       method: string
       params?: unknown
+      /**
+       * 仅 **server 通道**上的对端请求出现（issue #43）：发出该请求的连接。
+       * client 通道 / stdio 路径**不出现该字段**（与 #43 之前逐字段一致）。
+       */
+      connectionId?: number
     }
   | { extId: string; name: string; type: 'stderr'; text: string }
   | { extId: string; name: string; type: 'close'; code: string; message: string }
+  /** server 通道接受了一条新连接（`connectionId` 单调递增、**永不复用**；超限被拒的连接不触发） */
+  | { extId: string; name: string; type: 'connection'; connectionId: number }
+  /** server 通道上一条**已被接受**的连接断开（每条连接**恰好触发一次**） */
+  | {
+      extId: string
+      name: string
+      type: 'disconnect'
+      connectionId: number
+      code: string
+      message: string
+    }
 
 /** 主进程 → 渲染进程 的事件（on） */
 export interface MainEvents {
