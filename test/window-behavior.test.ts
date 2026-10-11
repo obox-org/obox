@@ -29,10 +29,16 @@ describe('偏好解析（坏文件不该拦住启动）', () => {
   })
 
   it('parseWindowBehavior 容错非对象与缺字段', () => {
-    expect(parseWindowBehavior({ closeBehavior: 'hide' })).toEqual({ closeBehavior: 'hide' })
-    expect(parseWindowBehavior({ closeBehavior: 'nope' })).toEqual({ closeBehavior: 'ask' })
-    expect(parseWindowBehavior(null)).toEqual({ closeBehavior: 'ask' })
-    expect(parseWindowBehavior('x')).toEqual({ closeBehavior: 'ask' })
+    expect(parseWindowBehavior({ closeBehavior: 'hide' })).toEqual({
+      closeBehavior: 'hide',
+      launchAtLogin: false
+    })
+    expect(parseWindowBehavior({ closeBehavior: 'nope' })).toEqual({
+      closeBehavior: 'ask',
+      launchAtLogin: false
+    })
+    expect(parseWindowBehavior(null)).toEqual({ closeBehavior: 'ask', launchAtLogin: false })
+    expect(parseWindowBehavior('x')).toEqual({ closeBehavior: 'ask', launchAtLogin: false })
   })
 })
 

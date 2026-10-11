@@ -24,7 +24,7 @@ export function getMainWindow(): BrowserWindow | null {
   return mainWindow
 }
 
-export function createWindow(): BrowserWindow {
+export function createWindow(options: { startHidden?: boolean } = {}): BrowserWindow {
   const win = new BrowserWindow({
     width: 1100,
     height: 720,
@@ -49,7 +49,10 @@ export function createWindow(): BrowserWindow {
 
   mainWindow = win
 
-  win.on('ready-to-show', () => win.show())
+  win.on('ready-to-show', () => {
+    // 开机自启（带 --autostart）时不显示窗口，只留托盘图标（ADR-0019 决策 13）
+    if (!options.startHidden) win.show()
+  })
 
   win.on('maximize', () => pushState(win))
   win.on('unmaximize', () => pushState(win))

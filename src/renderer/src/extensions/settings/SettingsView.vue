@@ -155,7 +155,7 @@ onUnmounted(() => offUpdate?.())
 
 // ---- 网络（代理） ----
 import type { ProxyConfig } from '../../core/types'
-import type { CloseBehavior } from '../../../../shared/types'
+import type { AutoStartState, CloseBehavior } from '../../../../shared/types'
 const proxyConfig = ref<ProxyConfig>(
   stateStore.getSetting<ProxyConfig>('network.proxy') ?? { enabled: false, host: '', noProxy: [] }
 )
@@ -191,6 +191,17 @@ async function onCloseBehaviorChange(e: Event): Promise<void> {
   const value = (e.target as HTMLSelectElement).value as CloseBehavior
   closeBehavior.value = value
   await window.api.setCloseBehavior(value)
+}
+
+// ---- 通用：开机自启（仅 Windows 且非开发版；状态以系统为准，ADR-0019 决策 12–14） ----
+const autoStart = ref<AutoStartState>({ supported: false, enabled: false })
+void window.api.getAutoStart().then((state) => {
+  autoStart.value = state
+})
+
+async function onAutoStartChange(checked: boolean): Promise<void> {
+  // 失败/不支持时后端会回传**系统真实状态**与原因，前端照抄即可（开关自然回弹）
+  autoStart.value = await window.api.setAutoStart(checked)
 }
 
 // ---- 扩展设置 ----
@@ -296,6 +307,19 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
             <option value="quit">{{ t('settings.general.closeQuit') }}</option>
           </select>
           <p class="config-desc">{{ t('settings.general.closeBehaviorDesc') }}</p>
+        </div>
+        <div v-if="isWindows" class="config-row">
+          <label>
+            <input
+              type="checkbox"
+              :checked="autoStart.enabled"
+              :disabled="!autoStart.supported"
+              @change="onAutoStartChange(($event.target as HTMLInputElement).checked)"
+            />
+            {{ t('settings.general.autoStart') }}
+          </label>
+          <p class="config-desc">{{ t('settings.general.autoStartDesc') }}</p>
+          <p v-if="autoStart.message" class="config-desc config-error">{{ autoStart.message }}</p>
         </div>
         <p v-else class="config-desc">{{ t('settings.general.windowsOnly') }}</p>
       </div>

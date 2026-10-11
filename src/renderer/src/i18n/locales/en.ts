@@ -190,6 +190,9 @@ export default {
       closeQuit: 'Quit the app',
       closeBehaviorDesc:
         'obox keeps running in the notification area: hiding keeps extensions alive and the window can be reopened from the tray icon; quitting ends all extensions and child processes.',
+      autoStart: 'Launch obox at login',
+      autoStartDesc:
+        'Launching at login is **silent**: no main window, just the tray icon (open it from there). Development builds do not register this.',
       windowsOnly: 'This platform has no system tray; the option is Windows-only.'
     },
     unsaved: 'Unsaved changes'

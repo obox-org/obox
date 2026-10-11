@@ -188,6 +188,9 @@ export default {
       closeQuit: '退出应用',
       closeBehaviorDesc:
         'obox 常驻系统托盘：收进托盘后主窗口隐藏、扩展继续运行，可从托盘图标重新打开；退出会结束所有扩展与子进程。',
+      autoStart: '开机时自动启动 obox',
+      autoStartDesc:
+        '开机启动是**静默**的：不显示主窗口，只在系统托盘里运行，可从托盘图标打开。开发版不注册此项。',
       windowsOnly: '当前平台没有系统托盘，此项仅 Windows 可用。'
     },
     unsaved: '未保存的更改'

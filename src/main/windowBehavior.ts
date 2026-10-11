@@ -4,7 +4,7 @@
  * 纯逻辑在 `windowBehaviorCore.ts`（有单测）；这里只做 IO 与 Electron 调用。
  */
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   applyClosePromptResult,
@@ -12,14 +12,16 @@ import {
   buildClosePrompt,
   decideCloseAction,
   parseCloseBehavior,
+  parseLegacyPreferences,
   parseWindowBehavior,
   DEFAULT_CLOSE_BEHAVIOR,
-  WINDOW_BEHAVIOR_FILE,
+  APP_PREFERENCES_FILE,
+  LEGACY_WINDOW_BEHAVIOR_FILE,
   type CloseBehavior,
   type WindowBehaviorState
 } from './windowBehaviorCore'
 
-let state: WindowBehaviorState = { closeBehavior: DEFAULT_CLOSE_BEHAVIOR }
+let state: WindowBehaviorState = { closeBehavior: DEFAULT_CLOSE_BEHAVIOR, launchAtLogin: false }
 
 /**
  * 退出流程标志：一旦为 true，关闭拦截必须放行。
@@ -28,7 +30,12 @@ let state: WindowBehaviorState = { closeBehavior: DEFAULT_CLOSE_BEHAVIOR }
 let quitting = false
 
 function behaviorFile(): string {
-  return join(app.getPath('userData'), WINDOW_BEHAVIOR_FILE)
+  return join(app.getPath('userData'), APP_PREFERENCES_FILE)
+}
+
+/** 更名前的旧文件（迁移用） */
+function legacyBehaviorFile(): string {
+  return join(app.getPath('userData'), LEGACY_WINDOW_BEHAVIOR_FILE)
 }
 
 /** 启动时读取偏好（文件缺失/损坏一律回落默认，不阻塞启动） */
@@ -36,7 +43,7 @@ export function loadWindowBehavior(): void {
   try {
     state = parseWindowBehavior(JSON.parse(readFileSync(behaviorFile(), 'utf8')))
   } catch {
-    state = { closeBehavior: DEFAULT_CLOSE_BEHAVIOR }
+    state = { closeBehavior: DEFAULT_CLOSE_BEHAVIOR, launchAtLogin: false }
   }
 }
 
@@ -45,7 +52,7 @@ export function closeBehavior(): CloseBehavior {
 }
 
 export function setCloseBehavior(value: unknown): void {
-  state = { closeBehavior: parseCloseBehavior(value) }
+  state = { ...state, closeBehavior: parseCloseBehavior(value) }
   try {
     mkdirSync(app.getPath('userData'), { recursive: true })
     writeFileSync(behaviorFile(), `${JSON.stringify(state, null, 2)}\n`, 'utf8')
@@ -139,4 +146,46 @@ export function showAboutDialog(parent?: BrowserWindow): void {
 export function registerWindowBehaviorIpc(): void {
   ipcMain.handle('window:get-close-behavior', (): CloseBehavior => closeBehavior())
   ipcMain.handle('window:set-close-behavior', (_e, value: unknown): void => setCloseBehavior(value))
+}
+
+/** 落盘偏好（合并写入：任何 setter 都不该抹掉其它字段） */
+function persistPreferences(): void {
+  try {
+    mkdirSync(app.getPath('userData'), { recursive: true })
+    writeFileSync(behaviorFile(), `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+  } catch (err) {
+    console.warn('[app-preferences] 写偏好失败:', err)
+  }
+}
+
+/**
+ * 更名迁移：新文件不存在时尝试读旧文件（`window-behavior.json`），读到即写新文件并删除旧文件。
+ * 只在启动加载时调用一次；失败不阻塞启动。
+ */
+export function migrateLegacyPreferences(): boolean {
+  try {
+    const legacy = JSON.parse(readFileSync(legacyBehaviorFile(), 'utf8')) as unknown
+    state = { ...state, ...parseLegacyPreferences(legacy) }
+    persistPreferences()
+    try {
+      rmSync(legacyBehaviorFile(), { force: true })
+    } catch {
+      // 删不掉旧文件不影响正确性（下次启动仍以新文件为准）
+    }
+    console.log('[app-preferences] 已从 window-behavior.json 迁移偏好')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 开机自启偏好（镜像值；权威状态见 autoStart.ts 的 readAutoStartEnabled） */
+export function launchAtLogin(): boolean {
+  return state.launchAtLogin
+}
+
+/** 写入开机自启偏好（如系统真实状态、或开关结果） */
+export function setLaunchAtLogin(value: unknown): void {
+  state = { ...state, launchAtLogin: value === true }
+  persistPreferences()
 }
