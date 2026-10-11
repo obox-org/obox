@@ -35,7 +35,7 @@ obox 主窗口是常规窗口（`src/main/window.ts:26` 创建，未设 `skipTas
 
 - **关窗不再等于退出**：行为由偏好决定，退出走托盘菜单或偏好=退出；`window-all-closed → app.quit()` 需要按"是否存在托盘"守卫。
 - 新增：一个偏好文件、两条 IPC（`getCloseBehavior`/`setCloseBehavior`）、一条 main→renderer 事件（`nav:open`）、设置树新增"通用"分区。
-- **`--debug-extension` 在单实例下会被忽略**（需在 troubleshooting 里写明），开机自启本期不做。
+- **`--debug-extension` 在单实例下会被忽略**（需在 troubleshooting 里写明），开机自启已在后续修订中落地（见文末"修订"一节）。
 - 验收以**真机（Windows）**为准：任务栏无图标、托盘图标与四项菜单、单击/双击、关闭三态（含勾选记住）、最小化收托盘、子窗口仍在任务栏、第二实例唤前台、托盘退出后无孤儿 Python 进程、设置-通用项即时生效、关于显示版本。
 
 ## 验收记录（2026-10-11，Windows 本机）
@@ -51,4 +51,22 @@ obox 主窗口是常规窗口（`src/main/window.ts:26` 创建，未设 `skipTas
 
 **人工验收**（项目所有者，本机）：任务栏不显示 obox 图标、托盘图标存在、右键菜单四项（打开/设置/关于/退出）、单击弹出菜单、双击打开主窗口、关闭时的原生提示框与三个按钮、设置-通用里的关闭行为项生效。
 
-**已知未覆盖**：非 Windows 平台（本 ADR 明确不改其行为，代码以 `process.platform === 'win32'` 为界）；开机自启（本次明确不做）。
+**已知未覆盖**：非 Windows 平台（本 ADR 明确不改其行为，代码以 `process.platform === 'win32'` 为界）；开机自启（已在后续修订中落地）。
+
+## 修订：开机自启（决策 12–16，2026-10-11 落地）
+
+12. **仅 Windows**（与托盘同范围）、**默认关**、在 设置-通用 配置。**开发版禁用该开关**：开发版的
+    `process.execPath` 是 `node_modules/electron/dist/electron.exe`，注册只会留下无效启动项。
+13. **开机启动是静默的**：Electron 44 已**移除 `openAsHidden`**（官方 breaking changes），Windows 也没有
+    "本次是否由登录项启动"的 API（`wasOpenedAtLogin` 仅 macOS）→ 注册项带 `--autostart`，启动时识别该参数：
+    不显示主窗口、只创建托盘、不弹提示。**`--autostart` 拉起的第二实例静默退出、不唤前台**（否则开机时会抢焦点）。
+14. **系统真实状态是权威**：写 `setLoginItemSettings({ openAtLogin, path: process.execPath, args: ['--autostart'],
+name: 'com.obox.app', enabled: true })`；读必须传**同样的 path/args**（d.ts 明确：不传同样的参数
+    `openAtLogin` 就不准），并结合 `launchItems[].enabled` 判断任务管理器是否禁用了它（Run 值可以仍在，
+    用户看到的却是"已禁用"）。读到即回写偏好；设置失败时**开关回弹到真实状态 + 就地显示原因**。
+15. **卸载清理**：NSIS `customUnInstall`（`build/installer.nsh`，经 `nsis.include` 挂载）删除 Run 值与
+    StartupApproved 值，避免任务管理器残留指向已删除 exe 的条目。
+16. **偏好文件更名** `window-behavior.json` → `app-preferences.json`（内容已不止窗口行为），启动时读一次旧文件
+    后迁移并删除；同时修掉"写关闭行为时整对象覆盖、会抹掉其它偏好字段"的既有缺陷。
+
+**本次明确不做**：macOS/Linux 的开机自启（需 Login Items / `.desktop`，本机无法验证）；启动时的其它自动动作（如自动检查更新）。

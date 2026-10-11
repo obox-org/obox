@@ -79,7 +79,8 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 ### 左侧树节点
 
 - **通用**（新增，ADR-0019）：关闭行为偏好（询问 / 收进托盘 / 退出），**仅 Windows 显示**。
-  值存在**主进程** `userData/window-behavior.json`（不是 `stateStore`），设置页经 `window.api.get/setCloseBehavior` 读写。
+  值存在**主进程** `userData/app-preferences.json`（不是 `stateStore`；该文件由 `window-behavior.json` 更名而来，启动时自动迁移），设置页经 `window.api.get/setCloseBehavior` 读写。
+- **开机自启**（ADR-0019 决策 12–16）：`window.api.get/setAutoStart`，**仅 Windows 且非开发版**可配置；状态以系统为准（含任务管理器"启动应用"的启用/禁用），失败时开关回弹并在下方显示原因。
 
 - **外观**：主题下拉（主题扩展贡献）
 - **语言**：语言下拉（本地化名称：中文 → "中文"、English → "English"）

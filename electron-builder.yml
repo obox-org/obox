@@ -28,6 +28,8 @@ win:
         - x64
         - arm64
 nsis:
+  # 自定义卸载脚本：清理开机自启注册表项（ADR-0019）
+  include: build/installer.nsh
   # 向导式安装：可选安装目录 + 安装时可选"所有用户/当前用户"（multiUserUi 原生页面）
   # oneClick: false → assisted 向导；perMachine 不设置 → 模式选择页显示，默认当前用户
   artifactName: ${name}-${version}-${arch}-setup.${ext}

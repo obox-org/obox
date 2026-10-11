@@ -86,6 +86,8 @@ api.emit('my-ext:changed', { some: 'data' })
 > 宿主行为（ADR-0019，**仅 Windows**）：主窗口**不在任务栏显示**并常驻系统托盘；`api.window.close()` 按用户偏好
 > "询问 / 收进托盘 / 退出"处理（询问时弹原生对话框），`api.window.minimize()` 同样是**收进托盘**而非系统最小化。
 > 关窗不再等于退出，因此**不要**把清理逻辑只挂在窗口关闭上——扩展停用/卸载仍会走 `extension:cleanup`。
+>
+> **开机自启**（仅 Windows，默认关，设置-通用）：登录后**静默启动**（不显示主窗口、只留托盘），启动项带 `--autostart`；`--autostart` 拉起的第二实例静默退出、不唤前台。开发版不注册，卸载时清理启动项。
 
 ```ts
 await api.window.minimize()

@@ -2,11 +2,13 @@ import { app, BrowserWindow, ipcMain } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createWindow, getMainWindow, registerWindowIpc } from './window'
 import { createTray, destroyTray, isTrayActive } from './tray'
+import { registerAutoStartIpc, startedByAutoStart } from './autoStart'
 import {
   installWindowBehavior,
   isQuitting,
   loadWindowBehavior,
   markQuitting,
+  migrateLegacyPreferences,
   registerWindowBehaviorIpc,
   showAboutDialog
 } from './windowBehavior'
@@ -34,7 +36,7 @@ import { registerPythonIpc } from './python'
  * 确保主窗口存在并可见（启动、托盘"打开/设置"、第二实例唤前台与 macOS activate 共用）。
  * 窗口被销毁时重建——托盘常驻模式下"窗口没了"不该等于"应用没了"（ADR-0019 决策 6）。
  */
-function ensureMainWindow(): BrowserWindow {
+function ensureMainWindow(options: { hidden?: boolean } = {}): BrowserWindow {
   const existing = getMainWindow()
   if (existing && !existing.isDestroyed()) {
     if (existing.isMinimized()) existing.restore()
@@ -42,7 +44,7 @@ function ensureMainWindow(): BrowserWindow {
     existing.focus()
     return existing
   }
-  const created = createWindow()
+  const created = createWindow({ startHidden: options.hidden })
   // 关闭拦截（收进托盘/弹提示）与"主窗口关闭时关闭所有 App 子窗口"
   installWindowBehavior(created, { trayAvailable: isTrayActive })
   closeAllAppWindowsOnMainClose(created)
@@ -56,6 +58,11 @@ if (!gotSingleInstanceLock) {
 }
 if (gotSingleInstanceLock) {
   app.on('second-instance', (_event, argv) => {
+    // 开机自启拉起的第二实例：静默退出，不把窗口抢到前台（ADR-0019 决策 13）
+    if (startedByAutoStart(argv)) {
+      console.log('[auto-start] 已有实例在运行：本次开机自启静默退出（不唤前台）')
+      return
+    }
     console.warn('[single-instance] ' + secondaryInstanceNotice(argv, app.getName()))
     ensureMainWindow()
   })
@@ -70,6 +77,8 @@ app.whenReady().then(() => {
 
   // 关闭行为偏好（ADR-0019）：在主窗口创建前读入，坏文件回落默认
   loadWindowBehavior()
+  // 更名迁移：新偏好文件不存在时读一次旧 window-behavior.json
+  migrateLegacyPreferences()
 
   // 调试扩展（--debug-extension <id>@<path>，可重复）：不做 .oix 安装，经 app://debug/<id>/ 加载
   const debugExtensions = parseDebugExtensions(process.argv)
@@ -82,6 +91,7 @@ app.whenReady().then(() => {
   // 窗口控制 + 能力服务 + App 子窗口 IPC + .oix 安装 + 更新服务 + 调试扩展 + 扩展能力（sqlite/定时器/通知）
   registerWindowIpc()
   registerWindowBehaviorIpc()
+  registerAutoStartIpc()
   registerCapabilityIpc()
   registerAppWindowIpc()
   registerOixIpc()
@@ -128,7 +138,10 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  ensureMainWindow()
+  // 开机自启（注册项带 --autostart）：静默启动，不显示主窗口（ADR-0019 决策 13）
+  const hiddenAtStartup = startedByAutoStart(process.argv)
+  if (hiddenAtStartup) console.log('[auto-start] 由开机自启拉起：静默启动，只创建托盘')
+  ensureMainWindow({ hidden: hiddenAtStartup })
 
   // 系统托盘（仅 Windows）：右键 打开/设置/关于/退出，双击打开（ADR-0019 决策 3/4）
   const SETTINGS_NAV_ID = 'settings.main' // 内置 settings 扩展声明的导航项 id

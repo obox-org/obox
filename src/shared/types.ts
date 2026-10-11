@@ -13,6 +13,19 @@ export type WindowAction = 'minimize' | 'toggle-maximize' | 'close'
  */
 export type CloseBehavior = 'ask' | 'hide' | 'quit'
 
+/**
+ * 开机自启状态（ADR-0019 决策 12–14）。
+ * `supported`：当前是否可配置（仅 Windows 且非开发版）；`enabled`：**系统真实状态**
+ * （含 Windows 任务管理器"启动应用"里的启用/禁用，它可以在保留启动项的情况下禁用它）。
+ */
+export interface AutoStartState {
+  supported: boolean
+  enabled: boolean
+  reason?: 'platform' | 'dev'
+  /** 不支持或设置失败时的说明（设置页内联显示） */
+  message?: string
+}
+
 /** 窗口状态快照（渲染进程自绘标题栏需要） */
 export interface WindowState {
   isMaximized: boolean
@@ -135,6 +148,10 @@ export interface MainApi {
   getCloseBehavior(): Promise<CloseBehavior>
   /** 写入关闭行为偏好（非 Windows 无托盘，写入后关闭仍直接退出） */
   setCloseBehavior(behavior: CloseBehavior): Promise<void>
+  /** 读开机自启状态（以系统真实状态为准，并回写偏好） */
+  getAutoStart(): Promise<AutoStartState>
+  /** 设置开机自启（失败时返回真实状态 + message，设置页据此回弹） */
+  setAutoStart(enabled: boolean): Promise<AutoStartState>
   /** 应用信息 */
   getAppInfo(): Promise<AppInfo>
   /** 用户扩展目录扫描（返回 userData/extensions 下的扩展目录清单） */

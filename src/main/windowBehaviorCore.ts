@@ -14,10 +14,19 @@ export type CloseBehavior = 'ask' | 'hide' | 'quit'
 export const DEFAULT_CLOSE_BEHAVIOR: CloseBehavior = 'ask'
 
 /** 偏好文件名（放 userData 根，先例 secrets.json） */
-export const WINDOW_BEHAVIOR_FILE = 'window-behavior.json'
+export const APP_PREFERENCES_FILE = 'app-preferences.json'
 
+/** 更名前的旧文件名（读取一次并迁移） */
+export const LEGACY_WINDOW_BEHAVIOR_FILE = 'window-behavior.json'
+
+/** 开机自启默认关（ADR-0019 决策 12） */
+export const DEFAULT_LAUNCH_AT_LOGIN = false
+
+/** 偏好状态（文件名已更名，接口名保留以免无谓改动） */
 export interface WindowBehaviorState {
   closeBehavior: CloseBehavior
+  /** 开机自启偏好；**系统真实状态**才是权威（见 autoStartCore） */
+  launchAtLogin: boolean
 }
 
 /** 语言归一：zh* → zh，其余 → en */
@@ -31,9 +40,22 @@ export function parseCloseBehavior(raw: unknown): CloseBehavior {
 }
 
 /** 偏好文件内容 → 状态（非对象/字段缺失都容错） */
+/** 布尔容错：只接受真正的布尔（字符串 "true" 之类一律回落默认） */
+export function parseBoolean(raw: unknown, fallback: boolean): boolean {
+  return typeof raw === 'boolean' ? raw : fallback
+}
+
 export function parseWindowBehavior(raw: unknown): WindowBehaviorState {
   const record = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
-  return { closeBehavior: parseCloseBehavior(record.closeBehavior) }
+  return {
+    closeBehavior: parseCloseBehavior(record.closeBehavior),
+    launchAtLogin: parseBoolean(record.launchAtLogin, DEFAULT_LAUNCH_AT_LOGIN)
+  }
+}
+
+/** 更名前的旧文件内容（只有 closeBehavior）→ 新状态 */
+export function parseLegacyPreferences(raw: unknown): WindowBehaviorState {
+  return parseWindowBehavior(raw)
 }
 
 export interface CloseActionInput {
