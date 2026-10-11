@@ -21,7 +21,19 @@
 
 ### Obox 扩展开发（obox-ext-dev）
 
-扩展开发、调试、文档遵循 `skills/obox-ext-dev/SKILL.md` 及 `references/`（manifest / api / guides / troubleshooting）。
+扩展开发、调试、文档遵循 `skills/obox-ext-dev/SKILL.md` 及 `references/`（`workflow.md` / `guides-builtin.md` / `guides-user.md` / `manifest-reference.md` / `api-reference.md` / `themes-settings.md` / `troubleshooting.md`）。
+
+**开发流程（强制）**：开发或修改 obox 扩展前，**必须先读并按 `skills/obox-ext-dev/references/workflow.md` 走流程**，不得跳过、不得自行扩大范围：
+
+```
+提问（M1–M8 必问）→ spec 写入 tmp/spec/ → 用户确认 → 设计文档 → 开发
+  → 测试 + 独立子代理审视（问题必须逐条处置）→ ADR 写入 tmp/adr/
+  → 归档到 <开发目录>/docs/{spec,adr}/ → 删除整个 tmp/
+```
+
+- **判据**：改变对外行为 / 贡献点 / 数据结构的需求走全流程；只改文案、样式、单点 bug 走轻流程（提问 + 开发 + 测试）。
+- **只实现确认过的内容**，多一个也算越界；一旦发现要改宿主或新增 API，停下来问，并把 ADR 落位改判到仓库 `docs/adr/`。
+- **归档落点**：用户扩展 → `extensions/<id>/docs/`；内置扩展 → `src/renderer/src/extensions/<id>/docs/`；宿主 / 扩展系统 / 仓库自身 → 仓库 `docs/`。
 
 **持续更新要求（强制）**：本项目的扩展系统是演进中的核心。以下情况发生时，**必须同步更新 `skills/obox-ext-dev/`**，不得只改代码：
 
@@ -30,7 +42,8 @@
 - 修改宿主生命周期（`core/host.ts`）或新增扩展约定 → 更新 `SKILL.md` 与相关 reference
 - 修改主进程能力/IPC（`src/main/*`）→ 更新 `references/api-reference.md`
 - 发现/修复新坑 → 追加 `references/troubleshooting.md`
-- 新增示例扩展或脚手架能力 → 更新 `references/guides.md` 与 `scripts/`
+- 新增示例扩展或脚手架能力 → 更新 `references/guides-builtin.md` / `guides-user.md` 与 `scripts/`
+- 改动 `scripts/validate-manifest.mjs` 的校验规则 → 同步 `test/manifest-script-parity.test.ts` 的差分门禁（脚本规则是自包含副本，靠该测试防漂移）
 
 改完代码后自检：新增 API 是否已写入 reference？新坑是否已记录？若否，补齐再收尾。
 

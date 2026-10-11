@@ -102,18 +102,19 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ## 常用命令
 
-| 命令                                                           | 说明                                                                                |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `npm run dev`                                                  | 开发模式（HMR，Electron 窗口自动打开）                                              |
-| `npm test`                                                     | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具）                                 |
-| `npm run typecheck`                                            | 类型检查（node 主进程 + web 渲染进程）                                              |
-| `npm run lint`                                                 | ESLint 检查（0 errors 为门槛）                                                      |
-| `npm run security:audit`                                       | 依赖安全审计（`npm audit --audit-level=moderate`，0 告警为门槛；CI 与发版同样强制） |
-| `npm run build`                                                | typecheck + electron-vite 构建到 `out/`                                             |
-| `npm run build:win`                                            | 打包 Windows 安装包（electron-builder）                                             |
-| `npm run format`                                               | Prettier 格式化                                                                     |
-| `node skills/obox-ext-dev/scripts/create-extension.mjs <id>`   | 生成新内置扩展骨架                                                                  |
-| `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all` | 校验全部内置扩展 manifest                                                           |
+| 命令                                                              | 说明                                                                                |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `npm run dev`                                                     | 开发模式（HMR，Electron 窗口自动打开）                                              |
+| `npm test`                                                        | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具）                                 |
+| `npm run typecheck`                                               | 类型检查（node 主进程 + web 渲染进程）                                              |
+| `npm run lint`                                                    | ESLint 检查（0 errors 为门槛）                                                      |
+| `npm run security:audit`                                          | 依赖安全审计（`npm audit --audit-level=moderate`，0 告警为门槛；CI 与发版同样强制） |
+| `npm run build`                                                   | typecheck + electron-vite 构建到 `out/`                                             |
+| `npm run build:win`                                               | 打包 Windows 安装包（electron-builder）                                             |
+| `npm run format`                                                  | Prettier 格式化                                                                     |
+| `node skills/obox-ext-dev/scripts/create-extension.mjs <id>`      | 生成新内置扩展骨架                                                                  |
+| `node skills/obox-ext-dev/scripts/create-user-extension.mjs <id>` | 生成新用户扩展项目（纯 ESM 入口 + `node --test` + `.oix` 打包脚本）                 |
+| `node skills/obox-ext-dev/scripts/validate-manifest.mjs --all`    | 校验全部内置扩展 manifest（规则与宿主一致，有差分门禁守着）                         |
 
 ## 发布（GitHub CI + Releases）
 
@@ -136,7 +137,7 @@ git push origin v1.0.0
 1. **读本文件**：了解项目概览与架构（上文）
 2. **读约定**：`AGENTS.md`（开发约定 + 强制提交流程）、`CONTEXT.md`（术语表）
 3. **运行**：`npm run dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
-4. **改扩展**：按 `skills/obox-ext-dev/SKILL.md` 流程——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装（重启生效）。**调试扩展**：`obox --debug-extension <id>@<本地目录> --remote-debugging-port=9333` 在 VS Code 里断点调试（不安装，详见 skills 指南）
+4. **改扩展**：先按 `skills/obox-ext-dev/references/workflow.md` 走流程（提问 → spec → 用户确认 → 设计文档 → 开发 → 测试与审视），再按 `skills/obox-ext-dev/SKILL.md` 判定扩展类型——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目（`node skills/obox-ext-dev/scripts/create-user-extension.mjs <id>` 起骨架），`npm run release` 产出 .oix，扩展管理器安装**热生效**（禁用/卸载对已激活扩展需重启，见 `docs/adr/0014`）。**调试扩展**：`obox --debug-extension <id>@<本地目录> --remote-debugging-port=9333` 在 VS Code 里断点调试（不安装，详见 skills 指南）
 5. **改架构**：改动 `core/`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `skills/obox-ext-dev/` 文档（见 AGENTS.md 约定）和本文件
 
 ## 文档导航
@@ -146,7 +147,7 @@ git push origin v1.0.0
 | [README.md](README.md)                                                             | 本文件：项目概览 / 快速上手（导航入口，不重复细节）                                                                                                                                                                                                                                                                   |
 | [CONTEXT.md](CONTEXT.md)                                                           | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等）                                                                                                                                                                                                                                                      |
 | [AGENTS.md](AGENTS.md)                                                             | 开发者约定：提问约定 + obox-ext-dev 文档同步要求 + 强制提交流程（**分支 + PR**）+ 质量门槛                                                                                                                                                                                                                            |
-| [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md)                       | 扩展开发完整指南（含 references/ 与 scripts/）                                                                                                                                                                                                                                                                        |
+| [skills/obox-ext-dev/SKILL.md](skills/obox-ext-dev/SKILL.md)                       | 扩展开发入口：受众判定（内置 / 用户扩展）+ 流程骨架 + 铁律；`references/`（`workflow.md` / `guides-builtin.md` / `guides-user.md` / `manifest-reference.md` / `api-reference.md` / `themes-settings.md` / `troubleshooting.md`）与 `scripts/`                                                                         |
 | [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装）                                                                                                                                                                                                                                         |
 | [docs/adr/](docs/adr/)                                                             | 架构决策记录：0001–0004 宿主与贡献点/启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009–0014 调试扩展·API 版本·扩展能力·热安装 / **0015 扩展信任模型与身份守卫** / 0016 IPC 传输与协议 / 0017 决策提问格式 / 0018 Python 运行时 / **0019 托盘常驻与关闭行为** |
 

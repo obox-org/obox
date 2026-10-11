@@ -1,78 +1,65 @@
 ---
 name: obox-ext-dev
-description: 在 Obox 桌面应用（Electron + Vue + Cordis 扩展系统）中开发扩展的完整指南。使用当用户要编写、修改、调试 Obox 扩展，或要注册插件卡片到 App（应用）扩展时。涵盖 manifest 声明、贡献点、扩展 API、入口约定、内置/用户扩展、App 子窗口与常见坑。
+description: 在 obox 桌面应用（Electron + Vue + Cordis 版，扩展宿主运行在渲染进程）中开发、调试扩展的完整指南。当用户要新建/修改/调试 obox 扩展，声明贡献点（导航项 / 状态栏项 / 命令 / 树视图 / App 卡片 / 主题 / 快捷键 / 菜单 / 设置），或对接扩展 API、`.oix` 分发与扩展调试时使用。
 ---
 
-# Obox 扩展开发
+# obox 扩展开发
 
-本 skill 指导在 Obox 中开发扩展。Obox 是一个基于 Electron + Vue + TypeScript 的桌面程序宿主，扩展系统基于 Cordis，扩展宿主运行在渲染进程，仿照 VS Code 扩展模型（声明式贡献点 + 宿主解析注册 + 两阶段启动）。
+**本仓库的 obox 是 Electron + Vue 3 + TypeScript 版**：扩展宿主运行在渲染进程，扩展系统基于 Cordis，仿 VS Code 模型——清单（manifest）声明贡献点、宿主解析注册、两阶段启动。
 
-## 何时使用
+## 一、先判定：你在做哪一类扩展
 
-- 用户要**新建/修改/调试** Obox 扩展（导航项、状态栏项、命令、视图组件）
-- 用户要把插件卡片**注册进 App（应用）扩展**，点击弹出独立子窗口
-- 用户要理解扩展 API、manifest 格式、贡献点声明或常见坑
+| 判据                     | 类型         | 扩展放哪                                                                                  | 入口                                                      | 分发             | 教程                           |
+| ------------------------ | ------------ | ----------------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------- | ------------------------------ |
+| 随应用打包、要改仓库源码 | **内置扩展** | `src/renderer/src/extensions/<id>/`                                                       | `index.ts`（TypeScript，经 Vite 转换）                    | 随应用，不可卸载 | `references/guides-builtin.md` |
+| 独立仓库、给别人安装     | **用户扩展** | 独立仓库（本地 `extensions/<id>/`，已 gitignore）→ `userData/extensions/<name>_<author>/` | `index.js`（**纯 ESM JavaScript**，无转换、零运行时依赖） | `.oix`（zip 包） | `references/guides-user.md`    |
 
-## 核心概念
+两者的入口语言、构建链、分发方式全不同，**猜错必返工**——分不清就问用户（`references/workflow.md` 的 M1）。
 
-- **扩展（Extension）**：为 Obox 贡献能力的可插拔单元。清单（manifest）声明贡献点，入口导出 Cordis 插件函数 + 具名导出视图组件。详见 `references/manifest-reference.md`。
-- **贡献点（Contribution Point）**：扩展在 manifest 中声明的能力注册点——导航项、状态栏项、命令，由宿主解析注册（声明式，不是命令式 `ctx.register*`）。
-- **扩展 API**：宿主在激活时注入的 `ExtensionActivationApi`，扩展在插件函数里通过它注册命令实现、更新状态栏、设徽标、读写 Memento、发事件、调窗口能力。详见 `references/api-reference.md`。
-- **App 注册**：扩展可调用 `api.app.register(...)` 把插件卡片注册进"应用"扩展，点击弹出独立子窗口（iframe 渲染 URL/HTML + postMessage 窗口控制桥）。**CSP 已放行 `app:` scheme**：用户扩展可用 `url: 'app://extensions/<id>/todo.html'` 由 iframe 同源加载静态页，子窗口内可执行脚本、用 localStorage（按 app:// 源持久化）；无 allow-modals，禁 alert/confirm/prompt。详见 `references/guides.md`。
-- **oix 分发与安装**：用户扩展（非内置）以 **.oix**（zip，根目录含 manifest.json + 入口 + 静态资源）分发，源码在 **`obox-org/<扩展id>` 独立仓库**托管（obox 不持有，`extensions/` gitignore 本地保留）。扩展管理器工具栏「安装扩展」按钮或**拖拽 .oix 到视图**安装：校验 manifest → 防路径穿越解压到 `userData/extensions/<name>_<author>/` → 同名覆盖 → **热生效**（宿主立即扫描、注册贡献点、激活，列表即时出现且立即可用，无需重启）。
-- **IPC 通道（无端口）**：扩展与自己的子进程/服务用 `api.ipc`（JSON-RPC 2.0 over stdio 或命名管道/域套接字，**不开 TCP 端口**）。通道可在运行时 `connect({...})` 声明，也可在 `contributes.ipcChannels` 里**静态声明**后只写 `api.ipc.connect('<通道id>')`（issue #45，校验与运行时同一套，非法声明让清单无效）。stdio 对端的 **cwd 是 `<扩展>/data`**（`program` 相对扩展目录、`args` 里的相对路径按 cwd 算）。详见 `references/api-reference.md` 与 `references/manifest-reference.md`。
-- **调试扩展（VS Code 调试，不安装）**：`obox --debug-extension <id>@<本地目录>`（可重复）把扩展本地目录直接当扩展源加载，**不做 .oix 安装**（不写 userData、重启消失、管理器显示"调试中"）；经 `app://debug/<id>/` 加载；配合 `--remote-debugging-port`（CDP）可在 VS Code 打断点（pathMapping `app://debug/<id>/ → ${workspaceFolder}`）。扩展仓库自建 `.vscode/launch.json`（模板见 `references/guides.md`），无需 obox 源码。**调试扩展可自带运行时/二进制**（如 `python/`、`bin/xxx.exe`）：宿主解析"扩展自己的文件在哪"时调试目录优先于 userData，故 `api.python` 与 `api.ipc` 的 stdio 程序都能直接用；数据目录仍在 `userData/extensions/<id>/data`。启动日志 `[debug] 调试扩展 N 个: …` 是判断参数是否传进来的第一现场（开发版要写 `npm run dev -- -- --debug-extension …`，见 troubleshooting #17）。
+## 二、必做流程（不许跳过、不许自行扩大范围）
 
-## 标准流程
+```
+提问（M1–M8）→ spec 写入 tmp/spec/ → 用户确认 → 设计文档 → 开发
+  → 测试 + 独立审视（审视报的问题必须逐条处置）→ ADR 写入 tmp/adr/
+  → 归档到 <开发目录>/docs/{spec,adr}/ → 删除整个 tmp/
+```
 
-1. **读现状**：先读 `src/api/`（扩展 API 类型；`src/renderer/src/core/types.ts` 为再导出兼容入口）、`CONTEXT.md`（术语表）、已有的 `src/renderer/src/extensions/*/`（示例扩展：`ext-manager`、`app`）。
-2. **定扩展 id**：`name` 字段（manifest），`^[a-z0-9][a-z0-9._-]*$`，建议短前缀如 `my-ext`；命令 id 用 `<扩展名>.<动作>`，导航/状态栏/App 卡片 id 建议含扩展名前缀。
-3. **写 manifest**：`src/renderer/src/extensions/<id>/manifest.json`（内置）——必填 `name`/`version`/`main`，可选 `contributes`（navItems/statusBarItems/commands）、`extensionDependencies`。**不要把 `uninstall` 写进 manifest**（宿主不读该字段，写了静默失效）；生命周期钩子是**入口具名导出**，见下方规则与 `references/api-reference.md`。
-4. **写入口**：同目录 `index.ts`——`default` 导出插件函数 `(api) => cleanup`，具名导出视图组件（导航项 `view` 字段引用）。所有注册（命令/事件/App 卡片）返回的 Disposable 或 cleanup 函数要能统一释放。
-5. **注册贡献点**：导航项 `view` 引用具名导出组件；状态栏项/命令在 manifest 声明即可，实现（命令 handler）在插件函数里用 `api.registerCommand` 绑定；**未在 manifest 声明的命令会被宿主警告**。
-6. **（可选）注册到 App**：`api.app.register({ id, name, version, author, description, icon, url | html, multiOpen, width, height })`，点击卡片弹出独立子窗口。详见 `references/guides.md` 的 App 部分。
-7. **验证**：`npm run typecheck`、`npm run lint`（改扩展后必须过）；`npm run dev` 跑起来看导航/状态栏/命令面板/App 视图。
+改变「对外行为 / 贡献点 / 数据结构」的需求走全流程；只改文案/样式/单点 bug 走轻流程（提问 + 开发 + 测试）。**必问清单、个性化追问、三条硬边界、spec 与设计文档模板见 `references/workflow.md`。**
 
-## 规则与约束
+## 三、最小路径
 
-- **声明式贡献点**：导航项/状态栏项/命令的元数据必须写进 manifest `contributes`，不要用 `ctx.register*` 命令式注册。宿主只认 manifest。
-- **命令必须声明**：`api.registerCommand(id, handler)` 的命令 id 必须已在该扩展 manifest `contributes.commands` 里声明，否则宿主打 warning。
-- **视图必须导出**：导航项 `view` 字段引用的组件必须在入口**具名导出**（如 `export const MyView`），否则宿主打 warning 且内容栏空白。
-- **Disposable 形状**：所有注册 API（`registerCommand`、`on`、`app.register`）返回 `{ dispose(): void }`；插件函数返回值（cleanup 函数）会被宿主收集，扩展停用时统一释放。不返回/不 dispose 会在热重载时泄漏。
-- **内置扩展只读**：`src/renderer/src/extensions/` 下是内置扩展（随应用打包，不可卸载）；用户扩展放 `userData/extensions/<name>_<author>/`（经 `app://extensions/<id>/` 加载），可卸载，经 .oix 安装（扩展管理器按钮/拖拽）。开发用户扩展建议建独立项目 `extensions/<id>/`（自带 package.json/tsconfig/构建，仅依赖扩展 API），**入口 main 须为纯 ESM JavaScript**（用户扩展无 Vite 转换）。**纯 JS 扩展零 npm 依赖**（运行时只有宿主注入的 `api`；测试 `node --test`、打包系统 zip，无需 `npm install`，见 guides.md）。
-- **窗口生命周期（仅 Windows，ADR-0019）**：主窗口不在任务栏显示、常驻系统托盘（右键 打开/设置/关于/退出，双击打开）；关窗与最小化都按用户偏好"询问 / 收进托盘 / 退出"处理，**关窗不再等于退出**。托盘"设置"经 main→renderer 事件 `nav:open` 切到设置页。**开机自启**（仅 Windows，默认关，设置-通用）：登录后静默启动（不显示窗口、只留托盘，启动项带 `--autostart`）；开发版不注册；卸载时清理注册表项。**单实例**：已有实例在跑时第二个进程直接退出（启动参数被忽略并打进日志），只把已有主窗口唤到前台；退出时主进程统一清理各扩展资源（定时器/DB/监听/通知/IPC 通道/Python 进程树）。
-- **子窗口内容**：`html` 用于 srcdoc 渲染，`url` 优先（app:// 或 https）。用户扩展富界面建议用 `url: app://extensions/<id>/<page>.html` 加载自建静态资源（Vue 编译产物）。**iframe 内联 `onclick` 会被 CSP 阻止**——用外部 `<script>` 或事件绑定；`app://` 页面本身无 CSP 头可执行脚本，但 srcdoc 页面内联脚本同样被 `script-src 'self'` 拦截。窗口控制用 postMessage（`parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')`）。
-- **依赖与环**：`extensionDependencies` 声明依赖；宿主按拓扑序激活，检测到环会跳过并标记。缺失依赖不阻塞激活。热安装（.oix 装完即激活）按同一语义先激活依赖。
-- **生命周期钩子**：入口可**具名导出** `install(ctx)` / `uninstall(ctx)`，两者**都可选、可为空**。`install` 在 .oix 安装完成后**立刻执行一次**（覆盖安装会重跑，`ctx.upgraded === true`）；`uninstall` 在**删除目录之前**执行（禁用态扩展也会临时加载入口来跑）。安装时若宿主还没加载到该扩展，钩子**留待下次启动、激活之前补跑一次**。`install` 失败归为激活失败（标红 + `activationError`）；`uninstall` 失败只告警但**仍继续删除目录**。钩子需自行保证幂等；固定文件 `.uninstall.cjs` 仅作为回退。详见 `references/api-reference.md` 的「生命周期钩子」。
-- **只在主窗口激活**：`plugin(api)` 只在主窗口执行一次——App 子窗口（`?obox-window=app`）只注册贡献点、**不跑扩展代码**（否则定时器 / DB 连接 / 文件监听会在每个子窗口重复注册）。子窗口内的交互请经 `api.app.onMessage` 消息桥，不要假设那里存在激活的扩展实例。
-- **命令归属**：命令 id 全局唯一，`api.registerCommand(id, handler)` 只能绑定**本扩展 manifest 声明**的命令，跨扩展同名会被宿主拒绝并 `warn`；扩展热移除/覆盖安装时其命令从注册表物理移除，同 id 可重新声明。
-- **扩展是受信代码（无沙箱）**：扩展入口被动态 `import` 进宿主渲染进程，与宿主**同进程同上下文**——`ExtensionActivationApi` 是能力封装、**不是安全边界**：扩展可直接访问 `window.api` / `window.events`，`app://extensions/<任意id>/…` 也能读到其他已安装扩展目录内的文件。**不要用扩展承载不可信第三方代码**；需要强隔离时应改用独立进程/子窗口等更强边界（决策见 `docs/adr/0015-extension-trust-model-and-guard.md`）。
+**内置扩展**：① 读 `src/api/` 与已有扩展（`ext-manager`、`app`）→ ② `node skills/obox-ext-dev/scripts/create-extension.mjs <id>`（脚手架会生成导航项 + 示例命令 + 视图，需求用不到就删掉——多一个也算越界）→ ③ 写 `manifest.json` 的 `contributes` → ④ 写 `index.ts`（`export default (api) => cleanup` + 具名导出视图组件）→ ⑤ `npm run typecheck && npm run lint && npm test && npm run dev` 验证。
 
-## 持续更新要求（重要）
+**用户扩展**：① `node skills/obox-ext-dev/scripts/create-user-extension.mjs <id>`（默认生成零构建纯 JS；要 Vue 富界面加 `--vue` 生成 Vite+Vue 子应用骨架；`--dir <父目录>` 改生成位置，默认落在本地 `extensions/`）→ ② 写 `manifest.json`（`main: "./index.js"`）→ ③ 写纯 ESM `index.js`（只用注入的 `api`）→ ④ 富界面用 `app://extensions/<id>/page.html` 装进 App 卡片子窗口 → ⑤ 在**生成的扩展项目内**跑 `node --test` 与 `node scripts/pack.mjs` 出 `.oix`（这两个 `scripts/` 指扩展项目自己的目录），再用 `node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json>` 校验清单。
 
-**本 skill 必须与代码库保持同步**。以下任一情况发生后，必须更新本 skill 及 `references/`：
+## 四、铁律
 
-- 修改/新增扩展 API（`src/api/` 的 `ExtensionActivationApi`、`AppRegistration`、贡献点类型）
-- 修改贡献点 schema 或 manifest 校验规则（`core/manifest.ts`）
-- 修改宿主生命周期（`core/host.ts` 的激活/停用/依赖排序）
-- 修改主进程能力服务或 IPC（`src/main/*`：窗口控制、App 子窗口、app:// 协议、**.oix 安装**）
-- 新增/移除内置扩展目录约定
-- 修改用户扩展分发/安装机制（oix 格式、安装目录命名、CSP 放行）
-- 修复了新的常见坑（追加到 `references/troubleshooting.md`）
+1. **声明式贡献点**：导航项/状态栏项/命令等的元数据必须写进 manifest `contributes`，宿主只认 manifest，不用 `ctx.register*` 命令式注册。
+2. **命令必须先声明**：`api.registerCommand(id, handler)` 的 id 未在本扩展 manifest 声明时，宿主**直接抛错**（`registry.ts`）→ `plugin(api)` 抛错 → 扩展标红 `activationError`。这不是 warning。
+3. **视图必须具名导出**：navItem 的 `view` 引用的组件要在入口具名 `export`，否则内容栏空白。
+4. **依赖环不跳过**：`extensionDependencies` 成环时环内扩展**仍会激活**，只是排在最后；缺失依赖不阻塞激活。
+5. **Disposable**：`registerCommand` / `on` / `app.register` / `statusBar.createItem` 都返回 `{ dispose() }`；插件函数返回的 cleanup 与它们一起被宿主在停用时统一释放，不返回会在热重载时泄漏。
+6. **只在主窗口调用插件函数**：App 子窗口（`?obox-window=app`）**同样会 import 每个扩展入口并注册贡献点——模块顶层代码会执行**，只是不调用 `default` 插件函数。所以定时器 / DB 连接 / 文件监听一律放进插件函数，别写模块顶层，否则每个子窗口都会重跑；子窗口交互走 `api.app.onMessage` 消息桥。
+7. **命令 id 全局唯一**：跨扩展同名会被拒绝并记日志；扩展热移除/覆盖安装时其命令从注册表物理移除，同 id 可重新声明。
+8. **生命周期钩子**：入口具名导出 `install(ctx)` / `uninstall(ctx)`，两者都可选。`install` 在 `.oix` 安装完成后立刻执行（覆盖安装会重跑，`ctx.upgraded === true`），失败按激活失败处理；`uninstall` 在删除目录**之前**执行（禁用态扩展也会临时加载入口来跑），失败只告警但仍继续删目录。两者都要自行保证幂等。
+9. **i18n**：只有**导航项与树视图**支持 `titleKey`（词条加在 `src/renderer/src/i18n/locales/{zh,en}.ts`，**用户扩展改不了宿主语言包，所以对它无效**）；命令与状态栏项**没有**这个字段，要双语得自己接 `api.i18n` 并随语言变更刷新文本。
+10. **平台**：托盘、开机自启、系统通知**仅 Windows**；其余平台按缺失处理，不要假设存在。
+11. **扩展是受信代码（无沙箱）**：入口被动态 `import` 进宿主渲染进程，与宿主同进程同上下文；`ExtensionActivationApi` 是能力封装、**不是安全边界**（扩展可直接摸到 `window.api`）。不要用它承载不可信第三方代码，需要强隔离时改用独立进程/子窗口（`docs/adr/0015`）。
+12. **用户扩展零运行时依赖，且没有主窗口 Vue 视图**：入口只依赖注入的 `api`；带 Vue 的富界面属于**构建期**（编译成静态页，只能落在 App 卡片子窗口里），**不能**给主窗口贡献 `navItems[].view` 组件——用户扩展没有宿主的 Vue 构建管线。
+13. **内置扩展没有磁盘目录、也没有系统信息能力**：它跑在渲染进程且 `nodeIntegration:false` + `contextIsolation:true`，没有 `child_process` / `fs`；`app://builtin` 通道虽注册但无人填充，所以它也**取不到自己的文件目录**。要执行命令、读系统信息（例如 git 分支）**只能新增主进程 API**——命中 M7，停下来问用户。
 
-修改这些文件时，先更新对应 reference，再更新本文件。子文档分工：
+## 五、references 索引
 
-- `references/manifest-reference.md`：manifest 字段、贡献点 schema、校验规则
-- `references/api-reference.md`：`ExtensionActivationApi` 全量方法签名与语义
-- `references/themes-settings.md`：主题 token 全量参考、主题扩展编写、设置系统（外观/语言/快捷键/扩展设置）
-- `references/guides.md`：从零写扩展教程、注册到 App、调试技巧
-- `references/troubleshooting.md`：常见错误与修复
+| 何时读                  | 文件                               |
+| ----------------------- | ---------------------------------- |
+| 开工前走流程、必问清单  | `references/workflow.md`           |
+| 做内置扩展              | `references/guides-builtin.md`     |
+| 做用户扩展、打包调试    | `references/guides-user.md`        |
+| manifest 字段与校验规则 | `references/manifest-reference.md` |
+| 扩展 API 方法签名与限额 | `references/api-reference.md`      |
+| 主题 token、设置系统    | `references/themes-settings.md`    |
+| 出问题了（按症状查）    | `references/troubleshooting.md`    |
 
-## 工具脚本
+## 六、持续更新（强制）
 
-`scripts/` 目录提供：
-
-- `create-extension`：脚手架——在当前项目生成新内置扩展的目录 + manifest + 入口模板（Node.js，跨平台）
-- `validate-manifest`：校验扩展 manifest（字段/版本/依赖/入口引用），开发期或 CI 调用
-
-用法见 `scripts/README.md`。
+改扩展 API → 更新 `references/api-reference.md`；改 manifest 校验 → `references/manifest-reference.md`；改宿主生命周期或扩展约定 → 本文件 + 对应 reference；发现新坑 → `references/troubleshooting.md`；新增示例或脚手架 → `references/guides-*.md` 与 `scripts/`。完整条款与提交/PR 约定见 `AGENTS.md`。
