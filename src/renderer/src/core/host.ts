@@ -1147,7 +1147,8 @@ class ExtensionHost {
 
   /**
    * 扩展 IPC 能力：与外部进程的**端口无关**双向通道（issue #40）。
-   * 宿主只做"按扩展绑定 + 事件分发 + 对端请求回包"；协议与传输在主进程（ipcCore / ipcTransport）。
+   * 宿主只做"按扩展绑定 + 事件分发 + 对端请求回包"；协议与传输在主进程（ipcCore / ipcTransport / ipcServer）。
+   * issue #43 追加：server 通道（`listen`）的连接事件与定向/广播。
    */
   private buildIpcApi(
     ext: ExtensionInfo,
@@ -1158,6 +1159,9 @@ class ExtensionHost {
       notifications: Set<(method: string, params: unknown) => void>
       closes: Set<(err: { code: string; message: string }) => void>
       stderrs: Set<(text: string) => void>
+      /** issue #43：server 连接事件（按通道名聚合，回调参数与 IpcEvent 一一对应） */
+      connections: Set<(connectionId: number) => void>
+      disconnects: Set<(connectionId: number, err: { code: string; message: string }) => void>
     }
     const listeners = new Map<string, ChannelListeners>()
     const forChannel = (name: string): ChannelListeners => {
@@ -1167,7 +1171,9 @@ class ExtensionHost {
         requests: new Set(),
         notifications: new Set(),
         closes: new Set(),
-        stderrs: new Set()
+        stderrs: new Set(),
+        connections: new Set(),
+        disconnects: new Set()
       }
       listeners.set(name, created)
       return created
@@ -1187,6 +1193,16 @@ class ExtensionHost {
       }
       if (e.type === 'close') {
         for (const cb of [...target.closes]) cb({ code: e.code, message: e.message })
+        return
+      }
+      if (e.type === 'connection') {
+        for (const cb of [...target.connections]) cb(e.connectionId)
+        return
+      }
+      if (e.type === 'disconnect') {
+        for (const cb of [...target.disconnects]) {
+          cb(e.connectionId, { code: e.code, message: e.message })
+        }
         return
       }
       // 对端发来的请求：交给扩展处理器，并把结果回传给主进程（再由主进程回给对端）
@@ -1221,19 +1237,35 @@ class ExtensionHost {
         const r = await window.api.ipcConnect(ext.id, resolved)
         if (!r.ok) throw new Error(`[${r.code ?? 'connect-failed'}] ${r.error ?? '打开通道失败'}`)
       },
+      listen: async (declaration): Promise<void> => {
+        const r = await window.api.ipcListen(ext.id, declaration)
+        if (!r.ok)
+          throw new Error(`[${r.code ?? 'invalid-declaration'}] ${r.error ?? 'listen 失败'}`)
+      },
       close: async (name: string): Promise<void> => {
         listeners.delete(name)
         await window.api.ipcClose(ext.id, name)
       },
       channels: (): Promise<string[]> => window.api.ipcList(ext.id),
       request: async (name, method, params, opts): Promise<unknown> => {
-        const r = await window.api.ipcRequest(ext.id, name, method, params, opts?.timeoutMs)
+        const r = await window.api.ipcRequest(
+          ext.id,
+          name,
+          method,
+          params,
+          opts?.timeoutMs,
+          opts?.connectionId
+        )
         if (!r.ok) throw new Error(`[${r.code ?? 'protocol-error'}] ${r.error ?? '请求失败'}`)
         return r.result
       },
-      notify: async (name, method, params): Promise<void> => {
-        const r = await window.api.ipcNotify(ext.id, name, method, params)
+      notify: async (name, method, params, opts): Promise<void> => {
+        const r = await window.api.ipcNotify(ext.id, name, method, params, opts?.connectionId)
         if (!r.ok) throw new Error(`[${r.code ?? 'protocol-error'}] ${r.error ?? '发送通知失败'}`)
+      },
+      broadcast: async (name, method, params): Promise<void> => {
+        const r = await window.api.ipcBroadcast(ext.id, name, method, params)
+        if (!r.ok) throw new Error(`[${r.code ?? 'protocol-error'}] ${r.error ?? '广播失败'}`)
       },
       onRequest: (name, handler): Disposable => {
         const target = forChannel(name)
@@ -1254,6 +1286,16 @@ class ExtensionHost {
         const target = forChannel(name)
         target.stderrs.add(cb)
         return { dispose: (): void => void target.stderrs.delete(cb) }
+      },
+      onConnection: (name, cb): Disposable => {
+        const target = forChannel(name)
+        target.connections.add(cb)
+        return { dispose: (): void => void target.connections.delete(cb) }
+      },
+      onDisconnect: (name, cb): Disposable => {
+        const target = forChannel(name)
+        target.disconnects.add(cb)
+        return { dispose: (): void => void target.disconnects.delete(cb) }
       }
     }
   }

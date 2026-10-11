@@ -182,6 +182,17 @@ describe('validateManifest contributes.ipcChannels（issue #45）', () => {
     })
     expect(e[0]).toMatch(/通道 id 重复/)
   })
+
+  // issue #43（Q2 = 方案 A 锁死）：清单声明面不新增 `mode`；写了未知键**不报错也不生效**
+  // （服务端角色由运行时 `api.ipc.listen()` 建立，与清单无关）。
+  it('未知键：contributes.ipcChannels 项带 mode 时清单仍然有效', () => {
+    expect(
+      errors({
+        ...valid,
+        contributes: { ipcChannels: [{ id: 'bus', transport: 'pipe', mode: 'server' }] }
+      })
+    ).toEqual([])
+  })
 })
 
 describe('validateManifest 贡献点数组形状（issue #84）', () => {

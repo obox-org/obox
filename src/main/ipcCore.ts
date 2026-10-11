@@ -40,6 +40,9 @@ export type IpcErrorCode =
   | 'message-too-large' // 单条消息超过上限（收/发皆可能）
   | 'too-many-requests' // 并发请求超限
   | 'too-many-channels' // 通道数超限
+  // 单 server 连接数超限（issue #43）。被拒的对端经线上错误帧的 message 前缀
+  // `[too-many-connections]` 观测到它；扩展侧不触发任何事件，因此不直接拿到该码。
+  | 'too-many-connections'
   | 'peer-crashed' // 对端进程异常退出
   | 'channel-closed' // 通道已关闭
 
