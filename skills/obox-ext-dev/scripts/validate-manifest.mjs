@@ -302,11 +302,11 @@ function validateManifest(raw, oboxApiVersion) {
       messages.push({ level: 'error', message: 'extensionDependencies 必须是字符串数组' })
     }
   }
-  // 与宿主 core/manifest.ts:106 同义，但**不抛错**：那里对非数组对象会 `?.includes is not a function`
-  if (m.extensionDependencies && typeof m.extensionDependencies.includes === 'function') {
-    if (m.extensionDependencies.includes(m.name)) {
-      messages.push({ level: 'error', message: '扩展不能依赖自身' })
-    }
+  // 与宿主 core/manifest.ts:106 同义（issue #83 两侧语义对齐）：先判数组再查自身。
+  // 旧写法用 `typeof …includes === 'function'` 探测，对 `{includes: fn}` 这类值会真的调它，
+  // 与宿主的 `Array.isArray` 判据不等价；而宿主原本连形状都没判，非数组时直接抛 TypeError。
+  if (Array.isArray(m.extensionDependencies) && m.extensionDependencies.includes(m.name)) {
+    messages.push({ level: 'error', message: '扩展不能依赖自身' })
   }
 
   collectWarnings(m, messages)

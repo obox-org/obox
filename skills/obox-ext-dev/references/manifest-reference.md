@@ -279,15 +279,15 @@
 
 ### error（含 error 的扩展 `isValid=false`，不加载，但在管理列表标红）
 
-| 字段                     | 约束                                                                | 证据                       |
-| ------------------------ | ------------------------------------------------------------------- | -------------------------- |
-| `name`                   | 必填、字符串，匹配 `/^[a-z0-9][a-z0-9._-]*$/i`                      | `core/manifest.ts:9,20`    |
-| `version`                | 必填、字符串，匹配 semver 正则                                      | `core/manifest.ts:10,23`   |
-| `apiVersion`             | 出现时须为非负整数，且不得高于 obox 的 API 版本                     | `core/manifest.ts:26-36`   |
-| `main`                   | 必填、字符串、去空白后非空                                          | `core/manifest.ts:37-39`   |
-| `contributes`            | 出现时必须是对象                                                    | `core/manifest.ts:40-42`   |
-| `extensionDependencies`  | 出现时必须是字符串数组，且**不能包含自身**（"扩展不能依赖自身"）    | `core/manifest.ts:100-108` |
-| `contributes` 的四类数组 | `ipcChannels` / `keybindings` / `menus` / `views`，形状规则见下一节 | `core/manifest.ts:44-99`   |
+| 字段                     | 约束                                                                                                                                                              | 证据                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `name`                   | 必填、字符串，匹配 `/^[a-z0-9][a-z0-9._-]*$/i`                                                                                                                    | `core/manifest.ts:9,20`    |
+| `version`                | 必填、字符串，匹配 semver 正则                                                                                                                                    | `core/manifest.ts:10,23`   |
+| `apiVersion`             | 出现时须为非负整数，且不得高于 obox 的 API 版本                                                                                                                   | `core/manifest.ts:26-36`   |
+| `main`                   | 必填、字符串、去空白后非空                                                                                                                                        | `core/manifest.ts:37-39`   |
+| `contributes`            | 出现时必须是对象                                                                                                                                                  | `core/manifest.ts:40-42`   |
+| `extensionDependencies`  | 出现时必须是字符串数组——非数组值（`{}` / `5` / `true`）只记一条 error，**不再抛 `TypeError` 打断整轮扫描**（issue #83）；且**不能包含自身**（"扩展不能依赖自身"） | `core/manifest.ts:100-108` |
+| `contributes` 的四类数组 | `ipcChannels` / `keybindings` / `menus` / `views`，形状规则见下一节                                                                                               | `core/manifest.ts:44-99`   |
 
 > `name` 正则**带 `i`**：实测 `MyExt`、`MY-EXT` 都通过。本文档早先写成不带 `i`（要求全小写），与 `test/manifest.test.ts:30` 的用例标题措辞（"大写/空格/点开头 → error"）不符——但**测试与正则其实并不冲突**：该用例只断言 `My Ext`（含空格，不合法）与 `.abc`（首字符不是 `[a-z0-9]`，不合法）两条（`test/manifest.test.ts:31-32`），没有任何大写断言，纯属标题措辞与断言不一致。此处按代码实际行为写；该措辞问题已单独立 issue 记录：**`obox-org/obox#77`**（不改代码、不改测试）。
 
