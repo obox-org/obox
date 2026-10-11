@@ -14,3 +14,6 @@ vendor
 # Python 夹具/冒烟脚本的字节码缓存（跑 py_compile 或真实解释器时生成）
 __pycache__/
 *.pyc
+# 扩展开发的临时工作产物：spec / 设计文档 / 临时 ADR（见 skills/obox-ext-dev/references/workflow.md）。
+# 长期留痕的只有实现完成后归档到扩展目录 docs/adr/ 的 ADR。
+/tmp/
