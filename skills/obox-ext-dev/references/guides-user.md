@@ -231,7 +231,7 @@ npm run dev -- -- --remote-debugging-port=9333 --debug-extension my-hello@<路�
 
 ## 9. 把 Python 运行时打进扩展包
 
-运行时**随扩展包分发**（每架构一个包），宿主的 `api.python.run` 固定找 `<扩展>/python/python.exe`（`main/pythonCore.ts:24-27,121-125`）。运行期语义（不超时、非零 `code`、通道、进程树清理、代理不注入）见 [api-reference.md](api-reference.md) 的 `api.python`，这里只说怎么打包。
+运行时**随扩展包分发**（每架构一个包），宿主的 `api.python.run` 固定找 `<扩展>/python/python.exe`（`main/pythonCore.ts:25-27,113-116`）。运行期语义（不超时、非零 `code`、通道、进程树清理、代理不注入）见 [api-reference.md](api-reference.md) 的 `api.python`，这里只说怎么打包。
 
 作者侧三步（**在 obox 仓库里**跑，任务由环境变量门控，默认跳过）：
 
@@ -248,7 +248,7 @@ npx vitest run test/python-runtime-task.test.ts          # 2) 解压 → 裁剪 
 
 - 需要预置第三方包（如 matplotlib）：`$env:OBOX_PACK_REQUIREMENTS = "matplotlib==3.11.2"`（要求 PATH 上有 `uv`，它按 `--python-platform` 交叉取对应架构的 wheel）；arm64 包再设 `$env:OBOX_PACK_ARCH = "arm64"` + arm64 归档跑一次。
 - **为什么是 vitest 任务而不是 CLI**：Node 原生跑 `.mts` 解析不了 `src/` 内部的无扩展名 import，vitest 走 Vite 解析、能直接复用 `src/main/pythonPackage.ts` 里已有单测的规划函数（`scripts/make-tray-icon.mts` 头部记录了同一坑）。
-- **manifest 声明**：`arch` + `python` **成对**写才会在安装期校验架构 —— 只写一个或写非法值 → `invalid-manifest`；架构不符 → `arch-mismatch`（`main/oixCore.ts:230-247`）。这两个字段**不在公开类型 `ExtensionManifest` 里**（`src/api/manifest.ts:9-33`），只被安装器读；`python.requirements` 虽在校验函数里有分支（`main/pythonCore.ts:108-117`），但安装器不传它（`main/oixCore.ts:236`）→ 实际不可达，别依赖。
+- **manifest 声明**：`arch` + `python` **成对**写才会在安装期校验架构 —— 只写一个或写非法值 → `invalid-manifest`；架构不符 → `arch-mismatch`（`main/oixCore.ts:247-264`）。这两个字段**不在公开类型 `ExtensionManifest` 里**（`src/api/manifest.ts:9-33`），只被安装器读。**`python.requirements` 已移除（issue #82）**：它原先在 `validatePythonDeclaration` 里有校验分支，但安装器调用时只传 `{arch, python}`（`main/oixCore.ts:253`），该选项**从来没有生效过**，因此已从类型与校验里删掉（不做"安装期装依赖"）。清单里若仍留着 `requirements`，宿主**只忽略、不报错**（manifest 校验没有未知键严格校验）；预置第三方包的正式做法是打包期 `--target` 装进 `<扩展>/python/Lib/site-packages`（见上）。
 - **第三方许可（必做）**：PSF License v2 要求保留许可证与版权声明、并附"对 Python 的修改摘要"（我们裁剪过运行时）：
 
   ```powershell

@@ -432,4 +432,30 @@ describe('oixCore · Python 运行时声明（安装期校验，issue #51）', (
     const r = await installFromPackage(file, opts())
     expect(r.id).toBe('demo-ext_chenzhi')
   })
+
+  // issue #82：`requirements` 已从 pythonCore 的类型与校验里移除（决策：不做"安装期装依赖"）。
+  // 旧清单若仍声明它，**不能产生致命错误**——安装链路照常装完（该键被忽略，不做任何校验）。
+  it('残留 python.requirements 不再校验、不致命（照常安装）', async () => {
+    if (hostArch === null) return
+    const cases: Array<[string, unknown]> = [
+      ['array', ['matplotlib==3.11.2']],
+      ['string', 'matplotlib'],
+      ['number', 5]
+    ]
+    for (const [label, requirements] of cases) {
+      const name = `py-ext-req-${label}`
+      const file = await makeOix(`py-req-${label}.oix`, [['index.js', 'x']], {
+        name,
+        version: '1.0.0',
+        main: './index.js',
+        author: 'chenzhi',
+        arch: hostArch,
+        python: '3.13',
+        requirements
+      })
+      const r = await installFromPackage(file, opts())
+      expect(r.id, label).toBe(`${name}_chenzhi`)
+      expect(existsSync(join(targetRoot, r.id, 'index.js')), label).toBe(true)
+    }
+  })
 })

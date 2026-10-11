@@ -1,6 +1,7 @@
 /**
  * Python 接入核心的纯函数测试（issue #51 / ADR-0018）。
- * 覆盖：声明校验矩阵、路径约定、环境白名单与注入、cmd 引号转义、通道名、进程树命令、输出截断。
+ * 覆盖：声明校验矩阵（含 issue #82：`requirements` 已移除，残留声明必须被忽略而非报错）、路径约定、
+ * 环境白名单与注入、cmd 引号转义、通道名、进程树命令、输出截断。
  */
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
@@ -21,19 +22,31 @@ import {
 } from '../src/main/pythonCore'
 
 describe('validatePythonDeclaration', () => {
-  it('接受合法声明并保留可选 requirements（逐项 trim）', () => {
-    expect(
-      validatePythonDeclaration(
-        { arch: 'x64', python: '3.13', requirements: [' matplotlib ', 'numpy'] },
-        'x64'
-      )
-    ).toEqual({ arch: 'x64', python: '3.13', requirements: ['matplotlib', 'numpy'] })
+  it('接受合法声明，只产出 arch/python', () => {
+    expect(validatePythonDeclaration({ arch: 'x64', python: '3.13' }, 'x64')).toEqual({
+      arch: 'x64',
+      python: '3.13'
+    })
   })
 
-  it('未声明 requirements 时不产生该字段', () => {
-    const result = validatePythonDeclaration({ arch: 'arm64', python: '3.12' }, 'arm64')
-    expect(result).toEqual({ arch: 'arm64', python: '3.12' })
-    expect('requirements' in result).toBe(false)
+  // issue #82：`requirements` 在 .oix 安装链路不可达（唯一调用方只传 {arch, python}），已从类型与校验里移除。
+  // 声明了它的旧清单必须**被忽略而不是报错**：既不抛 arch/版本之外的错误，也不出现在返回值里。
+  it.each([
+    ['字符串数组', ['matplotlib==3.11.2', 'numpy']],
+    ['非数组', 'matplotlib'],
+    ['含空串', ['ok', '  ']],
+    ['空数组', []],
+    ['null', null]
+  ])('残留的 requirements（%s）被忽略：不报错、不进入返回值', (_label, value) => {
+    let result: ReturnType<typeof validatePythonDeclaration> | undefined
+    expect(() => {
+      result = validatePythonDeclaration(
+        { arch: 'x64', python: '3.13', requirements: value },
+        'x64'
+      )
+    }).not.toThrow()
+    expect(result).toEqual({ arch: 'x64', python: '3.13' })
+    expect('requirements' in (result as object)).toBe(false)
   })
 
   it('架构与当前设备不符 → arch-mismatch（安装期拦下）', () => {
@@ -48,7 +61,7 @@ describe('validatePythonDeclaration', () => {
     }
   })
 
-  it('不支持或缺失的架构、非对象声明、坏版本号、坏 requirements → invalid-declaration', () => {
+  it('不支持或缺失的架构、非对象声明、坏版本号 → invalid-declaration', () => {
     const badInputs: Array<[unknown, string]> = [
       [undefined, '非对象'],
       [null, 'null'],
@@ -56,9 +69,7 @@ describe('validatePythonDeclaration', () => {
       [{ python: '3.13' }, '缺 arch'],
       [{ arch: 'x64' }, '缺 python'],
       [{ arch: 'x64', python: '3' }, '版本缺次版本'],
-      [{ arch: 'x64', python: '3.13.1' }, '版本带补丁号'],
-      [{ arch: 'x64', python: '3.13', requirements: 'matplotlib' }, 'requirements 非数组'],
-      [{ arch: 'x64', python: '3.13', requirements: ['ok', '  '] }, 'requirements 含空串']
+      [{ arch: 'x64', python: '3.13.1' }, '版本带补丁号']
     ]
     for (const [input, label] of badInputs) {
       try {

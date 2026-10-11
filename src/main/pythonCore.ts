@@ -64,7 +64,6 @@ export function isPythonCoreError(value: unknown): value is PythonCoreError {
 export interface PythonDeclaration {
   arch: PythonArch
   python: string
-  requirements?: string[]
 }
 
 /**
@@ -80,7 +79,7 @@ export function toPythonArch(arch: string): PythonArch | null {
  * 校验 manifest 的 python 声明。
  *
  * - 架构不在支持列表 → `invalid-declaration`；架构与当前设备不符 → `arch-mismatch`（安装期即拦下）
- * - 版本号必须是形如 `3.13` 的主次版本；`requirements` 若出现必须是非空字符串数组
+ * - 版本号必须是形如 `3.13` 的主次版本；**只认 `arch` / `python` 两个键**，其余键（含原 `requirements`）一律忽略，不校验也不报错
  */
 export function validatePythonDeclaration(raw: unknown, hostArch: PythonArch): PythonDeclaration {
   if (typeof raw !== 'object' || raw === null) {
@@ -104,18 +103,10 @@ export function validatePythonDeclaration(raw: unknown, hostArch: PythonArch): P
   if (typeof python !== 'string' || !PYTHON_VERSION_RE.test(python)) {
     throw new PythonCoreError('invalid-declaration', 'python.python 必须是形如 "3.13" 的主次版本号')
   }
-  const declaration: PythonDeclaration = { arch: arch as PythonArch, python }
-  const requirements = record.requirements
-  if (requirements !== undefined) {
-    if (
-      !Array.isArray(requirements) ||
-      requirements.some((item) => typeof item !== 'string' || item.trim() === '')
-    ) {
-      throw new PythonCoreError('invalid-declaration', 'python.requirements 必须是非空字符串数组')
-    }
-    declaration.requirements = requirements.map((item) => (item as string).trim())
-  }
-  return declaration
+  // issue #82：原 `requirements` 选项在 .oix 安装链路（唯一调用方 `oixCore.ts` 只传 `{arch, python}`）不可达，
+  // 已连同 `PythonDeclaration.requirements` 一起移除（不做"安装期装依赖"）。清单里若仍声明 `requirements`，
+  // 这里**既不校验也不报错**，直接忽略——manifest 校验没有未知键严格校验，所以它不会变成硬错误。
+  return { arch: arch as PythonArch, python }
 }
 
 /** 解释器路径：`<扩展>/python/python.exe` */
