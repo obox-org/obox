@@ -97,13 +97,13 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
       messages.push({ severity: 'error', message: 'views 必须是 [{id, title, icon, group?}] 数组' })
     }
   }
-  if (m.extensionDependencies !== undefined) {
-    const deps = m.extensionDependencies as unknown
-    if (!Array.isArray(deps) || deps.some((d) => typeof d !== 'string')) {
-      messages.push({ severity: 'error', message: 'extensionDependencies 必须是字符串数组' })
-    }
+  const deps = m.extensionDependencies as unknown
+  const invalidShape = !Array.isArray(deps) || deps.some((d) => typeof d !== 'string')
+  if (deps !== undefined && invalidShape) {
+    messages.push({ severity: 'error', message: 'extensionDependencies 必须是字符串数组' })
   }
-  if ((m.extensionDependencies as string[] | undefined)?.includes(m.name as string)) {
+  // 自依赖检查先判数组：非数组（{} / 5 / true）时 `?.includes` 不短路、会抛 TypeError 打断扫描（#83）
+  if (Array.isArray(deps) && deps.includes(m.name as string)) {
     messages.push({ severity: 'error', message: '扩展不能依赖自身' })
   }
   return messages

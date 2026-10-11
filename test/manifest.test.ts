@@ -1,6 +1,7 @@
 /**
  * manifest 校验规则单测（validateManifest）。
- * 覆盖：name/version/main/apiVersion/extensionDependencies/keybindings/contributes。
+ * 覆盖：name/version/main/apiVersion/extensionDependencies（含非数组值不得抛错的回归，
+ * issue #83）/keybindings/contributes。
  */
 import { describe, expect, it } from 'vitest'
 import { validateManifest } from '../src/renderer/src/core/manifest'
@@ -97,6 +98,44 @@ describe('validateManifest 依赖与贡献点', () => {
     expect(
       errors({ ...valid, contributes: { keybindings: 'x' } }).some((e) => e.includes('keybindings'))
     ).toBe(true)
+  })
+})
+
+describe('validateManifest extensionDependencies 非数组（issue #83）', () => {
+  const nonArrays: Array<[string, unknown]> = [
+    ['对象', {}],
+    ['数字', 5],
+    ['布尔', true],
+    ['字符串', 'app'],
+    ['null', null]
+  ]
+
+  // 此前 `(m.extensionDependencies as string[])?.includes(...)` 对"非 null 但非数组"的值不短路，
+  // 直接抛 `TypeError: …includes is not a function`；而该函数对每个扫描到的 manifest 都会调用，
+  // 于是一个坏清单会打断整轮扫描/加载，而不是产出一条校验 error。
+  it.each(nonArrays)(
+    'extensionDependencies 是%s → 返回干净的 error，不抛 TypeError',
+    (_label, value) => {
+      let messages: ReturnType<typeof validateManifest> = []
+      expect(() => {
+        messages = validateManifest({ ...valid, extensionDependencies: value })
+      }).not.toThrow()
+      // 文案与 skill 脚本副本逐字一致（差分门禁 test/manifest-script-parity.test.ts 会把关）
+      expect(messages.map((m) => `${m.severity}:${m.message}`)).toEqual([
+        'error:extensionDependencies 必须是字符串数组'
+      ])
+    }
+  )
+
+  it('非数组只报形状 error，不叠加"扩展不能依赖自身"', () => {
+    expect(errors({ ...valid, extensionDependencies: {} })).toEqual([
+      'extensionDependencies 必须是字符串数组'
+    ])
+  })
+
+  it('合法字符串数组行为不变：外部依赖无 error、含自身报"扩展不能依赖自身"', () => {
+    expect(errors({ ...valid, extensionDependencies: ['other-ext'] })).toEqual([])
+    expect(errors({ ...valid, extensionDependencies: ['my-ext'] })).toEqual(['扩展不能依赖自身'])
   })
 })
 
