@@ -1,0 +1,5 @@
+{
+  "name": "My Ext",
+  "version": "1.0.0",
+  "main": "./index.js"
+}

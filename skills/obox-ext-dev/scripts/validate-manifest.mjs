@@ -1,158 +1,483 @@
 #!/usr/bin/env node
 /**
- * validate-manifest — 校验 Obox 扩展 manifest。
+ * validate-manifest — 校验 Obox 扩展 manifest（内置扩展与用户扩展同一套规则）。
  *
  * 用法：
- *   node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json 路径>...
- *   或
- *   node skills/obox-ext-dev/scripts/validate-manifest.mjs --all
- *     （校验 src/renderer/src/extensions 下全部内置扩展的 manifest.json）
+ *   node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json ...>
+ *   node skills/obox-ext-dev/scripts/validate-manifest.mjs --all [--root <dir>]
+ *   node skills/obox-ext-dev/scripts/validate-manifest.mjs --json [...]          # 机器可读
  *
- * 校验规则与宿主 core/manifest.ts 保持一致：
- *   - name 必填且匹配 ^[a-z0-9][a-z0-9._-]*$
- *   - version 必填且为 semver
- *   - apiVersion 可选：非负整数，且不得高于 obox 的 apiVersion（读根 package.json）
- *   - main 必填
- *   - contributes 必须是对象；extensionDependencies 是字符串数组；不能依赖自身
- *   - 导航项缺 id/title/icon、状态栏项缺 id/name、命令缺 command/title → warning
+ * 退出码：0 = 无 error（warning 允许）｜1 = 存在 error｜2 = 用法错误
  *
- * 退出码：0=通过（warning 允许）；1=存在 error。
+ * 为什么是"自包含副本"而不是 import 宿主规则：Node 原生跑 .mjs/.mts 解析不了 src/ 内部
+ * 的无扩展名 import（同 scripts/make-tray-icon.mts 头部记录的坑），而宿主 core/manifest.ts
+ * 又会连带 import package.json 与 shared/ipcDeclaration。规则因此在这里重写一份，
+ * 并用 test/manifest-script-parity.test.ts 的**差分门禁**保证两边逐字一致（同批 fixture 喂两边比对）。
+ *
+ * 规则镜像三处（报错文案与宿主逐字一致，改宿主必须同步这里）：
+ *   - src/renderer/src/core/manifest.ts:20-108       → error
+ *   - src/shared/ipcDeclaration.ts                    → contributes.ipcChannels 的 error
+ *   - src/renderer/src/core/host.ts:125-207           → warning（仅取可由 manifest 静态判定的）
+ *
+ * 有两条宿主 warning **故意不实现**（它们依赖运行期状态，静态校验拿不到）：
+ *   - `快捷键 X 已被 Y 占用（… 未注册）`：需要宿主 keybindingStore 的全局状态；
+ *   - `导航项 … 声明的视图组件 … 未在扩展入口导出`：需要扩展入口模块的具名导出表。
+ * 另外：数组形状本身已非法时不再追加"引用的命令未声明"warning（避免级联噪音）。
  */
-import { readFile, access, readdir } from 'fs/promises'
-import { join, dirname, resolve } from 'path'
-import { fileURLToPath } from 'url'
+import { readFile, readdir, stat } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const scriptDir = dirname(fileURLToPath(import.meta.url))
-const projectRoot = resolve(scriptDir, '..', '..', '..')
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
+/** 默认仓库根：skills/obox-ext-dev/scripts → 上三级 */
+const DEFAULT_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
 
+/** 与 core/manifest.ts:9 一致（注意带 i） */
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
+/** 与 core/manifest.ts:10 一致 */
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
+/** 与 shared/ipcDeclaration.ts:40 一致 */
+const IPC_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
-/** obox 当前 API 版本（单源：根 package.json 的 apiVersion；读不到视为 0） */
-const OBX_API_VERSION =
-  JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf8')).apiVersion ?? 0
+const HELP = [
+  '用法:',
+  '  node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json ...>',
+  '  node skills/obox-ext-dev/scripts/validate-manifest.mjs --all [--root <dir>]',
+  '  node skills/obox-ext-dev/scripts/validate-manifest.mjs --json [...]',
+  '',
+  '选项:',
+  '  --all          扫描 <root>/src/renderer/src/extensions/*/manifest.json',
+  '                 与 <root>/extensions/*/manifest.json',
+  '  --root <dir>   指定仓库根（默认：脚本位置上三级）',
+  '  --json         以 JSON 输出（stdout 只有 JSON）',
+  '  -h, --help     显示本帮助',
+  '',
+  '退出码: 0 = 无 error｜1 = 存在 error｜2 = 用法错误'
+].join('\n')
 
-function validateManifest(raw) {
+function fail(msg) {
+  console.error(`[validate-manifest] 错误: ${msg}`)
+  console.error(HELP)
+  process.exit(2)
+}
+
+// ---------------------------------------------------------------- IPC 通道声明
+
+function isRecord(value) {
+  return typeof value === 'object' && value !== null
+}
+
+/** 镜像 shared/ipcDeclaration.ts:43-47 */
+function isValidIpcName(raw) {
+  if (typeof raw !== 'string') return false
+  const value = raw.trim()
+  return Boolean(value) && IPC_NAME_RE.test(value) && !value.includes('..')
+}
+
+/** 镜像 shared/ipcDeclaration.ts:54-103（不抛错，返回 { ok, message }） */
+function validateIpcDeclaration(raw) {
+  if (!isRecord(raw)) return { ok: false, message: '通道声明必须是对象' }
+  if (!isValidIpcName(raw.id)) {
+    return {
+      ok: false,
+      message: `通道 id 非法（只允许字母/数字/./_/-，且不能含 ..）: ${String(raw.id)}`
+    }
+  }
+  const id = String(raw.id).trim()
+  const transport = raw.transport
+  if (transport !== 'stdio' && transport !== 'pipe') {
+    return {
+      ok: false,
+      message: `通道 ${id} 的 transport 必须是 'stdio' 或 'pipe'（不支持 TCP/端口）`
+    }
+  }
+  const framing = raw.framing
+  if (framing !== undefined && framing !== 'content-length' && framing !== 'ndjson') {
+    return { ok: false, message: `通道 ${id} 的 framing 非法: ${String(framing)}` }
+  }
+  if (transport === 'stdio') {
+    const program = raw.program
+    if (typeof program !== 'string' || !program.trim()) {
+      return { ok: false, message: `stdio 通道 ${id} 必须声明 program` }
+    }
+    const normalized = program.replace(/\\/g, '/').replace(/^\.\//, '')
+    if (
+      normalized.startsWith('/') ||
+      /^[A-Za-z]:/.test(normalized) ||
+      normalized.split('/').includes('..')
+    ) {
+      return {
+        ok: false,
+        message: `stdio 通道 ${id} 的 program 必须是扩展目录内的相对路径: ${program}`
+      }
+    }
+    if (raw.args !== undefined) {
+      if (!Array.isArray(raw.args) || raw.args.some((a) => typeof a !== 'string')) {
+        return { ok: false, message: `stdio 通道 ${id} 的 args 必须是字符串数组` }
+      }
+    }
+  } else if (raw.program !== undefined || raw.args !== undefined) {
+    return {
+      ok: false,
+      message: `pipe 通道 ${id} 不应声明 program/args（它是连接已在运行的进程）`
+    }
+  }
+  return { ok: true }
+}
+
+/** 镜像 shared/ipcDeclaration.ts:120-137 */
+function checkIpcChannelList(raw) {
+  if (raw === undefined) return { ok: true }
+  if (!Array.isArray(raw)) return { ok: false, message: '必须是数组' }
+  const seen = new Set()
+  for (let i = 0; i < raw.length; i++) {
+    const checked = validateIpcDeclaration(raw[i])
+    if (!checked.ok) return { ok: false, message: `第 ${i + 1} 项：${checked.message}` }
+    const id = String(raw[i].id).trim()
+    if (seen.has(id)) return { ok: false, message: `通道 id 重复: ${id}` }
+    seen.add(id)
+  }
+  return { ok: true }
+}
+
+// ---------------------------------------------------------------- 宿主 warning（可静态判定的）
+
+/** 只为"形状合法"的数组做交叉引用检查，避免级联噪音 */
+function isValidKeybindingList(raw) {
+  return (
+    Array.isArray(raw) &&
+    raw.every((k) => isRecord(k) && typeof k.command === 'string' && typeof k.key === 'string')
+  )
+}
+
+function isValidMenuList(raw) {
+  return Array.isArray(raw) && raw.every((m) => isRecord(m) && typeof m.command === 'string')
+}
+
+/** 镜像 host.ts:125-207 中**可由 manifest 静态判定**的 warning */
+function collectWarnings(m, messages) {
+  const c = m.contributes
+  if (!c || typeof c !== 'object') return
+  const asArray = (v) => (Array.isArray(v) ? v : [])
+
+  for (const nav of asArray(c.navItems)) {
+    if (!(nav && nav.id && nav.title && nav.icon)) {
+      messages.push({
+        level: 'warning',
+        message: `导航项缺少 id/title/icon: ${JSON.stringify(nav)}`
+      })
+    }
+  }
+  for (const sb of asArray(c.statusBarItems)) {
+    if (!(sb && sb.id && sb.name)) {
+      messages.push({ level: 'warning', message: `状态栏项缺少 id/name: ${JSON.stringify(sb)}` })
+    }
+  }
+  for (const cmd of asArray(c.commands)) {
+    if (!(cmd && cmd.command && cmd.title)) {
+      messages.push({ level: 'warning', message: `命令缺少 command/title: ${JSON.stringify(cmd)}` })
+    }
+  }
+  for (const theme of asArray(c.themes)) {
+    if (!(theme && theme.id && theme.label && theme.tokens)) {
+      messages.push({
+        level: 'warning',
+        message: `主题缺少 id/label/tokens: ${JSON.stringify(theme)}`
+      })
+    }
+  }
+
+  const declared = new Set(
+    asArray(c.commands)
+      .map((x) => (x ? x.command : undefined))
+      .filter((x) => typeof x === 'string')
+  )
+  if (isValidKeybindingList(c.keybindings)) {
+    for (const kb of c.keybindings) {
+      if (!declared.has(kb.command)) {
+        messages.push({
+          level: 'warning',
+          message: `keybindings 引用的命令 ${kb.command} 未在 contributes.commands 声明`
+        })
+      }
+    }
+  }
+  if (isValidMenuList(c.menus)) {
+    for (const menu of c.menus) {
+      if (!declared.has(menu.command)) {
+        messages.push({
+          level: 'warning',
+          message: `menus 引用的命令 ${menu.command} 未在 contributes.commands 声明`
+        })
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------- 规则本体
+
+/**
+ * 校验 manifest，返回 [{ level: 'error'|'warning', message }]。
+ * 文案与宿主 core/manifest.ts 逐字一致（差分门禁会比对）。
+ */
+function validateManifest(raw, oboxApiVersion) {
   const messages = []
   if (!raw || typeof raw !== 'object') {
-    return [{ severity: 'error', message: 'manifest 必须是 JSON 对象' }]
+    return [{ level: 'error', message: 'manifest 必须是 JSON 对象' }]
   }
   const m = raw
 
   if (typeof m.name !== 'string' || !NAME_RE.test(m.name)) {
-    messages.push({ severity: 'error', message: 'name 必填，且只能含字母/数字/./_/-' })
+    messages.push({ level: 'error', message: 'name 必填，且只能含字母/数字/./_/-' })
   }
   if (typeof m.version !== 'string' || !SEMVER_RE.test(m.version)) {
-    messages.push({ severity: 'error', message: 'version 必填且必须是 semver（如 1.0.0）' })
+    messages.push({ level: 'error', message: 'version 必填且必须是 semver（如 1.0.0）' })
   }
   if (m.apiVersion !== undefined) {
-    const av = m.apiVersion
-    if (typeof av !== 'number' || !Number.isInteger(av) || av < 0) {
-      messages.push({ severity: 'error', message: 'apiVersion 必须是大于等于 0 的整数' })
-    } else if (av > OBX_API_VERSION) {
+    const apiVersion = m.apiVersion
+    if (typeof apiVersion !== 'number' || !Number.isInteger(apiVersion) || apiVersion < 0) {
+      messages.push({ level: 'error', message: 'apiVersion 必须是大于等于 0 的整数' })
+    } else if (apiVersion > oboxApiVersion) {
       messages.push({
-        severity: 'error',
-        message: `需要 obox API v${av} 或更高（当前 obox 为 v${OBX_API_VERSION}）`
+        level: 'error',
+        message: `需要 obox API v${apiVersion} 或更高（当前 obox 为 v${oboxApiVersion}）`
       })
     }
   }
   if (typeof m.main !== 'string' || !m.main.trim()) {
-    messages.push({ severity: 'error', message: 'main（扩展入口）必填' })
+    messages.push({ level: 'error', message: 'main（扩展入口）必填' })
   }
   if (m.contributes !== undefined && typeof m.contributes !== 'object') {
-    messages.push({ severity: 'error', message: 'contributes 必须是对象' })
+    messages.push({ level: 'error', message: 'contributes 必须是对象' })
+  }
+  const contributes = m.contributes
+  if (contributes && typeof contributes === 'object' && contributes.ipcChannels !== undefined) {
+    const checked = checkIpcChannelList(contributes.ipcChannels)
+    if (!checked.ok) {
+      messages.push({ level: 'error', message: `contributes.ipcChannels 非法：${checked.message}` })
+    }
+  }
+  if (contributes && typeof contributes === 'object' && contributes.keybindings !== undefined) {
+    const kb = contributes.keybindings
+    if (
+      !Array.isArray(kb) ||
+      kb.some(
+        (k) =>
+          !k || typeof k !== 'object' || typeof k.command !== 'string' || typeof k.key !== 'string'
+      )
+    ) {
+      messages.push({ level: 'error', message: 'keybindings 必须是 [{command, key}] 数组' })
+    }
+  }
+  if (contributes && typeof contributes === 'object' && contributes.menus !== undefined) {
+    const menus = contributes.menus
+    if (
+      !Array.isArray(menus) ||
+      menus.some((x) => !x || typeof x !== 'object' || typeof x.command !== 'string')
+    ) {
+      messages.push({ level: 'error', message: 'menus 必须是 [{command, when?}] 数组' })
+    }
+  }
+  if (contributes && typeof contributes === 'object' && contributes.views !== undefined) {
+    const views = contributes.views
+    if (
+      !Array.isArray(views) ||
+      views.some((v) => {
+        const vv = v
+        return (
+          !vv ||
+          typeof vv !== 'object' ||
+          typeof vv.id !== 'string' ||
+          typeof vv.title !== 'string' ||
+          typeof vv.icon !== 'string'
+        )
+      })
+    ) {
+      messages.push({ level: 'error', message: 'views 必须是 [{id, title, icon, group?}] 数组' })
+    }
   }
   if (m.extensionDependencies !== undefined) {
-    if (
-      !Array.isArray(m.extensionDependencies) ||
-      m.extensionDependencies.some((d) => typeof d !== 'string')
-    ) {
-      messages.push({ severity: 'error', message: 'extensionDependencies 必须是字符串数组' })
+    const deps = m.extensionDependencies
+    if (!Array.isArray(deps) || deps.some((d) => typeof d !== 'string')) {
+      messages.push({ level: 'error', message: 'extensionDependencies 必须是字符串数组' })
     }
   }
-  if (Array.isArray(m.extensionDependencies) && m.extensionDependencies.includes(m.name)) {
-    messages.push({ severity: 'error', message: '扩展不能依赖自身' })
+  // 与宿主 core/manifest.ts:106 同义，但**不抛错**：那里对非数组对象会 `?.includes is not a function`
+  if (m.extensionDependencies && typeof m.extensionDependencies.includes === 'function') {
+    if (m.extensionDependencies.includes(m.name)) {
+      messages.push({ level: 'error', message: '扩展不能依赖自身' })
+    }
   }
 
-  const c = m.contributes
-  if (c) {
-    for (const nav of c.navItems ?? []) {
-      if (!nav.id || !nav.title || !nav.icon) {
-        messages.push({
-          severity: 'warning',
-          message: `导航项缺少 id/title/icon: ${JSON.stringify(nav)}`
-        })
-      }
-    }
-    for (const sb of c.statusBarItems ?? []) {
-      if (!sb.id || !sb.name) {
-        messages.push({
-          severity: 'warning',
-          message: `状态栏项缺少 id/name: ${JSON.stringify(sb)}`
-        })
-      }
-    }
-    for (const cmd of c.commands ?? []) {
-      if (!cmd.command || !cmd.title) {
-        messages.push({
-          severity: 'warning',
-          message: `命令缺少 command/title: ${JSON.stringify(cmd)}`
-        })
-      }
-    }
-  }
+  collectWarnings(m, messages)
   return messages
 }
 
-async function validateFile(path) {
-  let raw
+// ---------------------------------------------------------------- 读取与扫描
+
+/** 去掉 UTF-8 BOM（Windows 记事本/PowerShell 写出的 JSON 常带） */
+function stripBom(text) {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+/** 读 <root>/package.json 的 apiVersion；缺失/损坏/BOM 都视为 0 并继续（绝不崩栈） */
+async function readOboxApiVersion(root) {
+  const pkgPath = join(root, 'package.json')
+  let text
   try {
-    raw = JSON.parse(await readFile(path, 'utf8'))
+    text = await readFile(pkgPath, 'utf8')
+  } catch {
+    return { apiVersion: 0, note: `未找到 ${pkgPath}，apiVersion 视为 0` }
+  }
+  try {
+    const pkg = JSON.parse(stripBom(text))
+    const version = pkg && pkg.apiVersion
+    if (typeof version === 'number' && Number.isInteger(version) && version >= 0) {
+      return { apiVersion: version, note: null }
+    }
+    return { apiVersion: 0, note: `${pkgPath} 未声明合法的 apiVersion，视为 0` }
   } catch (err) {
-    console.error(`[validate] ✗ ${path}: JSON 解析失败 - ${err.message}`)
-    return { hasError: true }
+    return {
+      apiVersion: 0,
+      note: `${pkgPath} 解析失败（${err instanceof Error ? err.message : String(err)}），apiVersion 视为 0`
+    }
   }
-  const messages = validateManifest(raw)
-  let hasError = false
-  for (const msg of messages) {
-    const mark = msg.severity === 'error' ? '✗' : '⚠'
-    if (msg.severity === 'error') hasError = true
-    console.log(`[validate] ${mark} ${path}: [${msg.severity}] ${msg.message}`)
-  }
-  if (!messages.length) console.log(`[validate] ✓ ${path}: 通过`)
-  return { hasError }
 }
 
-const args = process.argv.slice(2)
-let files = []
+/** 列出某目录下所有子目录的 manifest.json（目录不存在 = 空列表） */
+async function listManifests(parentDir) {
+  let entries
+  try {
+    entries = await readdir(parentDir, { withFileTypes: true })
+  } catch {
+    return { dir: parentDir, found: [], missingDir: true }
+  }
+  const found = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const manifestPath = join(parentDir, entry.name, 'manifest.json')
+    try {
+      const info = await stat(manifestPath)
+      if (info.isFile()) found.push(manifestPath)
+      else console.error(`[validate-manifest] 跳过（manifest.json 不是文件）: ${manifestPath}`)
+    } catch {
+      console.error(`[validate-manifest] 跳过（无 manifest.json）: ${join(parentDir, entry.name)}`)
+    }
+  }
+  found.sort()
+  return { dir: parentDir, found, missingDir: false }
+}
 
-if (args.includes('--all')) {
-  const extDir = join(projectRoot, 'src', 'renderer', 'src', 'extensions')
-  const dirs = await readdir(extDir, { withFileTypes: true })
-  files = dirs
-    .filter((d) => d.isDirectory())
-    .map((d) => join(extDir, d.name, 'manifest.json'))
-    .filter((p) => {
-      try {
-        access(p)
-        return true
-      } catch {
-        console.warn(`[validate] 跳过（无 manifest.json）: ${p}`)
-        return false
-      }
-    })
+// ---------------------------------------------------------------- CLI
+
+const argv = process.argv.slice(2)
+const files = []
+let rootArg
+let all = false
+let jsonMode = false
+
+for (let i = 0; i < argv.length; i++) {
+  const arg = argv[i]
+  if (arg === '--all') all = true
+  else if (arg === '--json') jsonMode = true
+  else if (arg === '-h' || arg === '--help') {
+    console.log(HELP)
+    process.exit(0)
+  } else if (arg === '--root') {
+    if (i + 1 >= argv.length || argv[i + 1].startsWith('--')) fail('--root 需要一个目录参数')
+    rootArg = argv[++i]
+  } else if (arg.startsWith('--root=')) {
+    rootArg = arg.slice('--root='.length)
+  } else if (arg.startsWith('-') && arg !== '-') {
+    fail(`未知选项: ${arg}`)
+  } else {
+    files.push(arg)
+  }
+}
+
+const root = resolve(rootArg ? rootArg : DEFAULT_ROOT)
+const { apiVersion: oboxApiVersion, note } = await readOboxApiVersion(root)
+if (note) console.error(`[validate-manifest] 提示: ${note}`)
+
+if (!all && files.length === 0) fail('没有指定任何 manifest.json（用 --all 或给出文件路径）')
+if (all && files.length > 0) fail('--all 不能与具体文件路径同时使用')
+
+let targets = []
+if (all) {
+  const builtinDir = join(root, 'src', 'renderer', 'src', 'extensions')
+  const userDir = join(root, 'extensions')
+  const builtin = await listManifests(builtinDir)
+  const user = await listManifests(userDir)
+  if (builtin.missingDir && user.missingDir) {
+    fail(
+      `--all 没找到任何扩展目录：${builtinDir} 与 ${userDir} 都不存在。` +
+        '请用 --root 指向 obox 仓库根，或直接给出 manifest.json 路径'
+    )
+  }
+  targets = [...builtin.found, ...user.found]
+  if (targets.length === 0) {
+    fail(
+      `${builtinDir} 与 ${userDir} 下都没有扩展的 manifest.json。` +
+        '请用 --root 指向 obox 仓库根，或直接给出 manifest.json 路径'
+    )
+  }
 } else {
-  files = args.filter((a) => !a.startsWith('--'))
+  targets = files.map((f) => resolve(f))
+  for (const target of targets) {
+    try {
+      const info = await stat(target)
+      if (info.isDirectory()) fail(`这是一个目录，请给出 manifest.json 文件路径: ${target}`)
+    } catch {
+      fail(`文件不存在: ${target}`)
+    }
+  }
 }
 
-if (!files.length) {
-  console.error('用法: node validate-manifest.mjs <manifest.json...> | --all')
-  process.exit(2)
+const report = { root, files: [], errorCount: 0, warningCount: 0 }
+
+for (const target of targets) {
+  const messages = []
+  try {
+    const text = await readFile(target, 'utf8')
+    let raw
+    try {
+      raw = JSON.parse(stripBom(text))
+    } catch (err) {
+      messages.push({
+        level: 'error',
+        message: `JSON 解析失败: ${err instanceof Error ? err.message : String(err)}`
+      })
+    }
+    if (raw !== undefined) messages.push(...validateManifest(raw, oboxApiVersion))
+  } catch (err) {
+    messages.push({
+      level: 'error',
+      message: `读取失败: ${err instanceof Error ? err.message : String(err)}`
+    })
+  }
+
+  const errors = messages.filter((x) => x.level === 'error')
+  const warnings = messages.filter((x) => x.level === 'warning')
+  report.errorCount += errors.length
+  report.warningCount += warnings.length
+  report.files.push({ path: target, messages })
+
+  if (!jsonMode) {
+    if (messages.length === 0) {
+      console.log(`[validate-manifest] ✓ ${target}: 通过`)
+    }
+    for (const msg of messages) {
+      const mark = msg.level === 'error' ? '✗' : '⚠'
+      console.log(`[validate-manifest] ${mark} ${target}: [${msg.level}] ${msg.message}`)
+    }
+  }
 }
 
-let anyError = false
-for (const f of files) {
-  const r = await validateFile(f)
-  if (r.hasError) anyError = true
+if (jsonMode) {
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+} else {
+  const summary = `[validate-manifest] 共 ${report.files.length} 个 manifest：${report.errorCount} 个 error、${report.warningCount} 个 warning`
+  console.log(summary)
 }
-process.exit(anyError ? 1 : 0)
+
+process.exit(report.errorCount > 0 ? 1 : 0)

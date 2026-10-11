@@ -1,0 +1,72 @@
+{
+  "name": "ok-full",
+  "version": "1.2.3-beta.1+build.5",
+  "apiVersion": 1,
+  "displayName": "全字段合法",
+  "author": "obox-org",
+  "description": "差分门禁：全部字段与贡献点都合法 → 宿主与脚本都必须 0 error、0 warning",
+  "main": "./index.js",
+  "extensionDependencies": ["app"],
+  "uninstall": "./uninstall.js",
+  "contributes": {
+    "ipcChannels": [
+      {
+        "id": "worker",
+        "transport": "stdio",
+        "program": "bin/worker.js",
+        "args": ["--once"],
+        "framing": "ndjson"
+      },
+      { "id": "existing", "transport": "pipe" }
+    ],
+    "navItems": [
+      {
+        "id": "ok-full.main",
+        "title": "主页",
+        "titleKey": "nav.main",
+        "icon": "<svg viewBox='0 0 24 24'></svg>",
+        "group": "top",
+        "view": "MainView"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "ok-full.status",
+        "name": "状态",
+        "text": "ok",
+        "alignment": "right",
+        "priority": 1,
+        "command": "ok-full.hello"
+      }
+    ],
+    "commands": [
+      { "command": "ok-full.hello", "title": "打个招呼", "category": "示例", "palette": true }
+    ],
+    "themes": [{ "id": "ok-full.theme", "label": "示例主题", "tokens": { "--bg": "#ffffff" } }],
+    "i18n": { "zh": { "nav.main": "主页" }, "en": { "nav.main": "Home" } },
+    "settings": {
+      "id": "ok-full.settings",
+      "title": "示例设置",
+      "fields": [
+        {
+          "key": "ok-full.flag",
+          "label": "开关",
+          "type": "boolean",
+          "default": false,
+          "description": "示例"
+        }
+      ]
+    },
+    "keybindings": [{ "command": "ok-full.hello", "key": "Ctrl+Shift+K" }],
+    "menus": [{ "command": "ok-full.hello", "when": "true" }],
+    "views": [
+      {
+        "id": "ok-full.tree",
+        "title": "树视图",
+        "icon": "<svg viewBox='0 0 24 24'></svg>",
+        "group": "top"
+      }
+    ],
+    "updater": { "feedUrl": "https://example.com/{version}/" }
+  }
+}

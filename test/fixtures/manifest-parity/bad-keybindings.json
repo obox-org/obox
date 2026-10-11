@@ -1,0 +1,8 @@
+{
+  "name": "bad-keybindings",
+  "version": "1.0.0",
+  "main": "./index.js",
+  "contributes": {
+    "keybindings": [{ "command": "bad-keybindings.do" }]
+  }
+}

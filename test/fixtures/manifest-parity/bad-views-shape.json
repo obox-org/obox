@@ -1,0 +1,8 @@
+{
+  "name": "bad-views-shape",
+  "version": "1.0.0",
+  "main": "./index.js",
+  "contributes": {
+    "views": [{ "id": "bad-views-shape.tree", "title": "缺 icon" }]
+  }
+}

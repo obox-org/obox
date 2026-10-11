@@ -1,0 +1,8 @@
+{
+  "name": "bad-ipc-transport",
+  "version": "1.0.0",
+  "main": "./index.js",
+  "contributes": {
+    "ipcChannels": [{ "id": "worker", "transport": "tcp" }]
+  }
+}
