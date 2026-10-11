@@ -1,9 +1,10 @@
 /**
- * 快捷键系统单测（keybindingStore）。
- * 覆盖：默认值/用户修改优先级、冲突检测（不落盘）、重置、按键事件 → 组合键字符串与命令匹配。
+ * 快捷键系统单测（keybindingStore + normalizeKey）。
+ * 覆盖：默认值/用户修改优先级、冲突检测（不落盘；含 issue #79 的大小写/修饰键名归一）、重置、
+ * 按键事件 → 组合键字符串与命令匹配。
  */
 import { describe, expect, it, beforeEach } from 'vitest'
-import { keybindingStore } from '../src/renderer/src/core/keybindings'
+import { keybindingStore, normalizeKey } from '../src/renderer/src/core/keybindings'
 
 /** 构造最小 KeyboardEvent（只用到几个字段） */
 function keydown(init: {
@@ -47,16 +48,82 @@ describe('keybindingStore · 取值与修改', () => {
     expect(keybindingStore.currentKey('kb-test.alpha')).toBe('Ctrl+Alt+A')
   })
 
-  it('大小写差异当前**不**视为冲突（normalizeKey 只规范空白）——记录现状', () => {
+  // issue #79：以前 normalizeKey 只规范空白，`ctrl+shift+g` 与 `Ctrl+Shift+G` 不算冲突、
+  // 也永远匹配不上——静默失效。现在两侧都按归一后的组合键比较。
+  it('大小写差异视为冲突：declaration 侧归一后与事件侧同一绑定', () => {
     keybindingStore.register({
       command: 'kb-test.gamma',
       labelKey: 'g',
       defaultKey: 'Ctrl+Shift+G'
     })
-    const r = keybindingStore.setKey('kb-test.gamma', 'ctrl+shift+g')
-    expect(r.conflict).toBeNull()
-    expect(keybindingStore.currentKey('kb-test.gamma')).toBe('ctrl+shift+g')
-    keybindingStore.reset('kb-test.gamma')
+    keybindingStore.register({
+      command: 'kb-test.delta',
+      labelKey: 'd',
+      defaultKey: 'Ctrl+Shift+D'
+    })
+    // 换个命令写小写 k：归一后与 gamma 相同 → 冲突且**不修改**
+    const conflict = keybindingStore.setKey('kb-test.delta', 'ctrl+shift+g')
+    expect(conflict.conflictCommand).toBe('kb-test.gamma')
+    expect(keybindingStore.currentKey('kb-test.delta')).toBe('Ctrl+Shift+D')
+    // 写自己当前的键（仅大小写不同）不算自冲突 → 落盘，且 keydown 能命中
+    const self = keybindingStore.setKey('kb-test.delta', 'ctRl + shIft + d')
+    expect(self.conflictCommand).toBeNull()
+    expect(keybindingStore.currentKey('kb-test.delta')).toBe('ctRl + shIft + d')
+    expect(keybindingStore.matchKeydown(keydown({ key: 'd', ctrlKey: true, shiftKey: true }))).toBe(
+      'kb-test.delta'
+    )
+    keybindingStore.reset('kb-test.delta')
+  })
+
+  it('归一后确实能命中：小写声明 / 别名主键 / 别名修饰键都能匹配 keydown', () => {
+    keybindingStore.register({ command: 'kb-fold.k', labelKey: 'k', defaultKey: 'ctrl+shift+k' })
+    keybindingStore.register({
+      command: 'kb-fold.esc',
+      labelKey: 'e',
+      defaultKey: 'Control+escape'
+    })
+    keybindingStore.register({
+      command: 'kb-fold.subject',
+      labelKey: 's',
+      defaultKey: 'CMD+arrowup'
+    })
+    expect(keybindingStore.matchKeydown(keydown({ key: 'K', ctrlKey: true, shiftKey: true }))).toBe(
+      'kb-fold.k'
+    )
+    expect(keybindingStore.matchKeydown(keydown({ key: 'Escape', ctrlKey: true }))).toBe(
+      'kb-fold.esc'
+    )
+    expect(keybindingStore.matchKeydown(keydown({ key: 'ArrowUp', metaKey: true }))).toBe(
+      'kb-fold.subject'
+    )
+  })
+})
+
+describe('normalizeKey（issue #79）', () => {
+  it('大小写折叠 + 修饰键名归一 + 空白规范', () => {
+    expect(normalizeKey('ctrl+shift+k')).toBe('Ctrl+Shift+K')
+    expect(normalizeKey('Ctrl + Shift + K')).toBe('Ctrl+Shift+K')
+    expect(normalizeKey('CTRL+ALT+K')).toBe('Ctrl+Alt+K')
+    expect(normalizeKey('Control+Option+Escape')).toBe('Ctrl+Alt+Esc')
+    expect(normalizeKey('CMD+arrowup')).toBe('Ctrl+Up')
+    expect(normalizeKey('')).toBe('')
+  })
+
+  it('不重排修饰键顺序、不折 Shift 语义：只折大小写', () => {
+    expect(normalizeKey('Shift+Ctrl+P')).toBe('Shift+Ctrl+P')
+    expect(normalizeKey('Shift+Ctrl+P')).not.toBe(normalizeKey('Ctrl+Shift+P'))
+    // `Ctrl+k` 与 `Ctrl+Shift+K` 仍是两个绑定（Shift 是组合里的独立一维）
+    expect(normalizeKey('Ctrl+k')).not.toBe(normalizeKey('Ctrl+Shift+K'))
+  })
+
+  it('表外的多字符主键原样保留（不盲目大写，避免 PageUp/PAGEUP 失配）', () => {
+    expect(normalizeKey('Ctrl+PageUp')).toBe('Ctrl+PageUp')
+    expect(normalizeKey('Ctrl+pageup')).toBe('Ctrl+pageup')
+    expect(normalizeKey('Ctrl+F1')).toBe('Ctrl+F1')
+  })
+
+  it('主键是 `+` 时原样往返（不因空段被吃掉）', () => {
+    expect(normalizeKey('Ctrl++')).toBe('Ctrl++')
   })
 })
 

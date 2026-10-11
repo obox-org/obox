@@ -20,7 +20,7 @@ import {
   clearExtensionMessages,
   translateExtension
 } from './extensionI18n'
-import { keybindingStore } from './keybindings'
+import { keybindingStore, normalizeKey } from './keybindings'
 import { updaterStore } from './updaterStore'
 import { uiStore } from './uiStore'
 import { outputStore } from './outputStore'
@@ -171,9 +171,12 @@ class ExtensionHost {
         })
         continue
       }
+      // 重名比较走 normalizeKey（issue #79）：`Ctrl+Shift+k` 与 `Ctrl+Shift+K` 视为同一绑定
       const conflict = keybindingStore
         .list()
-        .find((e) => e.command !== kb.command && e.currentKey === kb.key)
+        .find(
+          (e) => e.command !== kb.command && normalizeKey(e.currentKey) === normalizeKey(kb.key)
+        )
       if (conflict) {
         ext.validations.push({
           severity: 'warning',

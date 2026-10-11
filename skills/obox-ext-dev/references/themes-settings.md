@@ -153,10 +153,10 @@ for (const ms of [0, 300, 1000]) {
 
 ### 快捷键
 
-- 内置：`app.showCommands` 默认 `Ctrl+Shift+P`（`src/renderer/src/core/host.ts:757-760`）
-- 扩展：manifest `contributes.keybindings` 把已声明命令绑定默认键，注册进同一个 `keybindingStore`（`host.ts:184`）；该键已被其他命令占用时**不注册**并记 warning（`host.ts:176-183`）
+- 内置：`app.showCommands` 默认 `Ctrl+Shift+P`（`src/renderer/src/core/host.ts:759-762`）
+- 扩展：manifest `contributes.keybindings` 把已声明命令绑定默认键，注册进同一个 `keybindingStore`（`host.ts:187`）；该键已被其他命令占用时**不注册**并记 warning（`host.ts:174-186`，重名按 `normalizeKey` 归一后比较）
 - 修改：设置"快捷键"页点编辑，按下新组合（Esc 取消，`SettingsView.vue:63-81`）
-- 冲突检测：同键被其他命令占用时提示且**不写入**（`src/renderer/src/core/keybindings.ts:41-48`）
+- 冲突检测：同键被其他命令占用时提示且**不写入**（`src/renderer/src/core/keybindings.ts:39-46`）；比较走 `normalizeKey`，**大小写与修饰键名会归一**（issue #79：`Ctrl+Shift+k` 与 `Ctrl+Shift+K` 视为同一绑定，`keybindings.ts:87-149`）
 - 持久化：设置存储 `keybinding.<command>`；重置即删除该键、回落默认（`keybindings.ts:17,47,53`）
 
 ### 语言（i18n）

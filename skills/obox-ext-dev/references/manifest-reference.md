@@ -199,9 +199,10 @@
 | `command` | ✅   | 命令 id（**必须**在 contributes.commands 声明，否则 warning 且不注册） |
 | `key`     | ✅   | 组合键字符串，写法见下                                                 |
 
-- `key` 必须写成**事件侧规范化后**的形式：修饰键 `Ctrl`/`Alt`/`Shift`，单字符主键**大写**（`Ctrl+Shift+K`），`ArrowUp`→`Up`、`Escape`→`Esc`、空格→`Space`（`core/keybindings.ts:67-113`）
-- 匹配时只做空白与 `+` 归一，**不做大小写折叠**（`core/keybindings.ts:87-92`）：写 `Ctrl+Shift+k` 或 `Escape` 一律**永不匹配**，必须写 `Ctrl+Shift+K` / `Esc`
-- 与内置/其他扩展快捷键**冲突时 warning 且不注册**（该扩展其余功能不受影响，`core/host.ts:174-183`）
+- `key` 推荐写成**事件侧规范化后**的形式：修饰键 `Ctrl`/`Alt`/`Shift`，单字符主键大写（`Ctrl+Shift+K`），`ArrowUp`→`Up`、`Escape`→`Esc`、空格→`Space`（`core/keybindings.ts:151-171`）
+- **大小写与别名会归一（issue #79）**：声明侧与 keydown 侧都过 `normalizeKey`（`core/keybindings.ts:87-149`），`Ctrl+Shift+k`、`ctrl + shift + K`、`Ctrl+Shift+K` 是**同一绑定**；修饰键别名 `control`/`cmd`/`command`/`meta`→`Ctrl`、`option`→`Alt`，命名主键别名 `escape`→`Esc`、`arrowup`→`Up`、`space`→`Space`、`del`→`Delete` 等也可用
+- 归一**不重排修饰键顺序**（`Shift+Ctrl+P` 仍是另一个绑定），也**不把 `Ctrl+k` 与 `Ctrl+Shift+K` 视为等价**（Shift 是独立一维）；表外的多字符主键（`F1`、`PageUp`）按 `e.key` 原样比对，请用规范写法
+- 与内置/其他扩展快捷键**冲突时 warning 且不注册**（该扩展其余功能不受影响，`core/host.ts:174-187`；重名比较同样按归一后的组合键）
 - 默认键冲突时用户仍可在设置-快捷键里改（改后以用户值为准）
 
 ### menus（上下文菜单，manifest 声明）
@@ -311,16 +312,16 @@
 
 ### warning（该项跳过，扩展仍加载）
 
-| 情形                                       | 文案 / 证据                                                                         |
-| ------------------------------------------ | ----------------------------------------------------------------------------------- |
-| 导航项缺 `id`/`title`/`icon`               | `导航项缺少 id/title/icon: …`（`core/host.ts:125-132`）                             |
-| 状态栏项缺 `id`/`name`                     | `状态栏项缺少 id/name: …`（`core/host.ts:133-140`）                                 |
-| 命令缺 `command`/`title`                   | `命令缺少 command/title: …`（`core/host.ts:141-148`）                               |
-| **主题缺 `id`/`label`/`tokens`**           | `主题缺少 id/label/tokens: …`——**warning，不是 error**（`core/host.ts:151-156`）    |
-| 导航项 `view` 未在扩展入口具名导出         | `导航项 X 声明的视图组件 Y 未在扩展入口导出`（`core/host.ts:201-209`）              |
-| `keybindings` 引用的命令未在 commands 声明 | `keybindings 引用的命令 X 未在 contributes.commands 声明`（`core/host.ts:165-172`） |
-| 快捷键 `key` 已被别的命令占用              | `快捷键 X 已被 Y 占用（Z 未注册）`（`core/host.ts:174-183`）                        |
-| `menus` 引用的命令未在 commands 声明       | `menus 引用的命令 X 未在 contributes.commands 声明`（`core/host.ts:187-196`）       |
+| 情形                                       | 文案 / 证据                                                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| 导航项缺 `id`/`title`/`icon`               | `导航项缺少 id/title/icon: …`（`core/host.ts:125-132`）                                           |
+| 状态栏项缺 `id`/`name`                     | `状态栏项缺少 id/name: …`（`core/host.ts:133-140`）                                               |
+| 命令缺 `command`/`title`                   | `命令缺少 command/title: …`（`core/host.ts:141-148`）                                             |
+| **主题缺 `id`/`label`/`tokens`**           | `主题缺少 id/label/tokens: …`——**warning，不是 error**（`core/host.ts:151-156`）                  |
+| 导航项 `view` 未在扩展入口具名导出         | `导航项 X 声明的视图组件 Y 未在扩展入口导出`（`core/host.ts:204-212`）                            |
+| `keybindings` 引用的命令未在 commands 声明 | `keybindings 引用的命令 X 未在 contributes.commands 声明`（`core/host.ts:165-173`）               |
+| 快捷键 `key` 已被别的命令占用              | `快捷键 X 已被 Y 占用（Z 未注册）`——重名按归一后的组合键比较（issue #79，`core/host.ts:174-186`） |
+| `menus` 引用的命令未在 commands 声明       | `menus 引用的命令 X 未在 contributes.commands 声明`（`core/host.ts:190-199`）                     |
 
 - 校验消息（error + warning）统一收集进扩展的 `validations`，在扩展管理器详情页展示；含 error 的扩展 `isValid=false`，不加载但出现在管理列表标红（`core/manifest.ts:120-130`）
 - `contributes.i18n` / `settings` / `updater` 既不做形状校验、也没有"缺字段 warning"，只在出现时注册（`core/host.ts:159-163`）
