@@ -112,6 +112,7 @@ export default {
   settings: {
     title: '设置',
     tree: {
+      general: '通用',
       appearance: '外观',
       language: '语言',
       keyboard: '快捷键',
@@ -178,6 +179,16 @@ export default {
       title: '通知',
       desc: '逐扩展控制系统提醒（扩展经 api.notification.show 弹出系统通知）。关闭后该扩展的通知不再弹出。',
       empty: '暂无扩展'
+    },
+    general: {
+      title: '通用',
+      closeBehavior: '关闭主窗口时',
+      closeAsk: '每次询问（收进托盘还是退出）',
+      closeHide: '收进托盘',
+      closeQuit: '退出应用',
+      closeBehaviorDesc:
+        'obox 常驻系统托盘：收进托盘后主窗口隐藏、扩展继续运行，可从托盘图标重新打开；退出会结束所有扩展与子进程。',
+      windowsOnly: '当前平台没有系统托盘，此项仅 Windows 可用。'
     },
     unsaved: '未保存的更改'
   },

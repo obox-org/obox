@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import type { WindowAction, WindowState } from '../shared/types'
+import { isTrayActive } from './tray'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -30,6 +31,8 @@ export function createWindow(): BrowserWindow {
     minWidth: 640,
     minHeight: 400,
     show: false,
+    // 任务栏不显示主窗口（ADR-0019 决策 2）：仅 Windows；窗口可见性由托盘与关闭行为管理
+    skipTaskbar: process.platform === 'win32',
     // 无边框窗口：自绘标题栏
     frame: false,
     autoHideMenuBar: true,
@@ -92,7 +95,9 @@ export function registerWindowIpc(): void {
     if (!win || win.isDestroyed()) return
     switch (action) {
       case 'minimize':
-        win.minimize()
+        // 主窗口不在任务栏显示，最小化会"无处可寻"（ADR-0019 决策 5）：有托盘就静默收进托盘
+        if (isTrayActive()) win.hide()
+        else win.minimize()
         break
       case 'toggle-maximize':
         if (win.isMaximized()) win.unmaximize()

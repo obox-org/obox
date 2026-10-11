@@ -112,6 +112,7 @@ export default {
   settings: {
     title: 'Settings',
     tree: {
+      general: 'General',
       appearance: 'Appearance',
       language: 'Language',
       keyboard: 'Keyboard Shortcuts',
@@ -180,6 +181,16 @@ export default {
       title: 'Notifications',
       desc: 'Control system notifications per extension (extensions show them via api.notification.show). Disabled extensions will not pop notifications.',
       empty: 'No extensions'
+    },
+    general: {
+      title: 'General',
+      closeBehavior: 'When closing the main window',
+      closeAsk: 'Always ask (hide to tray or quit)',
+      closeHide: 'Hide to tray',
+      closeQuit: 'Quit the app',
+      closeBehaviorDesc:
+        'obox keeps running in the notification area: hiding keeps extensions alive and the window can be reopened from the tray icon; quitting ends all extensions and child processes.',
+      windowsOnly: 'This platform has no system tray; the option is Windows-only.'
     },
     unsaved: 'Unsaved changes'
   },

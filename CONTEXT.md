@@ -45,6 +45,34 @@ _Avoid_: 应用中心、应用市场
 点击插件卡片弹出的独立 BrowserWindow（无边框）。加载同一渲染入口（`?obox-window=app&appId=xxx`），复用 TitleBar 组件（标题=插件名），内容栏用 iframe 渲染插件提供的 URL 或 HTML（srcdoc）。主窗口关闭时一并关闭。
 _Avoid_: 弹窗、模态框
 
+**Main Window / 主窗口**:
+承载导航栏/内容栏/状态栏的主 BrowserWindow，扩展在其中被激活（`plugin(api)` 只在这里执行一次）。与 App 子窗口相对；关闭或最小化它默认按"关闭行为"收进托盘。
+_Avoid_: 主界面、首页窗口
+
+**Taskbar / 任务栏**:
+Windows 上显示运行中窗口与开始按钮的系统横条。obox **主窗口不在任务栏显示**（`skipTaskbar`），App 子窗口仍正常显示。
+_Avoid_: 托盘（托盘指通知区域里的图标，两者不同）
+
+**Notification Area / 通知区域**:
+Windows 任务栏右端的系统区域，常驻程序在此放图标（口语称"系统托盘"）。obox 的托盘图标落在这里。
+_Avoid_: 系统托盘区、任务栏
+
+**Tray / 托盘**:
+obox 在通知区域的常驻图标（**仅 Windows**）：右键出托盘菜单（打开/设置/关于/退出），双击打开主窗口。
+_Avoid_: 系统托盘、任务栏图标
+
+**Hide to Tray / 收进托盘**:
+把主窗口 `hide()`（**不销毁**，状态保留）并只留托盘图标；与"最小化（minimize，通常仍在任务栏显示）"不同。obox 的关闭按钮与最小化按钮都触发它。
+_Avoid_: 最小化到托盘（易与 minimize 混淆）
+
+**Close Behavior / 关闭行为**:
+用户偏好，三态——`询问`（关闭时弹原生提示让用户选）、`收进托盘`、`退出`；默认 `询问`，提示里勾选"记住"后写入偏好。设置-通用（仅 Windows 显示）。
+_Avoid_: 关闭策略、退出方式
+
+**Single Instance / 单实例**:
+同一时刻只允许一个 obox 进程；再次启动只把已有主窗口唤到前台，其启动参数被忽略。
+_Avoid_: 互斥锁、唯一实例
+
 **Contribution Point / 贡献点**:
 扩展在 manifest 中声明的能力注册点（导航项、状态栏项、命令），由宿主解析注册。
 _Avoid_: 插件点、扩展点

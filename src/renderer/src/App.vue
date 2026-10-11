@@ -34,15 +34,22 @@ function onGlobalKeydown(e: KeyboardEvent): void {
   }
 }
 
+let offNavOpen: (() => void) | undefined
+
 onMounted(() => {
   void host.ready.then(() => {
     // 启动视图固定为"应用"扩展（不恢复上次选择）——策略与回退链见 core/startupView.ts
     activeNavId.value = pickStartupNavId(registry.navItems)
   })
   window.addEventListener('keydown', onGlobalKeydown)
+  // 托盘"设置"→ 主进程要求切页（切页状态在本组件，主进程无法直接改；ADR-0019 决策 8）
+  offNavOpen = window.events.on('nav:open', (navId) => selectNav(navId))
 })
 
-onUnmounted(() => window.removeEventListener('keydown', onGlobalKeydown))
+onUnmounted(() => {
+  window.removeEventListener('keydown', onGlobalKeydown)
+  offNavOpen?.()
+})
 </script>
 
 <template>

@@ -6,6 +6,8 @@ import type { MainApi, MainEvents, WindowAction } from '../shared/types'
 const api: MainApi = {
   windowAction: (action: WindowAction) => ipcRenderer.invoke('window:action', action),
   getWindowState: () => ipcRenderer.invoke('window:get-state'),
+  getCloseBehavior: () => ipcRenderer.invoke('window:get-close-behavior'),
+  setCloseBehavior: (behavior) => ipcRenderer.invoke('window:set-close-behavior', behavior),
   getAppInfo: () => ipcRenderer.invoke('app:get-info'),
   listUserExtensions: () => ipcRenderer.invoke('extensions:list-user'),
   listDebugExtensions: () => ipcRenderer.invoke('extensions:list-debug'),
