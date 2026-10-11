@@ -90,7 +90,12 @@ export function sanitizeThemeTokens(input: unknown): Record<string, string> {
  *
  * 只取 `HOST_THEME_TOKEN_NAMES` 内的键，且读的是**生效值**（调用方传入的 read 通常是
  * `getComputedStyle(document.documentElement).getPropertyValue`）——这样快照与宿主主窗口
- * 肉眼所见一致，并天然跟随 `themeStore.apply()` 「只写不清旧键」的残留语义（设计 §2.7.5）。
+ * 肉眼所见一致。
+ *
+ * 历史注记：`themeStore.apply()` 曾「只写不清旧键」，快照因此会带上**上一主题的残留**
+ * （旧设计 §2.7.5 把它记作刻意的一致性取舍）。issue #81 起 `apply()` 会清掉上一主题写入
+ * 而本次不再声明的键，所以现在"生效值"= `main.css` 默认值 + **当前主题**覆盖，
+ * 不再有上一主题的行内残留。
  */
 export function collectThemeTokens(
   read: (name: string) => string,

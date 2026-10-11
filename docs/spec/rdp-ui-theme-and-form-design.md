@@ -24,7 +24,7 @@ spec §1.1 写"宿主**已经**会把当前主题 token 注入 App 子窗口"，
 
 | # | 事实 | 证据 |
 | --- | --- | --- |
-| F1 | 主题 token 由 `themeStore.apply()` 写到**当前窗口**的 `document.documentElement`（行内样式） | `src/renderer/src/core/theme.ts:50-55`；启动时 `core/host.ts:930` 调 `applyCurrent()` |
+| F1 | 主题 token 由 `themeStore.apply()` 写到**当前窗口**的 `document.documentElement`（行内样式） | `src/renderer/src/core/theme.ts:66-77`；启动时 `core/host.ts:933` 调 `applyCurrent()` |
 | F2 | `AppWindow.vue` 里 token 的**唯一**注入点是 `iframeSrcdoc`，而它在卡片提供 `url` 时恒为 `undefined` | `src/renderer/src/AppWindow.vue:38-44`（`themeStyleHtml`）、`:46-52`（`url` 时 `return undefined`）、`:150-157`（iframe 同时绑 `:src` 与 `:srcdoc`） |
 | F3 | RDP 卡片注册的是 **`url`**（`ui/index.html`），不是 `html` → 走 F2 的 `url` 分支，拿不到注入 | `extensions/rdp/index.js:299` 的 `url: new URL('./ui/index.html', …)`、`manifest.json` |
 | F4 | 官方 reference 自己写明了这个边界："用户扩展的 App 子窗口 iframe（**srcdoc**）自动注入…**`url` 场景由扩展自行处理**" | `skills/obox-ext-dev/references/themes-settings.md:12` |
@@ -424,7 +424,7 @@ if (-not $out) { "OK 仅用白名单 token"; exit 0 } else { "FAIL 越界: " + (
 
 #### 2.7.4 主题变化（跨窗口）——本仓库今天缺的那一段
 
-**已核实的缺陷**：子窗口与主窗口是两个 document，模块级状态各自一份。主窗口 `themeStore.setTheme()`（`core/theme.ts:42-47`）只改主窗口的 `stateStore` 与 `:root`；子窗口的 `stateStore`（`core/state.ts` 无 `storage` 监听）与 `themeStore.themes` 都不变 ⇒ `AppWindow.vue` 的 `themeKey`（`:34-37`）**不会**变化。所以路径 A 必须补一条跨窗口通知，否则"切主题 → 推送"永远不会被触发（这也是 F8 修正的实际后果）。
+**已核实的缺陷**：子窗口与主窗口是两个 document，模块级状态各自一份。主窗口 `themeStore.setTheme()`（`core/theme.ts:50-56`）只改主窗口的 `stateStore` 与 `:root`；子窗口的 `stateStore`（`core/state.ts` 无 `storage` 监听）与 `themeStore.themes` 都不变 ⇒ `AppWindow.vue` 的 `themeKey`（`:34-37`）**不会**变化。所以路径 A 必须补一条跨窗口通知，否则"切主题 → 推送"永远不会被触发（这也是 F8 修正的实际后果）。
 
 **决策（最小、且不新增 IPC）**：两个窗口**同源同 session**（F9）⇒ 共享 localStorage，`storage` 事件即 Chromium 的跨文档通知通道。三步：
 
@@ -449,8 +449,8 @@ if (-not $out) { "OK 仅用白名单 token"; exit 0 } else { "FAIL 越界: " + (
 #### 2.7.5 主题 id 与 token 值的关系（下发"生效值"，不是"主题声明"）
 
 - 扩展 API 只能读 id（C5）⇒ **值**必须由宿主下发；`themeId` 随包下发，供扩展记日志、决定 `color-scheme`、以及在宿主未来增删 token 时做兼容判断。
-- 下发的 `tokens` 快照 = `HOST_THEME_TOKEN_NAMES`（**25 个**，与 `src/renderer/src/assets/main.css:2-29` 逐条一致）在宿主 `document.documentElement` 上的**生效值**（`getComputedStyle(root).getPropertyValue(name)`），即"`main.css` 默认值 + 当前主题覆盖（+ 上一个主题的残留，因为 `theme.ts:50-55` 只写不清）"。
-  - **为什么不只发 `themeStore.current.tokens`**：那是"主题声明值"，部分主题只覆盖少数键，子窗口拿到后其余 token 仍为空；`getComputedStyle` 给出的快照与宿主主窗口**肉眼所见完全一致**，并天然跟随 `theme.ts` 的"不清旧键"语义（一致性优先于洁癖）。
+- 下发的 `tokens` 快照 = `HOST_THEME_TOKEN_NAMES`（**25 个**，与 `src/renderer/src/assets/main.css:2-29` 逐条一致）在宿主 `document.documentElement` 上的**生效值**（`getComputedStyle(root).getPropertyValue(name)`），即"`main.css` 默认值 + 当前主题覆盖"。（本文档早先写作"（+ 上一个主题的残留，因为 `theme.ts:50-55` 只写不清）"——该残留行为已由 **issue #81** 修复：`apply()` 现在记录上次写入的键集合并清掉本次不再声明的键，`theme.ts:66-77`。）
+  - **为什么不只发 `themeStore.current.tokens`**：那是"主题声明值"，部分主题只覆盖少数键，子窗口拿到后其余 token 仍为空；`getComputedStyle` 给出的快照与宿主主窗口**肉眼所见完全一致**，并跟随 `theme.ts` 的生效值语义（#81 起不再有上一主题的旧键残留）。
   - 快照在宿主侧**每次推送前现算**（不在 `themeStore` 里缓存），避免主题扩展热重载后拿到旧值。
 - 扩展侧**不得**把 `themeId` 当色值用；`color-scheme` 由 `colorSchemeForThemeId(id)` 决定（`/light/i` → `'light'`，否则 `'dark'`），只影响 UA 绘制的原生控件/滚动条底色，不影响任何自绘配色。
 
