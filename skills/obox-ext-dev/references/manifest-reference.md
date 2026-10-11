@@ -26,7 +26,7 @@
 
 > **为什么 `uninstall` 字段写了不报错**：公开类型 `ExtensionManifest` 仍声明它（`api/manifest.ts:29-30`，注释还写着"卸载时先执行再删目录"），所以按类型写清单**不会有类型报错**；但宿主从不读该字段，别把它当成钩子——钩子是入口的具名导出（见上表 `uninstall` 行与 api-reference 的「生命周期钩子」）。
 
-> **随包 Python 运行时不靠 manifest 字段**：运行时靠扩展自带目录 `<扩展>/python/python.exe`（`main/pythonCore.ts:25-27,121-123`）+ `api.python.run`（`api/types.ts:424-442`）。公开类型 `ExtensionManifest`（`api/manifest.ts:9-33`）里**没有** `arch` / `python`，按类型写清单对象会报"对象字面量只能指定已知属性"（本文档早先教学过这两个字段，已删）。安装器另有一处旁路读取 `manifest.arch` / `manifest.python`（`main/oixCore.ts:230-247`），用于安装期拒掉错架构的 `.oix`；那两个键由运行时打包工具写入（`main/pythonPackage.ts:155-159`），不是要手工声明的清单项。
+> **随包 Python 运行时不靠 manifest 字段**：运行时靠扩展自带目录 `<扩展>/python/python.exe`（`main/pythonCore.ts:25-27,113-116`）+ `api.python.run`（`api/types.ts:424-442`）。公开类型 `ExtensionManifest`（`api/manifest.ts:9-33`）里**没有** `arch` / `python`，按类型写清单对象会报"对象字面量只能指定已知属性"（本文档早先教学过这两个字段，已删）。安装器另有一处旁路读取 `manifest.arch` / `manifest.python`（`main/oixCore.ts:247-264`），用于安装期拒掉错架构的 `.oix`；那两个键由运行时打包工具写入（`main/pythonPackage.ts:155-159`），不是要手工声明的清单项。原 `python.requirements` 已移除（issue #82：它从未被安装器传入、实际不可达），旧清单里残留该键只被忽略、不报错。
 
 ## contributes 贡献点
 
