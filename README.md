@@ -19,6 +19,8 @@ src/
 │   ├── trayCore.ts  # 托盘菜单/tooltip 的纯逻辑（可单测）
 │   ├── windowBehavior.ts     # 关闭行为：偏好读写 + 关闭拦截 + 原生提示（ADR-0019）
 │   ├── windowBehaviorCore.ts # 关闭行为纯逻辑：偏好解析/决策矩阵/提示文案（可单测）
+│   ├── extensionCleanup.ts   # 扩展主进程资源统一清理（热移除与退出共用同一组函数，ADR-0019）
+│   ├── singleInstanceCore.ts # 单实例日志文案纯逻辑（第二实例参数被忽略要写清楚）
 │   ├── capabilities.ts # 能力服务：应用信息、用户扩展扫描/卸载/卸载钩子
 │   ├── oix.ts       # .oix 安装能力薄壳（对话框/IPC；失败转成带错误码的返回值）
 │   ├── oixCore.ts   # .oix 安装核心（校验/限额/原子替换+回滚/同 id 串行；不依赖 electron，可单测）
