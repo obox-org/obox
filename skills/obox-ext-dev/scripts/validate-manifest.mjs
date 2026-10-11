@@ -15,9 +15,9 @@
  * 并用 test/manifest-script-parity.test.ts 的**差分门禁**保证两边逐字一致（同批 fixture 喂两边比对）。
  *
  * 规则镜像三处（报错文案与宿主逐字一致，改宿主必须同步这里）：
- *   - src/renderer/src/core/manifest.ts:20-108       → error
+ *   - src/renderer/src/core/manifest.ts:15-129       → error
  *   - src/shared/ipcDeclaration.ts                    → contributes.ipcChannels 的 error
- *   - src/renderer/src/core/host.ts:125-207           → warning（仅取可由 manifest 静态判定的）
+ *   - src/renderer/src/core/host.ts:131-230           → warning（仅取可由 manifest 静态判定的）
  *
  * 有两条宿主 warning **故意不实现**（它们依赖运行期状态，静态校验拿不到）：
  *   - `快捷键 X 已被 Y 占用（… 未注册）`：需要宿主 keybindingStore 的全局状态；
@@ -34,7 +34,7 @@ const DEFAULT_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
 
 /** 与 core/manifest.ts:11 一致（**不带 i**：大写 id 非法，issue #77） */
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/
-/** 与 core/manifest.ts:10 一致 */
+/** 与 core/manifest.ts:12 一致 */
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
 /** 与 shared/ipcDeclaration.ts:40 一致 */
 const IPC_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
@@ -154,7 +154,7 @@ function isValidMenuList(raw) {
   return Array.isArray(raw) && raw.every((m) => isRecord(m) && typeof m.command === 'string')
 }
 
-/** 镜像 host.ts:125-207 中**可由 manifest 静态判定**的 warning */
+/** 镜像 host.ts:143-231 中**可由 manifest 静态判定**的 warning */
 function collectWarnings(m, messages) {
   const c = m.contributes
   if (!c || typeof c !== 'object') return
@@ -296,13 +296,35 @@ function validateManifest(raw, oboxApiVersion) {
       messages.push({ level: 'error', message: 'views 必须是 [{id, title, icon, group?}] 数组' })
     }
   }
+  // issue #84：与宿主 core/manifest.ts:105-119 同义——这四类此前不校验形状，`"navItems": {}`
+  // 能过校验却让宿主注册期 `for...of` 抛 TypeError。只补"必须是数组"（逐项缺字段仍是宿主 warning）。
+  if (contributes && typeof contributes === 'object' && contributes.navItems !== undefined) {
+    if (!Array.isArray(contributes.navItems)) {
+      messages.push({ level: 'error', message: 'navItems 必须是 [{id, title, icon, view?}] 数组' })
+    }
+  }
+  if (contributes && typeof contributes === 'object' && contributes.statusBarItems !== undefined) {
+    if (!Array.isArray(contributes.statusBarItems)) {
+      messages.push({ level: 'error', message: 'statusBarItems 必须是 [{id, name}] 数组' })
+    }
+  }
+  if (contributes && typeof contributes === 'object' && contributes.commands !== undefined) {
+    if (!Array.isArray(contributes.commands)) {
+      messages.push({ level: 'error', message: 'commands 必须是 [{command, title}] 数组' })
+    }
+  }
+  if (contributes && typeof contributes === 'object' && contributes.themes !== undefined) {
+    if (!Array.isArray(contributes.themes)) {
+      messages.push({ level: 'error', message: 'themes 必须是 [{id, label, tokens}] 数组' })
+    }
+  }
   if (m.extensionDependencies !== undefined) {
     const deps = m.extensionDependencies
     if (!Array.isArray(deps) || deps.some((d) => typeof d !== 'string')) {
       messages.push({ level: 'error', message: 'extensionDependencies 必须是字符串数组' })
     }
   }
-  // 与宿主 core/manifest.ts:106 同义（issue #83 两侧语义对齐）：先判数组再查自身。
+  // 与宿主 core/manifest.ts:126 同义（issue #83 两侧语义对齐）：先判数组再查自身。
   // 旧写法用 `typeof …includes === 'function'` 探测，对 `{includes: fn}` 这类值会真的调它，
   // 与宿主的 `Array.isArray` 判据不等价；而宿主原本连形状都没判，非数组时直接抛 TypeError。
   if (Array.isArray(m.extensionDependencies) && m.extensionDependencies.includes(m.name)) {

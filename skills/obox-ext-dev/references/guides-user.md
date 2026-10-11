@@ -46,7 +46,7 @@ export default function myHello(api) {
 
 - **不许 `import 'vue'` 或任何裸模块**：`app://` 下没有模块解析器，运行时只有注入的 `api`、标准 JS 与 `fetch` 等。
 - 生命周期钩子（可选具名导出 `install` / `uninstall`）见 [api-reference.md](api-reference.md) 的「生命周期钩子」。
-- **界面怎么来**：`navItems[].view` 需要 Vue 组件对象（宿主按入口具名导出取组件，`core/host.ts:222-226`），而你的入口没有 Vue —— 用户扩展的界面用 **App 卡片静态页**（下一节）或 **`contributes.views` 树**（宿主内置树视图渲染，数据源 `api.views.registerTreeProvider(viewId, provider)`，`api/types.ts:449-451`）；纯命令 / 状态栏 / 通知类扩展不需要界面。
+- **界面怎么来**：`navItems[].view` 需要 Vue 组件对象（宿主按入口具名导出取组件，`core/host.ts:243-249`），而你的入口没有 Vue —— 用户扩展的界面用 **App 卡片静态页**（下一节）或 **`contributes.views` 树**（宿主内置树视图渲染，数据源 `api.views.registerTreeProvider(viewId, provider)`，`api/types.ts:449-451`）；纯命令 / 状态栏 / 通知类扩展不需要界面。
 - 贡献点声明与内置扩展同构（`contributes` 里写 `commands` / `statusBarItems` / `views` / `keybindings` / `menus` / `settings` / `themes` / `ipcChannels` / `i18n` / `updater` 等），但 **`titleKey` 对你无效**——它由宿主语言包解析（`components/NavBar.vue:14`、`components/TreeView.vue:65`），而用户扩展改不了 `src/renderer/src/i18n/locales/`，写了只会显示原始 key；要双语用 `api.i18n` 自己的命名空间。**命令必须先声明**：未声明的 `registerCommand` 会被 `registry.setCommandHandler` 抛错（`core/registry.ts:203`），扩展标红 `activationError`。
 
 ## 3. 两种形态
@@ -125,7 +125,7 @@ export default function myHello(api) {
 - iframe sandbox 为 `allow-scripts allow-same-origin allow-forms allow-popups`（`AppWindow.vue:150-157`）：**没有 `allow-modals` → 页内 `alert` / `confirm` / `prompt` 全部无效**，交互一律自绘 UI。
 - 主题：`srcdoc` 由宿主**自动注入**；**`url` 静态页由宿主经 `obox-theme` 消息下发**（跨源注入不了 CSS，协议与最小接收代码见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)）。仍**建议保留一份兜底**（老宿主 / 推送未达时不空白），但兜底值应集中在**一处**常量而不是散在 CSS 里。另：`url` 型卡片切主题**不重渲染**（变量更新，页内表单内容不丢），`html`/`srcdoc` 型**仍重渲染**。
 - 数据持久化用该页面自己的 `localStorage`（按 `app://` 源隔离，跨窗口/重启保留）。
-- 子窗口**不跑扩展代码**（`core/host.ts:907` 只注册贡献点不激活）：页面里没有 `api`，一切能力都靠下面这座消息桥。
+- 子窗口**不跑扩展代码**（`core/host.ts:929` 只注册贡献点不激活）：页面里没有 `api`，一切能力都靠下面这座消息桥。
 - 子窗口日志转发到主进程终端，前缀 `[child-renderer:<level>]`（`main/appWindow.ts:107-112`）。
 
 ### 子窗口 ↔ 扩展消息桥
@@ -136,9 +136,9 @@ export default function myHello(api) {
 | 页面 → 扩展 | `{ source: 'obox-app', action: 'obox-extension', appId, channel, payload, requestId }` | 转给注册该卡片的扩展的 `api.app.onMessage` handler（`AppWindow.vue:67-97`） |
 | 扩展 → 页面 | `{ source: 'obox-app', action: 'obox-extension-reply', requestId, result }`            | `result` = `{ ok: true, data }` 或 `{ ok: false, error }`                   |
 
-> 关联链路：子窗口 iframe → `AppWindow` → 主进程 → 主窗口宿主 → 卡片所属扩展的 handler → 回传（`main/appWindow.ts:131-188`、`core/host.ts:765-781`）。
+> 关联链路：子窗口 iframe → `AppWindow` → 主进程 → 主窗口宿主 → 卡片所属扩展的 handler → 回传（`main/appWindow.ts:131-188`、`core/host.ts:787-803`）。
 
-- `appId` 必须是**卡片 id**：宿主按它找卡片、再找所属扩展的 handler（`core/host.ts:766-772`）；没注册 handler 时 reply 为 `{ ok: false, error: '扩展未注册消息处理器' }`。
+- `appId` 必须是**卡片 id**：宿主按它找卡片、再找所属扩展的 handler（`core/host.ts:788-794`）；没注册 handler 时 reply 为 `{ ok: false, error: '扩展未注册消息处理器' }`。
 - `requestId` 由**页面自己生成**并在 reply 里比对（`AppWindow.vue:77,89` 原样回传）；主进程另有一层内部 requestId 做关联，别混用。
 - 单次请求 **60s 超时**（`main/appWindow.ts:162-168`，给模态框留时间），超时 reply `{ ok: false, error: '扩展未响应（超时）' }`。
 - 主窗口关闭时子窗口全部关闭（`main/appWindow.ts:191-199`）。
@@ -176,9 +176,9 @@ node scripts/pack.mjs   # 产出 out/<name>-<version>.oix
 ## 7. 安装与热生效
 
 - 扩展管理器工具栏「安装扩展」选 `.oix`，或把 `.oix` **拖进**扩展管理器视图（`extensions/ext-manager/ExtensionManagerView.vue:166-212,250-256`）。
-- 安装（含同名覆盖升级）成功后**立即热生效**：宿主清理旧实例 → 注册贡献点 → 激活，列表即时出现、导航 / 状态栏 / 命令立即可用，**无需重启**（`core/host.ts:934-972`、`ExtensionManagerView.vue:114-164`）。manifest 无效或激活失败 → 扩展在列表里标红，详情页给 `activationError`。
-- **禁用 / 卸载**才可能要求重启：未激活的扩展可立即热移除，**已激活的扩展禁用或卸载会标记需重启**并在 UI 出现「立即重启」（`core/host.ts:1057-1098`）。所以"升级 = 直接覆盖安装"是热路径，"先卸载再装"要走重启。
-- 内置扩展不可卸载；调试扩展不占安装态（`core/host.ts:1087-1088`）。
+- 安装（含同名覆盖升级）成功后**立即热生效**：宿主清理旧实例 → 注册贡献点 → 激活，列表即时出现、导航 / 状态栏 / 命令立即可用，**无需重启**（`core/host.ts:956-994`、`ExtensionManagerView.vue:114-164`）。manifest 无效或激活失败 → 扩展在列表里标红，详情页给 `activationError`。
+- **禁用 / 卸载**才可能要求重启：未激活的扩展可立即热移除，**已激活的扩展禁用或卸载会标记需重启**并在 UI 出现「立即重启」（`core/host.ts:1079-1120`）。所以"升级 = 直接覆盖安装"是热路径，"先卸载再装"要走重启。
+- 内置扩展不可卸载；调试扩展不占安装态（`core/host.ts:1109-1110`）。
 
 ## 8. 在 VS Code 里调试（不安装、不依赖 obox 源码）
 
@@ -248,7 +248,7 @@ npx vitest run test/python-runtime-task.test.ts          # 2) 解压 → 裁剪 
 
 - 需要预置第三方包（如 matplotlib）：`$env:OBOX_PACK_REQUIREMENTS = "matplotlib==3.11.2"`（要求 PATH 上有 `uv`，它按 `--python-platform` 交叉取对应架构的 wheel）；arm64 包再设 `$env:OBOX_PACK_ARCH = "arm64"` + arm64 归档跑一次。
 - **为什么是 vitest 任务而不是 CLI**：Node 原生跑 `.mts` 解析不了 `src/` 内部的无扩展名 import，vitest 走 Vite 解析、能直接复用 `src/main/pythonPackage.ts` 里已有单测的规划函数（`scripts/make-tray-icon.mts` 头部记录了同一坑）。
-- **manifest 声明**：`arch` + `python` **成对**写才会在安装期校验架构 —— 只写一个或写非法值 → `invalid-manifest`；架构不符 → `arch-mismatch`（`main/oixCore.ts:247-264`）。这两个字段**不在公开类型 `ExtensionManifest` 里**（`src/api/manifest.ts:9-33`），只被安装器读。**`python.requirements` 已移除（issue #82）**：它原先在 `validatePythonDeclaration` 里有校验分支，但安装器调用时只传 `{arch, python}`（`main/oixCore.ts:253`），该选项**从来没有生效过**，因此已从类型与校验里删掉（不做"安装期装依赖"）。清单里若仍留着 `requirements`，宿主**只忽略、不报错**（manifest 校验没有未知键严格校验）；预置第三方包的正式做法是打包期 `--target` 装进 `<扩展>/python/Lib/site-packages`（见上）。
+- **manifest 声明**：`arch` + `python` **成对**写才会在安装期校验架构 —— 只写一个或写非法值 → `invalid-manifest`；架构不符 → `arch-mismatch`（`main/oixCore.ts:247-264`）。这两个字段**不在公开类型 `ExtensionManifest` 里**（`src/api/manifest.ts:11-33`），只被安装器读。**`python.requirements` 已移除（issue #82）**：它原先在 `validatePythonDeclaration` 里有校验分支，但安装器调用时只传 `{arch, python}`（`main/oixCore.ts:253`），该选项**从来没有生效过**，因此已从类型与校验里删掉（不做"安装期装依赖"）。清单里若仍留着 `requirements`，宿主**只忽略、不报错**（manifest 校验没有未知键严格校验）；预置第三方包的正式做法是打包期 `--target` 装进 `<扩展>/python/Lib/site-packages`（见上）。
 - **第三方许可（必做）**：PSF License v2 要求保留许可证与版权声明、并附"对 Python 的修改摘要"（我们裁剪过运行时）：
 
   ```powershell

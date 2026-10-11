@@ -7,10 +7,19 @@ import type { Component } from 'vue'
 // 注意：必须用 api/runtime 的 Disposable（{ dispose(): void }），
 // 直接用裸 `Disposable` 会解析到 Node 全局的 Symbol.dispose 形状，导致返回对象被判为多余属性
 import type { Disposable } from '../../../api/runtime'
+import type {
+  CommandContribution,
+  KeybindingContribution,
+  MenuContribution,
+  NavItemContribution,
+  StatusBarItemContribution,
+  ThemeContribution,
+  ViewContribution
+} from '../../../api/contributions'
 import { registry } from './registry'
 import { deferredHookResult, executeExtensionHook, hookFailureForActivation } from './hookRuntime'
 import { resolveIpcChannelDeclaration } from '../../../shared/ipcDeclaration'
-import { makeExtensionInfo, topoSort } from './manifest'
+import { contributesArray, makeExtensionInfo, topoSort } from './manifest'
 import { stateStore } from './state'
 import { appStore } from './appStore'
 import { themeStore } from './theme'
@@ -122,7 +131,16 @@ class ExtensionHost {
   private registerContributions(ext: ExtensionInfo, module: ExtensionModule): void {
     const c = ext.manifest.contributes
     if (!c) return
-    for (const nav of c.navItems ?? []) {
+    // issue #84：贡献点数组一律经 `contributesArray` 读取。旧代码用 `c.x ?? []` 只兜 null/undefined，
+    // manifest 写成 `{}` / `5` / `true` 时 `for...of` 会抛 `TypeError: … is not iterable` 打断整轮注册。
+    const navItems = contributesArray<NavItemContribution>(c.navItems)
+    const statusBarItems = contributesArray<StatusBarItemContribution>(c.statusBarItems)
+    const commands = contributesArray<CommandContribution>(c.commands)
+    const themes = contributesArray<ThemeContribution>(c.themes)
+    const keybindings = contributesArray<KeybindingContribution>(c.keybindings)
+    const menus = contributesArray<MenuContribution>(c.menus)
+    const views = contributesArray<ViewContribution>(c.views)
+    for (const nav of navItems) {
       if (nav.id && nav.title && nav.icon) registry.registerNavItem(ext.id, nav)
       else
         ext.validations.push({
@@ -130,7 +148,7 @@ class ExtensionHost {
           message: `导航项缺少 id/title/icon: ${JSON.stringify(nav)}`
         })
     }
-    for (const sb of c.statusBarItems ?? []) {
+    for (const sb of statusBarItems) {
       if (sb.id && sb.name) registry.registerStatusBarItem(ext.id, sb)
       else
         ext.validations.push({
@@ -138,7 +156,7 @@ class ExtensionHost {
           message: `状态栏项缺少 id/name: ${JSON.stringify(sb)}`
         })
     }
-    for (const cmd of c.commands ?? []) {
+    for (const cmd of commands) {
       if (cmd.command && cmd.title) registry.registerCommand(ext.id, cmd, ext.validations)
       else
         ext.validations.push({
@@ -147,7 +165,7 @@ class ExtensionHost {
         })
     }
     // 主题贡献点：主题扩展声明 CSS 变量组
-    for (const theme of c.themes ?? []) {
+    for (const theme of themes) {
       if (theme.id && theme.label && theme.tokens) themeStore.register(ext.id, theme)
       else
         ext.validations.push({
@@ -162,8 +180,8 @@ class ExtensionHost {
     // 更新提供者（manifest 声明；设置-更新选择生效，只能一个）
     if (c.updater) updaterStore.register(ext.id, c.updater.feedUrl)
     // 快捷键贡献：复用 keybindingStore（冲突检测/可改/设置页展示/持久化）；labelKey 用命令 title
-    for (const kb of c.keybindings ?? []) {
-      const cmd = c.commands?.find((x) => x.command === kb.command)
+    for (const kb of keybindings) {
+      const cmd = commands.find((x) => x.command === kb.command)
       if (!cmd) {
         ext.validations.push({
           severity: 'warning',
@@ -187,8 +205,8 @@ class ExtensionHost {
       keybindingStore.register({ command: kb.command, labelKey: cmd.title, defaultKey: kb.key })
     }
     // 上下文菜单：命令挂到该扩展 App 卡片右键（command 须已声明）
-    for (const menu of c.menus ?? []) {
-      if (!c.commands?.some((x) => x.command === menu.command)) {
+    for (const menu of menus) {
+      if (!commands.some((x) => x.command === menu.command)) {
         ext.validations.push({
           severity: 'warning',
           message: `menus 引用的命令 ${menu.command} 未在 contributes.commands 声明`
@@ -198,11 +216,11 @@ class ExtensionHost {
       registry.registerMenu(ext.id, menu)
     }
     // 树视图：声明即注册为导航项（view = 内置 'obox.tree'；数据源由 api.views 提供）
-    for (const v of c.views ?? []) {
+    for (const v of views) {
       registry.registerNavItem(ext.id, { ...v, view: 'obox.tree' })
     }
     // 校验视图引用：导航项声明的 view 必须在扩展模块具名导出中存在
-    for (const nav of c.navItems ?? []) {
+    for (const nav of navItems) {
       if (nav.view && !(nav.view in module)) {
         ext.validations.push({
           severity: 'warning',
@@ -223,7 +241,8 @@ class ExtensionHost {
     }
 
     // 视图组件导出表（导航项 view 引用）→ 登记进注册表
-    for (const nav of ext.manifest.contributes?.navItems ?? []) {
+    // issue #84：同样走 `contributesArray`（非数组按空处理），激活期也绝不因坏清单抛 TypeError
+    for (const nav of contributesArray<NavItemContribution>(ext.manifest.contributes?.navItems)) {
       if (nav.view && nav.view in module) {
         registry.registerViewComponent(nav.view, module[nav.view] as Component)
       }

@@ -1,0 +1,8 @@
+{
+  "name": "bad-themes-shape",
+  "version": "1.0.0",
+  "main": "./index.js",
+  "contributes": {
+    "themes": 5
+  }
+}

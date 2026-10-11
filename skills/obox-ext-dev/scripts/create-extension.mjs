@@ -25,7 +25,11 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 /** 仓库根：skills/obox-ext-dev/scripts → 上三级 */
 const PROJECT_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
 
-/** 与宿主 core/manifest.ts:9 的 NAME_RE 完全一致（注意带 i：`MyExt` 是合法的） */
+/**
+ * 脚手架自己的 id 校验：**仍带 `i`**（未与宿主同步，见 scripts/README.md 与 issue #77）。
+ * 宿主 `core/manifest.ts:11` 的 `NAME_RE` 已**不带 `i`**（大写 id 非法），因此这里放宽时
+ * 可能生成宿主判为「清单无效」的大写 id 骨架——传小写 id 即可避免。
+ */
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/i
 
 const HELP = [
@@ -33,7 +37,7 @@ const HELP = [
   '  node skills/obox-ext-dev/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]',
   '',
   '说明: 在 <obox 仓库>/src/renderer/src/extensions/<id>/ 生成内置扩展骨架。',
-  '      <id> 与宿主 NAME_RE 一致：^[a-z0-9][a-z0-9._-]*$（带 i）',
+  '      <id> 须匹配 ^[a-z0-9][a-z0-9._-]*$（宿主 NAME_RE 已不带 i：含大写即清单无效，请用小写）',
   '      用户扩展（纯 ESM + .oix）请用 create-user-extension.mjs',
   '',
   '退出码: 0 = 成功｜1 = 生成失败｜2 = 用法错误'

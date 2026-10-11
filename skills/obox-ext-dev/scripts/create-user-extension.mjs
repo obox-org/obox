@@ -34,7 +34,10 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
 /** 仓库根：skills/obox-ext-dev/scripts → 上三级 */
 const REPO_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
 
-/** 与宿主 core/manifest.ts:9 的 NAME_RE 一致（带 i） */
+/**
+ * 脚手架自己的 id 校验：**仍带 `i`**（未与宿主同步，见 scripts/README.md 与 issue #77）。
+ * 宿主 `core/manifest.ts:11` 的 `NAME_RE` 已**不带 `i`**（大写 id 非法）——请传小写 id。
+ */
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/i
 
 const HELP = [
@@ -43,7 +46,7 @@ const HELP = [
   '       [--author "作者"] [--desc "简介"] [--dir <父目录>] [--vue]',
   '',
   '说明: 生成 <父目录>/<id>/（默认 <仓库根>/extensions/<id>/）—— 纯 ESM 用户扩展 + .oix 打包脚本。',
-  '      <id> 与宿主 NAME_RE 一致：^[a-z0-9][a-z0-9._-]*$（带 i）',
+  '      <id> 须匹配 ^[a-z0-9][a-z0-9._-]*$（宿主 NAME_RE 已不带 i：含大写即清单无效，请用小写）',
   '',
   '退出码: 0 = 成功｜1 = 生成失败｜2 = 用法错误'
 ].join('\n')

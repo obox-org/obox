@@ -1,0 +1,8 @@
+{
+  "name": "bad-commands-shape",
+  "version": "1.0.0",
+  "main": "./index.js",
+  "contributes": {
+    "commands": true
+  }
+}

@@ -46,7 +46,7 @@ function readThemeTokens(): Record<string, string> {
 
 /**
  * 主题快照（模块级状态，每个渲染窗口各一份）。
- * 子窗口启动时 `host.start()` 收尾已 `applyCurrent()`（core/host.ts:933），
+ * 子窗口启动时 `host.start()` 收尾已 `applyCurrent()`（core/host.ts:952），
  * 因此在 setup 阶段同步取一次就有值（设计 §2.7.3 第 2 步）。
  */
 const themeId = ref(themeStore.currentId)

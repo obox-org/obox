@@ -1,10 +1,10 @@
 /**
  * manifest 校验规则单测（validateManifest）。
  * 覆盖：name/version/main/apiVersion/extensionDependencies（含非数组值不得抛错的回归，
- * issue #83）/keybindings/contributes。
+ * issue #83）/keybindings/contributes/贡献点数组形状（issue #84 的四类补充 + contributesArray 防御）。
  */
 import { describe, expect, it } from 'vitest'
-import { validateManifest } from '../src/renderer/src/core/manifest'
+import { contributesArray, validateManifest } from '../src/renderer/src/core/manifest'
 
 function errors(raw: unknown): string[] {
   return validateManifest(raw)
@@ -181,5 +181,77 @@ describe('validateManifest contributes.ipcChannels（issue #45）', () => {
       }
     })
     expect(e[0]).toMatch(/通道 id 重复/)
+  })
+})
+
+describe('validateManifest 贡献点数组形状（issue #84）', () => {
+  // 这四类此前**完全不校验**形状：`"navItems": {}` 能通过校验、进入激活阶段，
+  // 然后宿主注册期的 `for (const x of ({} ?? []))` 抛 `TypeError: {} is not iterable`。
+  const cases: Array<[string, string, unknown]> = [
+    ['导航项', 'navItems', {}],
+    ['状态栏项', 'statusBarItems', 5],
+    ['命令', 'commands', true],
+    ['主题', 'themes', {}]
+  ]
+
+  it.each(cases)(
+    '%s（contributes.%s）非数组 → 干净的形状 error，逐字对齐脚本副本',
+    (label, key, value) => {
+      const expected: Record<string, string> = {
+        navItems: 'navItems 必须是 [{id, title, icon, view?}] 数组',
+        statusBarItems: 'statusBarItems 必须是 [{id, name}] 数组',
+        commands: 'commands 必须是 [{command, title}] 数组',
+        themes: 'themes 必须是 [{id, label, tokens}] 数组'
+      }
+      let messages: ReturnType<typeof validateManifest> = []
+      expect(() => {
+        messages = validateManifest({ ...valid, contributes: { [key]: value } })
+      }, label).not.toThrow()
+      expect(messages.map((m) => `${m.severity}:${m.message}`)).toEqual([`error:${expected[key]}`])
+    }
+  )
+
+  it('非数组一律报 error（{} / 5 / true / 字符串 / null 全覆盖，且都不抛）', () => {
+    for (const key of ['navItems', 'statusBarItems', 'commands', 'themes']) {
+      for (const value of [{}, 5, true, 'x', null]) {
+        const raw = { ...valid, contributes: { [key]: value } }
+        let messages: ReturnType<typeof validateManifest> = []
+        expect(
+          () => {
+            messages = validateManifest(raw)
+          },
+          `${key}=${JSON.stringify(value)}`
+        ).not.toThrow()
+        expect(
+          messages.map((m) => m.message),
+          `${key}=${JSON.stringify(value)}`
+        ).toEqual([expect.stringContaining('必须是')])
+      }
+    }
+  })
+
+  it('合法数组行为不变：完整声明无 error，逐项缺字段仍只是宿主侧 warning（校验层不管）', () => {
+    expect(
+      errors({
+        ...valid,
+        contributes: {
+          navItems: [{ id: 'a.main', title: '主页', icon: '<svg/>' }],
+          statusBarItems: [{ id: 'a.status', name: '状态' }],
+          commands: [{ command: 'a.do', title: '做事' }],
+          themes: [{ id: 'a.theme', label: '主题', tokens: { '--bg': '#000' } }]
+        }
+      })
+    ).toEqual([])
+    // 数组里逐项缺字段：校验层不看（宿主注册期给 warning）
+    expect(errors({ ...valid, contributes: { commands: [{ command: 'a.do' }] } })).toEqual([])
+  })
+
+  it('contributesArray：宿主消费前的形状防御（非数组 → 空数组，绝不抛）', () => {
+    expect(contributesArray([1, 2])).toEqual([1, 2])
+    expect(contributesArray(undefined)).toEqual([])
+    for (const value of [{}, 5, true, 'x', null]) {
+      expect(() => contributesArray(value), JSON.stringify(value)).not.toThrow()
+      expect(contributesArray(value)).toEqual([])
+    }
   })
 })
