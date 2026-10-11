@@ -31,6 +31,12 @@ type TreeKey =
 const active = ref<TreeKey>('appearance')
 const activeExt = ref<string | null>(null)
 
+/** 点左树「扩展」节点：切到扩展分区**列表态**（清子项选中，否则右侧仍停在上次打开的扩展上） */
+function selectExtensions(): void {
+  active.value = 'extension'
+  activeExt.value = null
+}
+
 // ---- 主题 ----
 const themes = computed(() => themeStore.themes)
 const currentTheme = computed(() => themeStore.currentId)
@@ -263,7 +269,11 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
       >
         <span class="tree-label">{{ t('settings.tree.notification') }}</span>
       </div>
-      <div class="tree-node" :class="{ active: active === 'extension' && !activeExt }">
+      <div
+        class="tree-node"
+        :class="{ active: active === 'extension' && !activeExt }"
+        @click="selectExtensions()"
+      >
         <span class="tree-label">{{ t('settings.tree.extensions') }}</span>
       </div>
       <!-- 扩展节点下的扩展列表 -->
