@@ -391,6 +391,7 @@ await db.close()
 - 条件对象（`get_by`/`update`/`del_by` 的 where）只支持**等值匹配**，多键为 AND；复杂条件用 `query` 写 SQL
 - 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:626-632`）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 也**不经 `call()`**，直接返回 IPC 原始结果（`host.ts:656`，主进程侧是无返回值句柄关闭，`src/main/sqlite.ts:78-80`），因此对不存在的库 `close()` 静默无操作、**不会抛错**
 - 全部方法 `async`（经 IPC 到主进程）；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
+- **数据目录的生命周期**：库文件在 `<扩展>/data/<name>.db`（安装态即 `userData/extensions/<扩展id>/data/`）；**覆盖安装（升级）时宿主保留 `data/`**，所以数据不会因升级丢失；**卸载时 `data/` 随扩展目录一起删除**。因此打包时不要把 `data/` 放进 `.oix`——宿主会直接拒收（见 [guides-user.md](guides-user.md) §6）
 
 ### notification（系统提醒，操作系统通知）
 
@@ -600,7 +601,7 @@ off.dispose() // 注销数据源
 
 ```ts
 // 1) stdio：把随扩展分发的程序跑起来（program 必须是扩展目录内的相对路径）
-//    `.js/.cjs/.mjs` 会由宿主自带的 Node 运行；其它（Rust/Python/Go 产物）直接执行
+//    `.js/.cjs/.mjs` 以纯 Node 运行（语义见下方「JS 助手的运行时语义」）；其它（Rust/Python/Go 产物）直接执行
 await api.ipc.connect({
   id: 'worker',
   transport: 'stdio',
@@ -635,6 +636,13 @@ api.ipc.onClose('worker', (err) => console.warn('通道关闭', err.code))
 // 6) 关闭（扩展停用/卸载时宿主也会自动清理）
 await api.ipc.close('worker')
 ```
+
+**JS 助手的运行时语义**：`program` 以 `.js` / `.cjs` / `.mjs` 结尾时，宿主用**宿主进程自带的 Node**（`process.execPath`）运行它，并给子进程注入 `ELECTRON_RUN_AS_NODE=1`（`src/main/ipc.ts:155-163`、`src/main/ipcTransport.ts:28-35`）——助手是**纯 Node 程序**，不是 Electron 应用（`process.versions.electron` 仍有值，用的还是同一个可执行文件，只是按 Node 模式启动）：
+
+- **可用 `node:*` 内置模块**：`node:fs` / `node:path` / `node:child_process`…都行，**包括 `node:sqlite`**——助手可以**自己建库、自己读写**，不必绕经 `api.sqlite`（`api.*` 那条路按扩展隔离数据目录；助手这条路就是普通 Node 进程）
+- **stdin / stdout 正常工作**：宿主按声明的 `framing` 把请求写进 stdin，助手从 stdout 回包即可；日志一律写 **stderr**（stdout 只放协议数据）
+- **Node 版本 = 宿主内置 Electron 的 Node**（助手内 `process.versions.node` 可查，与 `api.env.nodeVersion` 同一份运行时）：宿主**不额外安装 Node**，助手也不要假设系统 PATH 上有独立的 `node`
+- **cwd = 扩展源目录下的 `data/`**：安装态是 `userData/extensions/<扩展id>/data`，调试态是**调试目录的 `data/`**（见下表「stdio 的 cwd」）
 
 | 项             | 说明                                                                                                                                                                                                                                                                                                  |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

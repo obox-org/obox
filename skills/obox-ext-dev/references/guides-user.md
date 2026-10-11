@@ -146,11 +146,24 @@ export default function myHello(api) {
 
 ## 6. 打包 `.oix`
 
-`.oix` 就是 zip（扁平布局，`main/oix.ts:6`），三条硬性要求：
+`.oix` 就是 zip（扁平布局，`main/oix.ts:6`），四条硬性要求：
 
 1. **`manifest.json` 必须是 zip 根条目**（不能套一层目录、不能带 `./` 前缀，否则 `invalid-manifest`；`main/oixCore.ts:56-67,206-208`）。
 2. zip 内路径用正斜杠：含反斜杠、绝对路径、`..`、空段的条目整体拒绝（zip-slip 防护，`main/oixCore.ts:73-86`）。
 3. `manifest.main` 指向的入口必须在包内（`./index.js` 与 `index.js` 等价，`main/oixCore.ts:219-222`）。
+4. **`data/` 不得进包**：`data/` 是宿主分配的**运行时数据目录**（`userData/extensions/<id>/data`：`api.fs` / `api.sqlite` / `api.python` 都写这里），也是**覆盖安装时宿主保留**的那份数据。包内出现 `data/**` 时安装器直接拒收（错误码 `forbidden-entry`，不落盘、不产生残留）；即便放行，也只会用包里的旧文件覆盖用户现场数据。所以打包时**显式排除 `data/`**，顺带排除 `out/`、`node_modules/`、`.git/`。
+
+排除写法（脚手架生成的 `scripts/pack.mjs` 已按此实现）：**白名单收集**最稳——只列要进包的条目（`manifest.json`、入口、静态资源、构建产物目录），递归时按目录名跳过：
+
+```js
+const SKIP_DIRS = new Set(['data', 'out', 'node_modules', '.git'])
+for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  if (SKIP_DIRS.has(entry.name)) continue // data/ 进包 → 宿主 forbidden-entry 拒收
+  // …目录递归、文件读入…
+}
+```
+
+打完自检：`tar -tf out/<id>-<version>.oix` 里不应出现 `data/` 条目（`.oix` 就是 zip）。
 
 打包用脚手架生成的零依赖脚本：
 

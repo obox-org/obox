@@ -219,6 +219,7 @@ export function uninstall(ctx) {
 | `invalid-manifest` | 缺**根目录** `manifest.json`，或 `name`/`version`/`main` 非法——常见是打包时把文件放进了子目录（必须扁平在 zip 根） |
 | `entry-missing`    | `manifest.main` 写的路径在包内不存在——注意 `./index.js` 与 `index.js` 的差别，以及是否漏打包入口                   |
 | `entry-invalid`    | 包内含非法条目路径（`../`、绝对路径、反斜杠、空段）——属 zip-slip 防护，换工具重新打包                              |
+| `forbidden-entry`  | 包内含 `data/`（扩展运行时数据目录，升级时由宿主保留）——打包时排除它，见 #28                                       |
 | `too-large`        | 条目数 > 10000 或解压总量 > 512MB——检查是否误把 `node_modules/`、`dist/` 全打进包了                                |
 | `arch-mismatch`    | 声明的 `arch` 与当前设备不符（如 arm64 包在 x64 机器上装）——换对应架构的包；这是**安装期**校验，不会留下半安装目录 |
 | `path-invalid`     | 传入路径为空或文件不存在（拖拽场景取到的是空路径）                                                                 |
@@ -319,3 +320,17 @@ export function uninstall(ctx) {
 | 应用退出后仍有孤儿子进程                         | 已落地：`before-quit` 遍历已知扩展统一清理（ADR-0019 决策 10）                                                                                   | 看主进程日志里是否有 `[quit] 主进程资源清理完成：N 个扩展`；没有则是退出路径没走到 `before-quit` |
 
 **注意**：关窗不再等于退出，所以**不要**把扩展清理只挂在窗口关闭上——宿主仍会在扩展停用/卸载时调用 `extension:cleanup`。
+
+## 28. 安装 `.oix` 报 `forbidden-entry`（包内含 `data/`）
+
+**症状**：安装 `.oix` 时扩展管理器提示安装失败，错误码 `forbidden-entry`，文案「包内不得包含 data/ 目录：它是扩展运行时数据目录，升级时由宿主保留」。
+
+**原因**：安装器在解压前逐条校验 zip 条目，命中 `data/` 或 `data/**` 就整体拒收（不落盘，暂存目录被清理、`targetRoot` 下无残留）。`data/` 是宿主给扩展分配的**运行时数据目录**（安装态 `userData/extensions/<id>/data`，`api.fs` / `api.sqlite` / `api.python` 都写这里），**覆盖安装时宿主保留它**——若允许包内携带，升级就会用包里的旧数据覆盖用户现场数据。
+
+**修复**：打包时**排除 `data/`**（同时排除 `out/`、`node_modules/`、`.git/`）：
+
+- **白名单收集**（推荐，脚手架生成的 `scripts/pack.mjs` 就是这么写的）：只列要进包的条目（`manifest.json`、入口、静态资源、构建产物目录）；
+- 递归收集时按**目录名**跳过 `data`（打包脚本通常已跳过 `node_modules/`/`.git/`，把 `data` 加进同一份跳过表即可）；
+- 打完自检：`tar -tf out/<id>-<version>.oix` 里不应出现 `data/` 条目。
+
+> 升级**保留数据**依赖的是宿主对 `data/` 的保留（见 [api-reference.md](api-reference.md) 的 `api.sqlite`），与包内排除 `data/` 是同一件事的两面：包负责不携带数据，宿主负责不删除数据。

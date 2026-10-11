@@ -109,6 +109,7 @@ export type InstallOixErrorCode =
   | 'invalid-manifest'
   | 'entry-missing'
   | 'entry-invalid'
+  | 'forbidden-entry'
   | 'too-large'
   | 'path-invalid'
   | 'write-failed'
