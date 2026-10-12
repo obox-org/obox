@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { contributesArray, validateManifest } from '../src/renderer/src/core/manifest'
+import { checkIpcChannelList } from '../src/shared/ipcDeclaration'
 
 function errors(raw: unknown): string[] {
   return validateManifest(raw)
@@ -185,13 +186,26 @@ describe('validateManifest contributes.ipcChannels（issue #45）', () => {
 
   // issue #43（Q2 = 方案 A 锁死）：清单声明面不新增 `mode`；写了未知键**不报错也不生效**
   // （服务端角色由运行时 `api.ipc.listen()` 建立，与清单无关）。
-  it('未知键：contributes.ipcChannels 项带 mode 时清单仍然有效', () => {
+  //
+  // 用**非法枚举值**（`bogus`）而不是 `'server'`：若将来有人给声明加"mode 必须 ∈ {client,server}
+  // 否则 throw"的严格校验，合法值不会红、非法值才会红 —— 这条断言因此真的锁住"未知键静默忽略"。
+  it('未知键：contributes.ipcChannels 项带 mode（含非法枚举值）时清单仍然有效', () => {
     expect(
       errors({
         ...valid,
-        contributes: { ipcChannels: [{ id: 'bus', transport: 'pipe', mode: 'server' }] }
+        contributes: { ipcChannels: [{ id: 'bus', transport: 'pipe', mode: 'bogus' }] }
       })
     ).toEqual([])
+  })
+
+  // V15 的语义面：清单里写它**不生效** —— 校验过后声明里没有任何角色位，
+  // 因此不会带来任何监听（监听只能由运行时 api.ipc.listen() 建立）。
+  it('未知键：mode 不进校验后的声明（无角色位 → 不产生监听）', () => {
+    const checked = checkIpcChannelList([{ id: 'bus', transport: 'pipe', mode: 'bogus' }])
+    expect(checked).toEqual({ ok: true, declarations: [{ id: 'bus', transport: 'pipe' }] })
+    if (checked.ok) {
+      expect(Object.keys(checked.declarations[0])).toEqual(['id', 'transport'])
+    }
   })
 })
 

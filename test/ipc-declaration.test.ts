@@ -125,21 +125,37 @@ describe('checkIpcDeclaration（不抛错形式，供清单校验汇总）', () 
  *
  * 该用例把"写了 `mode` 既不报错也不生效"这一**静默行为**锁死：将来若有人真的给声明加 `mode` 语义，
  * 必须先让这条红，从而被迫回到 spec/设计。
+ *
+ * 喂的必须是**非法枚举值**（`bogus`）与未知键：只喂合法值 `'server'` 时，若有人加
+ * "mode 必须 ∈ {client,server} 否则 throw" 的严格校验，这些用例会照样全绿 —— 无效锁。
  */
 describe('未知键静默忽略（issue #43 Q2=A 锁死）', () => {
-  it('未知键：清单形状带 mode 不报错，且归一化后的声明不含 mode', () => {
-    const raw = { id: 'bus', transport: 'pipe', mode: 'server' }
-    // ① 逐键白名单读取：不抛错，且返回的声明里没有 mode
-    expect(validateIpcDeclaration(raw)).toEqual({ id: 'bus', transport: 'pipe' })
-    // ② 清单列表校验同样通过
-    const checked = checkIpcChannelList([raw])
-    expect(checked.ok).toBe(true)
-    if (checked.ok) {
-      expect('mode' in checked.declarations[0]).toBe(false)
-      expect(checked.declarations[0]).toEqual({ id: 'bus', transport: 'pipe' })
+  it('未知键：清单形状带 mode（含非法枚举值）/role 不报错，且归一化后的声明不含它们', () => {
+    const shapes = [
+      { id: 'bus', transport: 'pipe', mode: 'server' },
+      { id: 'bus', transport: 'pipe', mode: 'bogus' },
+      { id: 'bus', transport: 'pipe', role: 'server' }
+    ]
+    for (const raw of shapes) {
+      const label = JSON.stringify(raw)
+      // ① 逐键白名单读取：不抛错（**非法枚举值也不抛**），且返回的声明里没有未知键
+      expect(validateIpcDeclaration(raw), label).toEqual({ id: 'bus', transport: 'pipe' })
+      expect(Object.keys(validateIpcDeclaration(raw)), label).toEqual(['id', 'transport'])
+      expect(JSON.stringify(validateIpcDeclaration(raw)), label).not.toContain('mode')
+      expect(JSON.stringify(validateIpcDeclaration(raw)), label).not.toContain('role')
+      // ② 清单列表校验同样通过
+      const checked = checkIpcChannelList([raw])
+      expect(checked.ok, label).toBe(true)
+      if (checked.ok) {
+        expect('mode' in checked.declarations[0], label).toBe(false)
+        expect(checked.declarations[0], label).toEqual({ id: 'bus', transport: 'pipe' })
+      }
+      // ③ 也不产生任何"服务端角色"信息：按 id 解析出来还是普通声明（= 采集端连接目标，不是监听）
+      expect(resolveIpcChannelDeclaration([validateIpcDeclaration(raw)], 'bus'), label).toEqual({
+        id: 'bus',
+        transport: 'pipe'
+      })
     }
-    // ③ 也不产生任何"服务端角色"信息
-    expect(JSON.stringify(validateIpcDeclaration(raw))).not.toContain('mode')
   })
 })
 

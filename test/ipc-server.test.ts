@@ -93,6 +93,7 @@ import {
   resetConnectionIdCounterForTest
 } from '../src/main/ipcServer'
 import { DEFAULT_TIMEOUT_MS, ipcEndpoint } from '../src/main/ipcCore'
+import { validateIpcDeclaration } from '../src/shared/ipcDeclaration'
 import {
   connectPeer,
   createServer,
@@ -228,6 +229,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  // 先恢复被 spy 的 fs 方法（POSIX 分支用例会包 fs.unlink / fs.chmod）
+  vi.restoreAllMocks()
   // 先恢复真实定时器：清理里的等待依赖它们
   vi.useRealTimers()
   for (const peer of peers.splice(0)) peer.destroy()
@@ -427,6 +430,31 @@ describe('api.ipc 服务端（listen 接受多连接）', () => {
     for (const [i, peer] of established.entries()) {
       expect(await peer.response(100 + i)).toMatchObject({ result: { i } })
     }
+  })
+
+  /**
+   * M1 加固：上一条用例引用 `MAX_CONNECTIONS_PER_SERVER`，常量从 16 漂到 17 时它**跟着漂**、照样全绿。
+   * 这条把上限**写死成字面量 16**（不引用常量），锁的是"行为"而不是"常量值"：
+   * 第 17 个对端必须被拒、且 `connection` 事件恰好 16 次。
+   */
+  it('连接数上限（字面量 16）：17 个对端里 connection 事件恰好 16 次，第 17 个拿到 [too-many-connections]', async () => {
+    expect((await callListen(EXT, { id: 'svc', transport: 'pipe' })).ok).toBe(true)
+
+    const opened: IpcPeer[] = []
+    for (let i = 0; i < 17; i++) {
+      opened.push(await openPeer('svc', { label: `L${i}` }))
+    }
+
+    // 第 17 条被拒：一条 JSON-RPC 错误帧 + 断开
+    const rejected = opened[16]
+    const frame = await rejected.waitFor((m) => m.error !== undefined, 2000)
+    expect(frame?.id).toBeNull()
+    expect((frame?.error as { message: string }).message).toMatch(/^\[too-many-connections\]/)
+    expect(await rejected.waitForClose(2000)).toBe(true)
+
+    // 行为断言：恰好 16 条连入（**字面量**，常量改成 17 也会红）
+    expect(connectionIds()).toHaveLength(16)
+    expect(disconnectEvents()).toHaveLength(0)
   })
 
   it('连接数上限（注入小上限）：maxConnections=2 时第 3 条被拒、第 1/2 条不受影响', async () => {
@@ -679,5 +707,147 @@ describe('api.ipc 服务端（listen 接受多连接）', () => {
     // 对端收到 -32603 回包（socket.write 是真实 I/O，与定时器无关）
     const errFrame = await a.waitFor((m) => m.error !== undefined, 2000)
     expect((errFrame?.error as { code: number }).code).toBe(-32603)
+  })
+
+  /**
+   * M2（V15 的行为面）：清单里写 `mode` **不生效** —— 归一化后的声明里没有任何"角色位"，
+   * 因此它**不会**带来任何监听；端点只有显式 `api.ipc.listen()` 才会建立。
+   * 断言的后半段（显式 listen 后同一端点就连得上）证明前半段不是空洞断言。
+   */
+  it('V15：清单里写 mode 不产生任何监听（角色位进不了声明，监听只由 api.ipc.listen 建立）', async () => {
+    const ep = hostEndpoint(EXT, 'bus')
+    // 合法值 `'server'` 与**非法枚举值**都被白名单读取吞掉：既不过校验、也不进声明
+    for (const mode of ['server', 'bogus']) {
+      const declaration = validateIpcDeclaration({ id: 'bus', transport: 'pipe', mode })
+      expect(declaration, mode).toEqual({ id: 'bus', transport: 'pipe' })
+      expect(Object.keys(declaration), mode).toEqual(['id', 'transport'])
+    }
+    const declaration = validateIpcDeclaration({ id: 'bus', transport: 'pipe', mode: 'server' })
+
+    // 只有"清单声明"（哪怕写了 role 语义）→ 没有任何监听
+    expect(listExtensionChannels(EXT)).toEqual([])
+    await expect(connectPeer(ep)).rejects.toBeTruthy()
+
+    // 反向确认：同一端点只要显式 listen 就能连上（断言不空洞）
+    expect((await callListen(EXT, declaration)).ok).toBe(true)
+    await openPeer('bus')
+    expect(await waitFor(() => connectionIds().length === 1)).toBe(true)
+  })
+})
+
+/**
+ * H1 / M3：POSIX 专属分支（`plan.probeStale` / `plan.chmod`）的**注入式覆盖**。
+ *
+ * 为什么必须注入：本文件此前没有任何一处给 `openPipeServerTransport` 传 `platform:`，
+ * 于是 `plan.probeStale` 在 windows-latest（CI）上恒为 false，`src/main/ipcServer.ts` 里
+ * "探测到活端点则报错且**绝不 unlink**"（R10）、"陈旧则清理 + chmod"（R11）、"K3 竞态重试"、
+ * "dispose 收尾 unlink"四条分支在 CI 上**零覆盖**——把 unlink 插进探测命中分支也能全绿。
+ *
+ * 注入 `platform:'linux'` 只改**平台分叉判定**，端点仍是本机真实端点（Windows 命名管道 / POSIX 域套接字），
+ * 所以既不需要真实 UDS，也让断言落在真实 I/O 上：`vi.spyOn(fs,'unlink'|'chmod')` 记录调用，
+ * "活端点一次 unlink 都不许发"这条断言在违反 R10 时必然变红。
+ */
+describe('POSIX 分支注入（platform:"linux"）：R10 不删活端点 / 陈旧处置 / K3 竞态 / dispose 收尾', () => {
+  it('活端点：探测命中即 connect-failed（走探测分支的错误文案），且一次 unlink 都不发（R10）', async () => {
+    const ep = hostEndpoint(EXT, 'alive')
+    const occupy = createServer(() => {})
+    extraServers.push(occupy)
+    await listen(occupy, ep)
+
+    const unlinkSpy = vi.spyOn(fs, 'unlink')
+    const server = openPipeServerTransport({ endpoint: ep, platform: 'linux', maxConnections: 4 })
+    cleanups.push(() => server.dispose())
+
+    // 探测分支自己的文案（不是 toConnectFailed 的"已被占用或无法监听"）→ 证明确实命中了探测
+    await expect(server.ready).rejects.toMatchObject({ code: 'connect-failed' })
+    await expect(server.ready).rejects.toThrow(/^\[connect-failed\] 端点已被占用: /)
+
+    // **核心断言（H1）**：活着的端点绝不能被 unlink —— 删活端点就是 R10 违规
+    expect(unlinkSpy).not.toHaveBeenCalled()
+    // 端点确实还活着：探测为 true，对端仍能连上
+    await expect(probeEndpointAlive(ep)).resolves.toBe(true)
+    const peer = await connectPeer(ep)
+    peers.push(peer)
+    expect(peer.isClosed).toBe(false)
+  })
+
+  it('probeEndpointAlive：活端点 true / 不存在的端点 false（不用 mock）', async () => {
+    const live = hostEndpoint(EXT, 'probe-live')
+    const occupy = createServer(() => {})
+    extraServers.push(occupy)
+    await listen(occupy, live)
+
+    await expect(probeEndpointAlive(live)).resolves.toBe(true)
+    await expect(probeEndpointAlive(hostEndpoint(EXT, 'probe-gone'))).resolves.toBe(false)
+  })
+
+  it('陈旧端点：listen 前清理一次、listen 后 chmod 0600、dispose 时再清理一次（R11 + 收尾分支）', async () => {
+    const ep = hostEndpoint(EXT, 'stale-injected')
+    const unlinkSpy = vi.spyOn(fs, 'unlink')
+    const chmodSpy = vi.spyOn(fs, 'chmod')
+
+    const server = openPipeServerTransport({
+      endpoint: ep,
+      platform: 'linux',
+      maxConnections: 4,
+      log: () => {}
+    })
+    await server.ready
+
+    // ① 陈旧清理分支：探测判定"陈旧"→ listen 之前对端点做过一次 unlink
+    expect(unlinkSpy.mock.calls.map((call) => String(call[0]))).toEqual([ep])
+    // ② chmod 分支：listen 成功后 chmod 0600
+    expect(chmodSpy.mock.calls.map((call) => [String(call[0]), call[1]])).toEqual([[ep, 0o600]])
+
+    // ③ 端点真的在监听
+    const peer = await connectPeer(ep)
+    peers.push(peer)
+    expect(await waitFor(() => server.connectionCount === 1)).toBe(true)
+
+    // ④ dispose 收尾分支（`listening && plan.probeStale`）→ 再清理一次端点
+    server.dispose()
+    expect(unlinkSpy.mock.calls.map((call) => String(call[0]))).toEqual([ep, ep])
+  })
+
+  it('K3 竞态：探测判定"陈旧"后被他人抢先 listen → unlink 后重试一次并成功（重试分支）', async () => {
+    const ep = hostEndpoint(EXT, 'race')
+    const realUnlink = fs.unlink.bind(fs)
+    /** 抢先占住端点者：模拟"探测与 listen 之间的另一个进程" */
+    let occupier: net.Server | null = null
+    const unlinkCalls: number[] = []
+
+    const unlinkSpy = vi.spyOn(fs, 'unlink').mockImplementation(async (target) => {
+      unlinkCalls.push(unlinkCalls.length + 1)
+      const path = String(target)
+      if (unlinkCalls.length === 1) {
+        // 探测（陈旧）之后、真正 listen 之前：他人抢先 bind → 让第一次 listen 真报 EADDRINUSE
+        occupier = net.createServer()
+        await listen(occupier, path)
+        throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
+      }
+      // 重试前的清理：放掉抢先者，再真删端点文件（POSIX 需要，Windows 上是 EINVAL/ENOENT 无所谓）
+      const held = occupier
+      occupier = null
+      if (held) await new Promise<void>((r) => held.close(() => r()))
+      await realUnlink(path).catch(() => {})
+    })
+
+    const server = openPipeServerTransport({
+      endpoint: ep,
+      platform: 'linux',
+      maxConnections: 4,
+      log: () => {}
+    })
+    cleanups.push(() => server.dispose())
+
+    await expect(server.ready).resolves.toBeUndefined()
+    // 两次 unlink：① 陈旧清理 ② 竞态重试前的清理（重试分支确实跑到了）
+    expect(unlinkSpy).toHaveBeenCalledTimes(2)
+    expect(occupier).toBeNull()
+
+    // 重试真的 listen 成功了：对端能连上
+    const peer = await connectPeer(ep)
+    peers.push(peer)
+    expect(await waitFor(() => server.connectionCount === 1)).toBe(true)
   })
 })
