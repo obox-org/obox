@@ -620,6 +620,17 @@ await api.ipc.connect('worker')
 // 2) pipe：连接已在运行的进程（对端需按同样的端点命名约定监听）
 await api.ipc.connect({ id: 'svc', transport: 'pipe' })
 
+// 2b) 断线自动重连（issue #44）：只对 **pipe** 的**运行时**声明生效
+await api.ipc.connect({
+  id: 'bus',
+  transport: 'pipe',
+  autoReconnect: { retries: 5, backoffMs: 250 } // 缺省 retries=3 / backoffMs=250
+})
+api.ipc.onReconnect('bus', async ({ attempts }) => {
+  console.log(`第 ${attempts} 次尝试连上了，重新握手`)
+  await api.ipc.request('bus', 'hello', { proto: 2 }) // 协议层状态已归零，自行握手
+})
+
 // 3) 请求 / 通知
 const sum = await api.ipc.request('worker', 'sum', { a: 1, b: 2 }) // → 3
 await api.ipc.notify('worker', 'log', { text: 'hello' })
@@ -659,7 +670,7 @@ await api.ipc.close('worker')
 | 项             | 说明                                                                                                                                                                                                                                                                                                  |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 限额           | 每扩展最多 **4 条通道**（`src/main/ipc.ts:43`；**server 与 client 共用同一名字空间**，一条 server 只占 1 条）；**单个 server 最多 16 条连接**（`src/main/ipc.ts:45`，连接**不计入** 4 条上限，第 17 条被拒）；**每通道并发请求上限 64**（`src/main/ipcCore.ts:27`，超出抛 `too-many-requests`）；单条消息上限 **8MB**（`src/main/ipcCore.ts:23`）；请求默认 **30s** 超时（`src/main/ipcCore.ts:25`，`request(..., { timeoutMs })` 可覆盖） |
-| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `too-many-connections` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起）                                                     |
+| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `too-many-connections` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起；自动重连**不新增**错误码：重连窗口期复用 `not-connected`，放弃后复用断连那次的 `peer-crashed` + 后续 `not-connected`）                                                     |
 | 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程；server 则停止监听并断开全部连接）                                                                                                                                                              |
 | 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                                                                       |
 | stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（`src/main/ipc.ts:262`，不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`） |
@@ -690,7 +701,7 @@ await api.ipc.close('svc') // 停止监听 + 断开全部连接；不存在时�
 - **只支持 pipe**：`listen({ transport: 'stdio' })` 报 `invalid-declaration`（服务端不能拉起子进程；stdio 请用 `connect`）。
 - **名字唯一且与 client 通道共用命名空间**：同名再 `connect` 或 `listen` 都报 `invalid-declaration`；一条 server 只占"每扩展 4 条通道"里的 1 条。
 - **端点不带随机后缀**：Windows `\\.\pipe\obox-<扩展id>-<通道名>`；POSIX `<userData>/ipc/obox-<扩展id>-<通道名>.sock`。对端必须按这个约定拨号。
-- **`connectionId`**：进程内单调递增的**正数**，从 1 起、**永不复用**（同名 server 关闭后重建也不复用）；在 `(扩展id, 通道名, connectionId)` 三元组内解释，可直接打印进日志。宿主**不自动重连**服务端连接——对端回来就是一次新连入、拿一个新 ID。
+- **`connectionId`**：进程内单调递增的**正数**，从 1 起、**永不复用**（同名 server 关闭后重建也不复用）；在 `(扩展id, 通道名, connectionId)` 三元组内解释，可直接打印进日志。宿主**不自动重连**服务端连接——对端回来就是一次新连入、拿一个新 ID（`autoReconnect` 只作用于 **client 通道**，见下方「api.ipc 自动重连」）。
 - **定向 vs 广播**：server 名字下 `request` / `notify` **必须**给 `opts.connectionId`（省略报 `invalid-declaration`，避免"静默挑一条"的误投）；指向已断开/不存在的连接报 `not-connected`。反过来，**client 通道**传 `connectionId` 也报 `invalid-declaration`。
   **广播是通知语义**：`broadcast(name, method, params)` 不收集回包（返回 `Promise<void>`），已断开的连接跳过，**无连接时静默成功**；要"定向请求"请用 `request(..., { connectionId })`。
 - **连接上限 16**：第 17 条由宿主回一条 `{jsonrpc:'2.0', id:null, error:{code:-32603, message:'[too-many-connections] …'}}`（用该 server 声明的 `framing` 编码）后关闭，**不触发** `onConnection` / `onDisconnect`，已建立的 16 条不受影响。该错误码只对**对端**可见（扩展侧不触发事件）。
@@ -705,6 +716,57 @@ await api.ipc.close('svc') // 停止监听 + 断开全部连接；不存在时�
   ```ts
   if (typeof api.ipc.listen !== 'function') throw new Error('当前宿主版本不支持 pipe 服务端（需要 api.ipc.listen）')
   ```
+
+#### api.ipc 自动重连（客户端通道，issue #44）
+
+**默认不重连**（行为与以前逐字节一致）。让一条 **pipe** 通道在意外断线后由宿主自动重建：
+
+```ts
+await api.ipc.connect({ id: 'bus', transport: 'pipe', autoReconnect: { retries: 5, backoffMs: 250 } })
+
+api.ipc.onClose('bus', (err) => console.log('断了', err.code))          // 每个断连周期**恰好一次**
+api.ipc.onReconnect('bus', async ({ attempts }) => {                  // 每次重连成功后一次
+  console.log('连上了，共尝试', attempts)
+  await api.ipc.request('bus', 'hello')                               // 协议层状态已归零：自行握手
+})
+```
+
+**三条语义**（逐条都有测试锁死，见 `test/ipc-reconnect.test.ts`）：
+
+| 时刻 | 你会看到什么 |
+| --- | --- |
+| **在途请求** | 断线瞬间该通道所有挂起请求**立即**以 `peer-crashed` 失败；**绝不重放**（也不会在重连后补发）——要重发就自己在 `onReconnect` 里做 |
+| **重连期新请求** | `request` / `notify` 立即以 `not-connected` 失败（不排队、不延迟），文案含"正在重连"；`channels()` **仍含**该通道名 |
+| **状态保留** | 通道名 / 声明 / `framing` / 重连策略保留并沿用；**协议层状态全部丢弃**（新通道、请求 id 从 1 重新开始、挂起表为空） |
+
+**两种"不见了"必须分清**（只有这个判据，没有额外的失败事件）：
+
+- `await api.ipc.channels()` **仍含**该通道名 = **正在重连**（此时请求报 `not-connected` + "正在重连"）；
+- `channels()` **不含**该通道名 = **已放弃**（重试用尽；之后请求报既有的 `not-connected`）。
+- 放弃时**不会**补发第二次 `onClose`（一个断连周期只有一次），也不会触发 `onReconnect`。
+
+**配置与触发规则**：
+
+| 项 | 值 |
+| --- | --- |
+| 缺省 | `retries = 3`、`backoffMs = 250` |
+| 退避 | `250 → 500 → 1000 …`（×2）；**单次等待**封顶 **30000ms**；`retries` 本身**不封顶**（非负整数即可） |
+| `retries: 0` | 等价于**关闭**自动重连（与不写该键同效） |
+| `backoffMs: 0` | 合法 = 不等待（仍异步） |
+| 触发 | **首次连接成功后**发生 `peer-crashed`（对端进程退出 / 套接字关闭） |
+| **不触发** | `channel-closed`（你自己 `close()` / 扩展停用）、宿主清理、`protocol-error`（对端发非法帧，避免与坏对端无限拉锯）、**首次 `connect()` 失败**（仍抛 `connect-failed`，扩展自己决定要不要退避重试） |
+| 只对 pipe | `connect({ transport: 'stdio', autoReconnect: … })` → `invalid-declaration`（文案提示"自行 `connect()` 或改用 pipe"）。stdio 场景请在 `onClose` 里自己退避重连：`onClose` → `setTimeout` → 重新 `connect()` |
+| **只写在运行时对象里** | `autoReconnect` 只认 `connect({...})` 传的**运行时**声明对象；写进 manifest 的 `contributes.ipcChannels` **既不报错也不生效**（宿主会把这个键剥掉）。运行时对象上的非法值（负数 / 非整数 / 非对象）→ `invalid-declaration` |
+| 服务端不适用 | `autoReconnect` 只作用于 **client 通道**；`listen` 的服务端连接断连只通知（`onDisconnect`），对端回来是新连接、新 `connectionId` |
+| 重连期额度 | 窗口期**仍占** 1 条通道额度，因此此时不能再 `connect` 同名通道（会报"已打开"）；`close(name)` 在窗口期**立即**取消剩余重试（幂等，之后不再有 `onReconnect`） |
+
+**旧宿主兼容**（新扩展 + 旧宿主）：旧宿主不认识 `autoReconnect`（走白名单校验，未知键静默忽略）→ 通道**照常打开**、只是**不会重连**；`api.ipc.onReconnect` 也不存在。请特性检测：
+
+```ts
+if (typeof api.ipc.onReconnect !== 'function') {
+  // 旧宿主：自行在 onClose 里退避重连
+}
+```
 
 ### api.python（扩展自带的 Python 运行时，见 ADR-0018）
 

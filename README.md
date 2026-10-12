@@ -42,6 +42,7 @@ src/
 │   ├── ipcCore.ts   # IPC 协议核心（JSON-RPC 2.0 + 两种分帧 + 通道状态机 + 平台命名；不依赖 electron，可单测）
 │   ├── ipcTransport.ts # IPC **客户端**传输层（stdio 子进程 / 命名管道·Unix 域套接字 / 已有流；**不使用 TCP 端口**）
 │   ├── ipcServer.ts # IPC **服务端**传输（listen 一个端点接受多连接 + 连接 ID + 16 条上限 + POSIX 陈旧 .sock 清理与 0600；不依赖 electron，可单测）
+│   ├── ipcReconnect.ts # IPC **断线自动重连**控制器（退避 250/500/1000…封顶 30s + 可重连断因封闭清单 + 可注入 sleep；不依赖 electron，可单测）
 │   ├── hookBridge.ts # 生命周期钩子的请求/应答桥（10s 超时 + 送达/未送达三态；不依赖 electron，可单测）
 │   ├── hookRunner.ts # 钩子执行的主进程接线（找主窗口发请求、结算回包、补跑后落账）
 │   ├── paths.ts     # 主进程路径约定（扩展目录等；独立成模块以打破 capabilities ↔ hookRunner 的循环依赖）
