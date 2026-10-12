@@ -484,7 +484,17 @@ export interface ExtensionActivationApi {
      */
     broadcast(name: string, method: string, params?: unknown): Promise<void>
 
-    /** 处理**对端发来的请求**（双向）：返回值作为 JSON-RPC result 回给对端（client / server 通道都可用） */
+    /**
+     * 处理**对端发来的请求**（双向）：返回值作为 JSON-RPC result 回给对端（client / server 通道都可用）。
+     *
+     * **按通道名寻址的两条已知限制**（本期不改签名，见 issue #43 设计 D2 与
+     * `skills/obox-ext-dev/references/api-reference.md` 的「每连接独立会话」）：
+     * - 回调**不携带 `connectionId`**：server 通道上无法从 handler 得知请求来自哪条连接，
+     *   要按连接分派只能在 `onConnection` / `onDisconnect` 里自行维护映射（回包由宿主按内部
+     *   requestId 路由，不需要 ID）；
+     * - 同一通道名**只生效最先注册**的那个 handler（宿主取插入序第一个），后注册的既不生效也
+     *   不覆盖前一个；`dispose()` 掉前一个之后，后一个才顶上。
+     */
     onRequest(name: string, handler: (method: string, params: unknown) => unknown): Disposable
     /** 订阅对端通知 */
     onNotification(name: string, cb: (method: string, params: unknown) => void): Disposable

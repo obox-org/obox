@@ -123,10 +123,13 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 - **先看这一行**：主进程启动时会打印 `[debug] 调试扩展 N 个: id@路径`；若打印的是
   `[debug] 未提供 --debug-extension（仅加载内置/已安装扩展）`，说明**参数没传进来**（不是清单或入口的问题）。
-  开发版要写成 `npm run dev -- -- --debug-extension ...`：第一个 `--` 交给 npm，第二个才是 electron-vite 的 `--`；
-  electron-vite 把 `--` 之后的参数序列化成 `ELECTRON_CLI_ARGS`（`node_modules/electron-vite/dist/cli.js:58-60`），
-  启动 Electron 时再读回（`node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js:224`）——只写一个 `--`
-  （`npm run dev -- --debug-extension ...`）时参数会被 electron-vite 自己的选项解析吃掉，`options['--']` 为空、不会传给 Electron
+  开发版（`npm run dev`）**必须写两个 `--`**——第一个交给 npm，第二个才是 electron-vite 的 `--`：
+  `npm run dev -- -- --debug-extension <id>@<绝对路径>`（打包版直接 `obox.exe --debug-extension <id>@<路径>`，没有 npm 这一层）。
+  依据：electron-vite 只把 `--` **之后**的参数序列化成 `ELECTRON_CLI_ARGS`
+  （`node_modules/electron-vite/dist/cli.js:58-60`），启动 Electron 时再读回
+  （`node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js:224`）；只写一个 `--`
+  （`npm run dev -- --debug-extension ...`）时参数会被 electron-vite 自己的选项解析吃掉，`options['--']` 为空、不会传给 Electron。
+  **旧文档/网上示例里的单 `--` 写法必然失败，别照抄**（本仓库早期验收步骤里出现过，实测同样失败）
 - 参数格式：`--debug-extension <id>@<路径>`；id 须匹配 `^[a-z0-9][a-z0-9._-]*$/i`（**不区分大小写**，`src/main/debug.ts:12`）；路径**可相对**（宿主按主进程 cwd `resolve`，`src/main/debug.ts:32`），解析后必须存在，否则该条被忽略并打 warn
 - manifest 必须能经 `app://debug/<id>/manifest.json` 读到（协议只服务已声明的 id，`src/main/protocol.ts:48-58`）
 - 看宿主日志 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 …` 的**计数**是否把调试扩展算进去（该行只给数量、不列 id；id 与路径看 `[debug] 调试扩展 N 个: …`）；激活失败看扩展管理器详情页 `activationError`（调试扩展同样受声明式贡献点校验）

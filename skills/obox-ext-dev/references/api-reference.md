@@ -706,8 +706,9 @@ await api.ipc.close('svc') // 停止监听 + 断开全部连接；不存在时�
   **广播是通知语义**：`broadcast(name, method, params)` 不收集回包（返回 `Promise<void>`），已断开的连接跳过，**无连接时静默成功**；要"定向请求"请用 `request(..., { connectionId })`。
 - **连接上限 16**：第 17 条由宿主回一条 `{jsonrpc:'2.0', id:null, error:{code:-32603, message:'[too-many-connections] …'}}`（用该 server 声明的 `framing` 编码）后关闭，**不触发** `onConnection` / `onDisconnect`，已建立的 16 条不受影响。该错误码只对**对端**可见（扩展侧不触发事件）。
 - **断开与在途请求**：每条已被接受的连接**恰好触发一次** `onDisconnect(connectionId, { code, message })`；`code` 为 `peer-crashed`（对端崩溃/断开）、`protocol-error`（对端发非法帧）、`channel-closed`（扩展 `close()` / 扩展停用 / 应用退出）。断开瞬间该连接上**双向**的在途请求立即以断因码失败，**绝不重放**到后续新连接；同一 server 的其它连接完全不受影响。
-- **`close(name)` 统一语义**：按名字关闭该名字下的**一切**（client 通道或 server），**幂等**，都不存在时静默成功。
-- **每连接独立会话（已知限制）**：本期 `onRequest(name, handler)` **不**传 `connectionId`（回包按内部 requestId 路由，响应方向不需要 ID）。这是本期的**已知限制**：服务端侧拿不到请求来自哪条连接，需要按连接分派时只能在 `onConnection` / `onDisconnect` 里自行维护计数/顺序（例如按连入顺序维护队列）。`{ connectionId }` 只在**扩展主动发起**的 `request` / `notify` 上可用。
+- **`close(name)` 统一语义**：按名字关闭该名字下的**一切**（client 通道或 server），**幂等**，都不存在时静默成功。关闭时该通道的收尾事件**照常投递**（client 通道 → `onClose{channel-closed}`；server 通道 → 每条活动连接各一次 `onDisconnect{channel-closed}`），投递完成后该名字上的**监听器订阅一并作废**——同名通道再次 `listen` / `connect` 后要**重新注册** `onRequest` / `onClose` / `onDisconnect` 等处理器（否则收不到任何事件）。
+- **每连接独立会话（已知限制，issue #43 D2）**：`onRequest(name, handler)` **按通道名寻址**，回调签名只有 `(method, params)`——**不携带 `connectionId`**（回包由宿主按内部 requestId 路由，响应方向不需要 ID）。因此服务端侧**拿不到请求来自哪条连接**：需要按连接分派时只能在 `onConnection` / `onDisconnect` 里自行维护映射（例如按连入顺序排队 + 每条连接一个应用层会话 id，请求参数或回包里带上它）。`{ connectionId }` 只在**扩展主动发起**的 `request` / `notify` 上可用。
+- **同一通道名的多个 handler：只生效最先注册的那个**（不是"后面的覆盖前面的"）：宿主派发时取该通道名**插入序第一个** handler，后注册的既不生效也不覆盖前一个；只有当前一个被 `dispose()` 之后，下一个才顶上。所以每个通道名**只注册一个**请求处理器；要换实现请先 `dispose()` 旧的（`const d = api.ipc.onRequest(...)` → `d.dispose()`）。多实例子进程各自一个通道名，或改用 `onNotification` / `request` 分派，都是比"同名单挂多个 handler"更可靠的写法。
 - **平台差异**：
   - **Windows**：命名管道在内核命名空间、**无落盘文件** → 服务端不探测陈旧端点、不 `chmod`；
   - **POSIX**：`listen` 前会**试连探测**端点——连得上说明有活着的服务端 → 报 `connect-failed`（文案含"已被占用"）且**不删除**该文件；连不上（陈旧 `.sock`）→ `unlink` 后重新 `listen`；`listen` 成功后 `chmod 0600`；`close()` / 停用时 `unlink`。
