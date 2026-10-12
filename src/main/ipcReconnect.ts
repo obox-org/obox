@@ -49,6 +49,31 @@ export function backoffDelayFor(input: {
   return delay
 }
 
+/**
+ * 一次退避等待的定时器句柄（**可注入**；低-2 的整改点）。
+ *
+ * 为什么要把它抽出来：`unref()`（R11/K4）在**假定时器**下不可断言——`vi.useFakeTimers()` 造出的
+ * 定时器没有 `unref`，而生产写的是 `timer.unref?.()`，于是"删掉 unref 调用"不会有任何用例变红。
+ * 把定时器工厂做成注入缝隙后，测试可以传入带 `unref` spy 的假 timer，让这条行为真正可断言。
+ */
+export interface ReconnectTimerHandle {
+  /** 不要因为一次退避拖住进程退出/测试（K4）；实现可省略该方法 */
+  unref?(): void
+  /** 取消这次等待（`cancel()` 用；幂等） */
+  cancel(): void
+}
+
+/** 默认定时器工厂：`setTimeout` + `unref?.()` + `clearTimeout`（唯一涉及定时器的实现） */
+function defaultTimerFactory(delayMs: number, resolve: () => void): ReconnectTimerHandle {
+  const timer = setTimeout(resolve, delayMs)
+  return {
+    unref: (): void => {
+      timer.unref?.()
+    },
+    cancel: (): void => clearTimeout(timer)
+  }
+}
+
 export interface ReconnectControllerOptions {
   /** 重试次数上限（> 0；`0` 由调用方在声明层判为"关闭"，不会走到这里） */
   retries: number
@@ -70,6 +95,11 @@ export interface ReconnectControllerOptions {
   onGiveUp?: (lastError: unknown) => void
   /** 注入 sleep（默认 `setTimeout` + `unref()`；测试注入假实现以获得确定性序列） */
   sleep?: (ms: number) => Promise<void>
+  /**
+   * 注入定时器工厂（默认 `defaultTimerFactory`）。
+   * 测试用它传入带 `unref` spy 的假 timer，从而让 R11/K4 可断言（低-2）。
+   */
+  createTimer?: (delayMs: number, resolve: () => void) => ReconnectTimerHandle
 }
 
 export interface ReconnectController {
@@ -86,6 +116,7 @@ export function createReconnectController(
   options: ReconnectControllerOptions
 ): ReconnectController {
   const maxBackoffMs = options.maxBackoffMs ?? MAX_BACKOFF_MS
+  const createTimer = options.createTimer ?? defaultTimerFactory
   let running = false
   let cancelled = false
   let attempts = 0
@@ -96,14 +127,14 @@ export function createReconnectController(
   /** 默认 sleep：唯一涉及定时器的实现（先例 `ipcCore.ts` 的 `unref?.()`） */
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
+      const timer = createTimer(ms, () => {
         abortSleep = null
         resolve()
-      }, ms)
+      })
       timer.unref?.() // 不要因为一次退避拖住进程退出/测试（K4）
       abortSleep = (): void => {
         abortSleep = null
-        clearTimeout(timer)
+        timer.cancel()
         resolve()
       }
     })

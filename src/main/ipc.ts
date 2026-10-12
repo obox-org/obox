@@ -64,6 +64,14 @@ interface ClientReconnectBinding {
   rebuild: () => Promise<IpcTransportHandles>
   /** 当前控制器（窗口期有；成功/放弃后为 null） */
   controller: ReconnectController | null
+  /**
+   * 重连代次（issue #44 并发整改）：**每观测到一次可重连断线**就 +1。
+   *
+   * 在途 attempt 在 `rebuild()` 前后各取一次代次：不一致 ⇒ 这条刚建立的传输属于**上一代**
+   * （期间本通道又断了一次），必须**不挂传输、不触发事件、自弃**。这是"重连尝试在途时
+   * 对端再次崩"这一窗口期里区分"这条新传输还有效"与"它已经过期"的唯一依据。
+   */
+  epoch: number
 }
 
 /** 一条 client 通道（`connect` / 已有流）；重连窗口期 `transport` 为 null（R8） */
@@ -91,6 +99,19 @@ const pendingReplies = new Map<
   }
 >()
 let replySeq = 1
+/**
+ * 累计创建的重连控制器数（诊断/自检用）。
+ *
+ * 为什么要有它：`retries: 0` 的语义是"**不创建**任何控制器"（声明层就不写回 `autoReconnect`），
+ * 但这条不变量在外部**看不见**——"没有控制器"与"有控制器但立刻放弃"在事件/`channels()`/等待序列上
+ * 完全同形。这个计数器让两者可区分（先例：`hookBridge.ts` 的 `pendingCount()`）。
+ */
+let reconnectControllersCreated = 0
+
+/** 诊断出口：进程启动以来累计创建的重连控制器数（测试据此断言"没有控制器"） */
+export function reconnectControllerCount(): number {
+  return reconnectControllersCreated
+}
 
 function channelMap(extId: string): Map<string, OpenChannel> {
   const existing = channels.get(extId)
@@ -308,6 +329,11 @@ function attachClientChannel(
  *   `close{peer-crashed}`（在第一次重试**之前**，R7）、启动退避控制器；
  * - **不可重连**（`err === null` / `protocol-error` / 其它，或未启用重连）：与今天**逐字节一致**
  *   ——删表 + 广播 `close`；**只有曾带 `reconnect` 绑定的通道**额外 `dispose()` 收尾（E5，R16）。
+ *
+ * **并发整改（issue #44）**：窗口期内**再次**观测到可重连断线（典型：重连尝试刚连上、对端又崩）
+ * 时——①代次 `epoch` 前移，使在途 attempt 自弃；②**不再新建控制器**（同一通道同一时刻最多一个
+ * 在跑的控制器）；③**不重复广播 close**（本断连周期已经在第一次断线时广播过，R7 的"每周期恰好
+ * 一次"）。旧传输一律先 `dispose()`，不留下无人引用的已连接套接字。
  */
 function handleClientClose(
   extId: string,
@@ -339,6 +365,12 @@ function handleClientClose(
   entry.transport?.dispose()
   entry.transport = null
   entry.state = 'reconnecting'
+  reconnect.epoch += 1
+
+  // 同一断连周期内的第二次断线（在途 attempt 刚连上又崩）：**不**新建控制器、**不**重复广播
+  // close——在途 attempt 会在代次校验处自弃，并交回**同一个**控制器继续退避。
+  if (reconnect.controller) return
+
   // `channels()` 仍含该通道名：这是"正在重连"与"已放弃"的唯一判据（K3）
   broadcast({
     extId,
@@ -352,19 +384,36 @@ function handleClientClose(
     retries: reconnect.policy.retries,
     backoffMs: reconnect.policy.backoffMs,
     attempt: async (): Promise<void> => {
+      // 本次 attempt 所属代次：`rebuild()` 期间若本通道又断了一次，它就会失效（见 binding.epoch）
+      const epochAtStart = reconnect.epoch
       const next = await reconnect.rebuild()
-      // 窗口期内被 `close()` / 扩展停用取消 → 不得把它重新登记回来
-      if (channels.get(extId)?.get(name) !== entry) {
+      // 过期 attempt 的三重校验：①表项身份（被 `close()` / 停用 / 顶替）②本次 attempt 属于
+      // **当前**控制器（被更新的控制器取代）③代次未变（期间没有再断线）。
+      // 任一不成立 → 既不挂传输、也不触发任何事件，dispose 掉这条传输后交回控制器继续退避。
+      if (
+        channels.get(extId)?.get(name) !== entry ||
+        reconnect.controller !== controller ||
+        reconnect.epoch !== epochAtStart
+      ) {
         next.dispose()
-        throw new IpcCoreError('channel-closed', `通道 ${name} 的重连已取消`)
+        throw new IpcCoreError(
+          'channel-closed',
+          `通道 ${name} 的重连尝试已过期（期间发生新的断线）`
+        )
       }
+      // 替换传输前先 dispose 旧传输：窗口期正常情况下没有旧传输，这里是"绝不留泄漏"的兜底
+      entry.transport?.dispose()
       attachClientChannel(extId, name, next, reconnect)
     },
     onSuccess: (info): void => {
+      // 已被更新的控制器顶替 → 不得把**它**的引用置空（否则它永久不可 cancel）
+      if (reconnect.controller !== controller) return
       reconnect.controller = null
       broadcast({ extId, name, type: 'reconnect', attempts: info.attempts })
     },
     onGiveUp: (): void => {
+      // 同上：只清自己的引用
+      if (reconnect.controller !== controller) return
       reconnect.controller = null
       // E1：放弃时**不**再广播第二次 close（"已放弃"由 `channels()` 不含该名字表达）
       if (channels.get(extId)?.get(name) !== entry) return
@@ -372,6 +421,7 @@ function handleClientClose(
       if (map.size === 0) channels.delete(extId)
     }
   })
+  reconnectControllersCreated += 1
   reconnect.controller = controller
   controller.start()
 }
@@ -433,6 +483,7 @@ export async function openExtensionChannel(
     ? {
         policy,
         controller: null,
+        epoch: 0,
         rebuild: async (): Promise<IpcTransportHandles> => {
           const next = createTransport()
           try {

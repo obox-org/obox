@@ -58,6 +58,20 @@ export function endpointFor(name: string, workDir: string): string {
     : join(workDir, `obox-${name}.sock`)
 }
 
+/**
+ * **硬约束（踩过的坑）**：Windows 命名管道是**机器级**命名空间（不含进程 / 临时目录），
+ * 所以只要宿主那条连接还活着，对**同一端点**再 `listen` 一次就会失败：
+ *
+ * ```
+ * Error: listen EADDRINUSE \\.\pipe\obox-<扩展id>-<通道名>
+ * ```
+ *
+ * 这就是"每个测试文件的扩展 id 必须唯一"的原因（`test/ipc-server.test.ts` 用 `demo-ext`、
+ * `test/ipc-reconnect.test.ts` 用 `reconnect-ext`…）：端点名 = `obox-<扩展id>-<通道名>`，
+ * 两个 vitest worker 并行跑、扩展 id 撞名就会互相抢端点（表现为随机的 EADDRINUSE 或
+ * "连上了别的测试的对端"）。同名端点要复用，必须先真正 `kill()`（销毁全部连接 + 停止监听，
+ * POSIX 还要删掉陈旧的 `.sock`）。
+ */
 export function listen(server: net.Server, endpoint: string): Promise<void> {
   return new Promise((resolvePromise, rejectPromise) => {
     server.once('error', rejectPromise)
