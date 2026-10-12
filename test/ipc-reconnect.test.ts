@@ -1,11 +1,16 @@
 /**
  * 扩展 IPC **断线自动重连**测试（issue #44）。
  *
- * 覆盖（设计 §9.1 的 16 条 → 本文件 18 个用例）：
+ * 覆盖（设计 §9.1 的 16 条 → 本文件 22 个用例）：
  * - **生产壳层**（`src/main/ipc.ts`，经 `vi.mock('electron')` 触达）：重连成功 / 窗口期 `not-connected` /
  *   在途请求不重放 / 上限与放弃 / `close()` 与 `closeExtensionIpc` 取消 / 非法帧不重连 /
- *   协议状态归零 / stdio 拒绝 / `retries: 0` 关闭 / 不传 `autoReconnect` 的回归；
- * - **纯逻辑**（`src/main/ipcReconnect.ts`）：封闭清单、退避序列与封顶、`attempts` 语义、`cancel` 幂等。
+ *   协议状态归零 / stdio 拒绝 / `retries: 0` 关闭（含"**不创建控制器**"的诊断计数断言） /
+ *   不传 `autoReconnect` 的回归 / **第二个断连周期**（重连刚成功又崩）与其窗口期 `close()` /
+ *   **R18 端到端锁**（清单原始对象 → `resolveIpcChannelDeclaration` → `ipc:connect` → 断线）；
+ * - **纯逻辑**（`src/main/ipcReconnect.ts`）：封闭清单、退避序列与封顶、`attempts` 语义、`cancel` 幂等、
+ *   注入定时器工厂下的 `unref()`/`cancel()`；
+ * - **窗口期竞态**（"attempt 在途时又断一次"）另见 `test/ipc-reconnect-race.test.ts`（真实 I/O 下
+ *   不可达，那里用假传输把输入排进窗口，见该文件头）。
  *
  * 缝隙说明：
  * 1. **electron mock** 沿用 `test/ipc-server.test.ts` 的写法（只覆盖 `ipc.ts` 用到的三个符号），
@@ -13,7 +18,7 @@
  * 2. **sleep 注入**：`ipc.ts` 自己 new 控制器，测试要拿到"等待序列"与"窗口期控制权"，
  *    故用 `vi.mock('../src/main/ipcReconnect')` 在**不改生产代码**的前提下包一层注入式 sleep；
  * 3. **定时器计数**：需要 `vi.getTimerCount()` 的用例把 sleep 交回控制器自带的 `setTimeout`
- *    （`toFake: ['setTimeout','clearTimeout']`，其它计时器保持真实），否则"0 个定时器"会是自我指涉的空断言。
+ *    （`toFake: ['setTimeout','clearTimeout']`，其它计时器保持真实），否则"0 个定时器"会是自我指涉的空断言；
  * 4. 真实对端是 `net` 服务端（pipe 传输的"已在运行的进程"），复用 `test/helpers/ipcPeers.ts` 的
  *    `createServer` / `endpointFor` / `listen` / `waitFor`。
  */
@@ -135,7 +140,12 @@ vi.mock('../src/main/ipcReconnect', async () => {
   }
 })
 
-import { closeExtensionIpc, listExtensionChannels, registerIpcBridge } from '../src/main/ipc'
+import {
+  closeExtensionIpc,
+  listExtensionChannels,
+  reconnectControllerCount,
+  registerIpcBridge
+} from '../src/main/ipc'
 import { DEFAULT_TIMEOUT_MS, IpcCoreError, type IpcErrorCode } from '../src/main/ipcCore'
 import {
   backoffDelayFor,
@@ -143,10 +153,13 @@ import {
   isReconnectableCloseReason
 } from '../src/main/ipcReconnect'
 import {
+  checkIpcChannelList,
   DEFAULT_RECONNECT_BACKOFF_MS,
   DEFAULT_RECONNECT_RETRIES,
   MAX_BACKOFF_MS,
-  validateRuntimeIpcDeclaration
+  resolveIpcChannelDeclaration,
+  validateRuntimeIpcDeclaration,
+  type IpcChannelDeclaration
 } from '../src/shared/ipcDeclaration'
 import { createServer, encodeFrame, endpointFor, listen, waitFor } from './helpers/ipcPeers'
 
@@ -171,6 +184,10 @@ interface TestPeer {
   readonly messages: Array<Record<string, unknown>>
   /** 写一条**原始字节**（非法帧用例） */
   sendRaw(bytes: Buffer): void
+  /** 当前**存活**的已接受连接数（issue #44：验证不留无人引用的连接） */
+  connectionCount(): number
+  /** 只崩掉**连接**、保留监听（模拟"对端进程还活着，但这条连接断了"） */
+  dropConnections(): void
   /** 模拟对端进程崩溃：销毁全部连接 + 停止监听 +（POSIX）清掉陈旧 `.sock` */
   kill(): Promise<void>
 }
@@ -225,6 +242,10 @@ async function startPeer(
     messages,
     sendRaw: (bytes: Buffer): void => {
       for (const socket of sockets) socket.write(bytes)
+    },
+    connectionCount: (): number => sockets.size,
+    dropConnections: (): void => {
+      for (const socket of sockets) socket.destroy()
     },
     kill: async (): Promise<void> => {
       for (const socket of sockets) socket.destroy()
@@ -435,6 +456,60 @@ describe('ipcReconnect 纯逻辑', () => {
     await new Promise((r) => setTimeout(r, 40))
     expect(inflight).toEqual([])
     expect(running.running).toBe(false)
+  })
+
+  /**
+   * R11/K4：定时器 `unref()` 与 `cancel()` 清在途等待。
+   *
+   * 为什么必须**注入定时器工厂**才可断言：`vi.useFakeTimers()` 造出的定时器没有 `unref`
+   * （生产写的是 `timer.unref?.()` → no-op），所以"删掉 unref 调用"在假定时器下不会变红。
+   * 注入带 `unref` spy 的假 timer 之后，这条行为才有真正的断言体（低-2 的整改点）。
+   */
+  it('定时器：每次退避等待都调用 unref()，cancel() 取消在途等待且不再有新定时器（R11/K4）', async () => {
+    const created: Array<{ ms: number; unref: number; cancel: number; release: () => void }> = []
+    let attempts = 0
+    const controller = createReconnectController({
+      retries: 3,
+      backoffMs: 250,
+      createTimer: (delayMs, resolve) => {
+        const record = { ms: delayMs, unref: 0, cancel: 0, release: resolve }
+        created.push(record)
+        return {
+          unref: (): void => {
+            record.unref += 1
+          },
+          cancel: (): void => {
+            record.cancel += 1
+          }
+        }
+      },
+      attempt: async (): Promise<void> => {
+        attempts += 1
+        throw new Error('第 1 次重连失败')
+      }
+    })
+    controller.start()
+
+    // 第 1 个等待：250ms，且**恰好** unref 一次
+    expect(await waitFor(() => created.length === 1)).toBe(true)
+    expect(created[0].ms).toBe(250)
+    expect(created[0].unref).toBe(1)
+    expect(created[0].cancel).toBe(0)
+
+    // 放行 → 尝试失败 → 继续退避：第 2 个等待 500ms，同样 unref 一次
+    created[0].release()
+    expect(await waitFor(() => created.length === 2)).toBe(true)
+    expect(attempts).toBe(1)
+    expect(created[1].ms).toBe(500)
+    expect(created[1].unref).toBe(1)
+
+    // cancel() 取消**在途**等待：注入实现必须真的被 cancel，且之后不再建定时器/不再尝试
+    controller.cancel()
+    expect(created[1].cancel).toBe(1)
+    await new Promise((r) => setTimeout(r, 40))
+    expect(created).toHaveLength(2)
+    expect(attempts).toBe(1)
+    expect(controller.running).toBe(false)
   })
 })
 
@@ -688,6 +763,42 @@ describe('api.ipc 自动重连（生产壳层）', () => {
     })
   })
 
+  /**
+   * 低-1：`retries: 0` 的语义是"**不创建**控制器"，而这条不变量在事件/`channels()`/等待序列上
+   * 与"建了控制器但立刻放弃"**完全同形**——只断言这三样是空断言（把
+   * `src/shared/ipcDeclaration.ts` 的 `if (policy.retries > 0)` 改成无条件写回后，原用例照样全绿）。
+   * 这里用诊断出口 `reconnectControllerCount()` 把"没建控制器"钉死，并带一个 `retries: 3` 的对照。
+   */
+  it('禁用：retries:0 **不创建任何控制器**（诊断计数可区分；带 retries:3 对照）', async () => {
+    sleepGate.mode = 'manual'
+    const before = reconnectControllerCount()
+
+    // ① retries:0：首连成功不建、断开也不建
+    const a = await startPeer('bus')
+    expect((await connectBus({ retries: 0 })).ok).toBe(true)
+    expect(reconnectControllerCount()).toBe(before)
+    await a.kill()
+    await waitEvent((e) => e.type === 'close' && e.name === 'bus')
+    expect(reconnectControllerCount()).toBe(before)
+    expect(listExtensionChannels(EXT)).toEqual([])
+
+    // ② 对照：同名之外的通道带 retries:3，断开**确实**会 +1 —— 否则上面的断言是空断言
+    const b = await startPeer('svc')
+    expect(
+      (
+        await callConnect(EXT, {
+          id: 'svc',
+          transport: 'pipe',
+          autoReconnect: { retries: 3, backoffMs: 250 }
+        })
+      ).ok
+    ).toBe(true)
+    await b.kill()
+    await waitEvent((e) => e.type === 'close' && e.name === 'svc')
+    expect(reconnectControllerCount()).toBe(before + 1)
+    expect(sleepGate.sleeps).toEqual([250])
+  })
+
   it('回归（R16）：不传 autoReconnect 的通道断开行为与今天一致（close 一次、立即移除、无任何重连）', async () => {
     sleepGate.mode = 'manual'
     const a = await startPeer('bus')
@@ -763,5 +874,155 @@ describe('api.ipc 自动重连（生产壳层）', () => {
     await a.kill()
     await waitEvent((e) => e.type === 'close' && e.name === 'bus')
     expect(sleepGate.sleeps).toEqual([20_000])
+  })
+
+  /**
+   * 阻断-1（真实 I/O 侧）：**重连刚连上、对端又崩**。
+   *
+   * 这是审视者探针的场景，用真实命名管道跑。结论：真实 I/O 下它落到**合法的下一个断连周期**
+   * ——第 2 次 close 到达时前一个控制器已经成功收尾（`controller === null`），于是新建的是
+   * "下一个周期的控制器"，而不是"在途 attempt 期间的第二个控制器"。本用例把这个周期的
+   * 可观测面钉死：每个周期恰好一次 close / 一次 reconnect、表项始终在、控制器可取消、
+   * 对端侧只保留一条连接。
+   * （"attempt 在途期间"那一半窗口在真实 I/O 下不可达，证据见 `test/ipc-reconnect-race.test.ts`
+   * 的文件头；那一半由该文件的假传输用例覆盖。）
+   */
+  it('第二个断连周期（重连刚成功又崩）：每周期各一次 close/reconnect，控制器可取消', async () => {
+    sleepGate.mode = 'manual'
+    const a = await startPeer('bus')
+    // 控制器计数是**全文件累计**的：下面一律用增量断言（否则就被别的用例"自我指涉"地污染了）
+    const beforeCycles = reconnectControllerCount()
+    expect((await connectBus()).ok).toBe(true)
+    await a.kill()
+    await waitEvent((e) => e.type === 'close' && e.name === 'bus')
+    expect(sleepGate.sleeps).toEqual([250])
+    expect(reconnectControllerCount()).toBe(beforeCycles + 1)
+
+    // 第 1 个周期重连成功（对端 B 起来后立刻接上）
+    const b = await startPeer('bus')
+    sleepGate.release()
+    expect((await waitEvent((e) => e.type === 'reconnect' && e.name === 'bus')).attempts).toBe(1)
+    expect(await waitFor(() => b.connectionCount() === 1)).toBe(true)
+    const afterFirstCycle = reconnectControllerCount()
+    expect(afterFirstCycle).toBe(beforeCycles + 1)
+
+    // 对端**只崩这条刚建立的连接**（服务端继续监听）= "重连刚连上又崩"
+    b.dropConnections()
+    const secondClose = await waitEvent((e) => e.type === 'close' && e.name === 'bus', 2)
+    expect(secondClose.code).toBe('peer-crashed')
+    expect(eventsOfType('close')).toHaveLength(2) // 两个周期各一次，没有第三次
+    expect(reconnectControllerCount()).toBe(afterFirstCycle + 1) // 新周期 → 新控制器
+    expect(sleepGate.sleeps).toEqual([250, 250])
+    expect(listExtensionChannels(EXT)).toEqual(['bus'])
+    expect(await callRequest(EXT, 'bus', 'ping')).toMatchObject({
+      ok: false,
+      code: 'not-connected'
+    })
+
+    // 第 2 个周期重连成功：attempts 各自独立计数，且对端只看到一条连接（不留无人引用的连接）
+    sleepGate.release()
+    expect((await waitEvent((e) => e.type === 'reconnect' && e.name === 'bus', 2)).attempts).toBe(1)
+    expect(eventsOfType('reconnect').map((e) => e.attempts)).toEqual([1, 1])
+    expect(await callRequest(EXT, 'bus', 'ping')).toMatchObject({ ok: true, result: 'pong' })
+    // 对端侧只有一条连接：第二条（重连后新挂的）**替换**掉旧的，没有留下无人引用的套接字
+    expect(await waitFor(() => b.connectionCount() === 1)).toBe(true)
+
+    // 第 2 个周期的控制器必须**可取消**（旧实现里 onSuccess 无条件置空 controller 会让它失联）
+    await callClose(EXT, 'bus')
+    expect(listExtensionChannels(EXT)).toEqual([])
+    await waitEvent((e) => e.type === 'close' && e.name === 'bus', 3)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(eventsOfType('close').map((e) => e.code)).toEqual([
+      'peer-crashed',
+      'peer-crashed',
+      'channel-closed'
+    ])
+    expect(eventsOfType('reconnect')).toHaveLength(2)
+  })
+
+  /** 阻断-1（第二种断线后的窗口期）：`close()` 仍要清掉在途退避定时器，且之后不再有任何重连 */
+  it('第二个断连周期的窗口期内 close()：无遗留定时器、无 onReconnect、表项清空', async () => {
+    sleepGate.mode = 'real'
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const a = await startPeer('bus')
+    expect((await connectBus()).ok).toBe(true)
+    await a.kill()
+    await waitEvent((e) => e.type === 'close' && e.name === 'bus')
+    expect(vi.getTimerCount()).toBe(1) // 第 1 个周期的退避定时器
+
+    const b = await startPeer('bus')
+    await vi.advanceTimersByTimeAsync(250)
+    await waitEvent((e) => e.type === 'reconnect' && e.name === 'bus')
+    expect(vi.getTimerCount()).toBe(0)
+
+    // 第 2 次断线 → 第 2 个周期的退避定时器（前置真值：确实挂着 1 个，后面的 0 才有意义）
+    b.dropConnections()
+    await waitEvent((e) => e.type === 'close' && e.name === 'bus', 2)
+    expect(vi.getTimerCount()).toBe(1)
+
+    await callClose(EXT, 'bus')
+    expect(vi.getTimerCount()).toBe(0)
+    expect(listExtensionChannels(EXT)).toEqual([])
+    await waitEvent((e) => e.type === 'close' && e.name === 'bus', 3)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(eventsOfType('reconnect')).toHaveLength(1) // 只有第 1 个周期成功过
+    expect(vi.getTimerCount()).toBe(0)
+    expect(eventsOfType('close').map((e) => e.code)).toEqual([
+      'peer-crashed',
+      'peer-crashed',
+      'channel-closed'
+    ])
+  })
+
+  /**
+   * 中-1：R18 的**端到端锁**（此前四把锁只到 `resolveIpcChannelDeclaration` 的返回值为止，
+   * 没有任何用例把**清单原始对象**一路串到 `ipc:connect` + 断线）。
+   *
+   * 这条链路是：清单 `contributes.ipcChannels`（**原样**、未校验的 JSON）→
+   * `host.ts` 的 `resolveIpcChannelDeclaration`（白名单归一化）→ `window.api.ipcConnect` →
+   * 主进程 `validateRuntimeIpcDeclaration` → 断线分流。
+   * 把 `resolveIpcChannelDeclaration` 改回 `return found` 时：合法值那条会被主进程**当成运行
+   * 时声明**装上重连（断线后出现 reconnect 事件 + 控制器计数 +1），非法值那条直接
+   * `invalid-declaration` —— 两者都会让本用例变红。
+   */
+  it('R18 端到端：清单原始对象（含 autoReconnect，含非法值）→ ipc:connect → 断线不重连', async () => {
+    sleepGate.mode = 'manual'
+    // ① 清单里的原始对象：合法策略 + **非法**策略（清单校验面必须照样通过：不报错、不生效）
+    const manifestChannels: IpcChannelDeclaration[] = [
+      { id: 'bus', transport: 'pipe', autoReconnect: { retries: 5, backoffMs: 1 } },
+      { id: 'junk', transport: 'pipe', autoReconnect: { retries: -1 } }
+    ]
+    const checked = checkIpcChannelList(manifestChannels)
+    expect(checked.ok).toBe(true)
+
+    const before = reconnectControllerCount()
+    const a = await startPeer('bus')
+    const c = await startPeer('junk')
+    for (const [id, peer] of [
+      ['bus', a],
+      ['junk', c]
+    ] as const) {
+      // ② 与 `host.ts:1237` 同一个调用：字符串 id + **清单原始数组** → 交给主进程的声明
+      const resolved = resolveIpcChannelDeclaration(manifestChannels, id)
+      expect(resolved).toEqual({ id, transport: 'pipe' })
+      expect(Object.keys(resolved ?? {})).toEqual(['id', 'transport'])
+      expect('autoReconnect' in (resolved ?? {})).toBe(false)
+      expect(JSON.stringify(resolved)).not.toContain('autoReconnect')
+
+      // ③ 一路串到 ipc:connect：主进程收到的是**没有该键**的声明 → 连得上、也不挂重连
+      expect(await callConnect(EXT, resolved)).toMatchObject({ ok: true })
+      expect(reconnectControllerCount()).toBe(before)
+      expect(listExtensionChannels(EXT)).toContain(id)
+
+      // ④ 断线：一次 close + 立即移除，**没有**任何重连尝试/事件（= 清单里的 autoReconnect 不生效）
+      await peer.kill()
+      expect((await waitEvent((e) => e.type === 'close' && e.name === id)).code).toBe(
+        'peer-crashed'
+      )
+      expect(eventsOfType('reconnect')).toHaveLength(0)
+      expect(reconnectControllerCount()).toBe(before)
+      expect(sleepGate.sleeps).toEqual([])
+      expect(listExtensionChannels(EXT)).toEqual([])
+    }
   })
 })

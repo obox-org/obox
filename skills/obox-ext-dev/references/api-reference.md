@@ -724,12 +724,20 @@ await api.ipc.close('svc') // 停止监听 + 断开全部连接；不存在时�
 ```ts
 await api.ipc.connect({ id: 'bus', transport: 'pipe', autoReconnect: { retries: 5, backoffMs: 250 } })
 
-api.ipc.onClose('bus', (err) => console.log('断了', err.code))          // 每个断连周期**恰好一次**
+api.ipc.onClose('bus', (err) => console.log('断了', err.code))          // 意外断线：每个断连周期**恰好一次**
 api.ipc.onReconnect('bus', async ({ attempts }) => {                  // 每次重连成功后一次
   console.log('连上了，共尝试', attempts)
   await api.ipc.request('bus', 'hello')                               // 协议层状态已归零：自行握手
 })
 ```
+
+> **`onClose` 的计数口径（别被"恰好一次"误导）**：`恰好一次` 只描述**一个意外断连周期**内部的
+> 去重（第一次退避重试之前广播一次；用尽 `retries` 放弃时**不**再补一次）。你自己调用
+> `api.ipc.close('bus')` 是**另一次**关闭：窗口期（含重连尝试在途）里它仍会按既有语义
+> **额外补发一条 `close{code:'channel-closed'}`**——于是"一次意外断线 + 一次主动 close"
+> 会看到 **2 条** `onClose`（先 `peer-crashed`，后 `channel-closed`）。这与**未启用重连**的通道
+> 完全一致（那里也是"意外断线一次 + 主动 close 一次"），不是重连特有的额外事件。
+> `test/ipc-reconnect.test.ts` 的 `第二个断连周期的窗口期内 close()` 用例把这条口径钉死。
 
 **三条语义**（逐条都有测试锁死，见 `test/ipc-reconnect.test.ts`）：
 
@@ -743,7 +751,9 @@ api.ipc.onReconnect('bus', async ({ attempts }) => {                  // 每次�
 
 - `await api.ipc.channels()` **仍含**该通道名 = **正在重连**（此时请求报 `not-connected` + "正在重连"）；
 - `channels()` **不含**该通道名 = **已放弃**（重试用尽；之后请求报既有的 `not-connected`）。
-- 放弃时**不会**补发第二次 `onClose`（一个断连周期只有一次），也不会触发 `onReconnect`。
+- 放弃时**不会**补发第二次 `onClose`（同一断连周期只有那一次），也不会触发 `onReconnect`。
+  **注意与主动 `close()` 区分**：`api.ipc.close(name)` 无论在窗口期还是在途尝试期间都会**额外**
+  补发一次 `close{channel-closed}`（见上方"`onClose` 的计数口径"）。
 
 **配置与触发规则**：
 
@@ -758,7 +768,8 @@ api.ipc.onReconnect('bus', async ({ attempts }) => {                  // 每次�
 | 只对 pipe | `connect({ transport: 'stdio', autoReconnect: … })` → `invalid-declaration`（文案提示"自行 `connect()` 或改用 pipe"）。stdio 场景请在 `onClose` 里自己退避重连：`onClose` → `setTimeout` → 重新 `connect()` |
 | **只写在运行时对象里** | `autoReconnect` 只认 `connect({...})` 传的**运行时**声明对象；写进 manifest 的 `contributes.ipcChannels` **既不报错也不生效**（宿主会把这个键剥掉）。运行时对象上的非法值（负数 / 非整数 / 非对象）→ `invalid-declaration` |
 | 服务端不适用 | `autoReconnect` 只作用于 **client 通道**；`listen` 的服务端连接断连只通知（`onDisconnect`），对端回来是新连接、新 `connectionId` |
-| 重连期额度 | 窗口期**仍占** 1 条通道额度，因此此时不能再 `connect` 同名通道（会报"已打开"）；`close(name)` 在窗口期**立即**取消剩余重试（幂等，之后不再有 `onReconnect`） |
+| 并发（issue #44 整改） | 同一条通道**同一时刻最多一个**重连控制器在跑；一个**意外断连周期**内**不重复**广播 `close`；重连尝试**在途**时若本通道又断一次，该次尝试一律**自弃**（不挂传输、不触发任何事件、不留无人引用的连接），并交回**同一个**控制器按退避继续。宿主自检出口：`src/main/ipc.ts` 的 `reconnectControllerCount()`（与 `pendingForwardCount()` 同风格，仅供诊断/测试，**不经 preload 暴露**给扩展） |
+| 重连期额度 | 窗口期**仍占** 1 条通道额度，因此此时不能再 `connect` 同名通道（会报"已打开"）；`close(name)` 在窗口期（含重连尝试**在途**时）**立即**取消剩余重试（幂等，之后不再有 `onReconnect`），并**额外**补发一条 `close{channel-closed}`（与那次 `peer-crashed` 各计一次） |
 
 **旧宿主兼容**（新扩展 + 旧宿主）：旧宿主不认识 `autoReconnect`（走白名单校验，未知键静默忽略）→ 通道**照常打开**、只是**不会重连**；`api.ipc.onReconnect` 也不存在。请特性检测：
 
