@@ -464,6 +464,14 @@ export interface ExtensionHookRunResult {
   error?: string
 }
 
+/** 断线自动重连策略（issue #44；与 `src/shared/ipcDeclaration.ts` 的同名接口形状一致） */
+export interface IpcAutoReconnect {
+  /** 重试次数上限（缺省 3；`0` 等价于关闭） */
+  retries?: number
+  /** 首次退避毫秒（缺省 250；按 ×2 递增，单次封顶 30000） */
+  backoffMs?: number
+}
+
 /** 通道声明（与主进程 ipcCore 的契约形状一致；传输**不含 TCP/端口**） */
 export interface IpcChannelDeclaration {
   /** 通道名（同一扩展内唯一，只允许字母数字与 . _ -） */
@@ -473,6 +481,11 @@ export interface IpcChannelDeclaration {
   program?: string
   args?: string[]
   framing?: 'content-length' | 'ndjson'
+  /**
+   * 断线自动重连（issue #44）：**只有运行时声明对象（`api.ipc.connect({...})`）里的这一键生效**；
+   * 清单 `contributes.ipcChannels` 里写它不报错也不生效（宿主在归一化时剥掉）。
+   */
+  autoReconnect?: IpcAutoReconnect
 }
 
 /** 渲染进程回包（对端请求的响应） */
@@ -511,6 +524,12 @@ export type IpcEvent =
       code: string
       message: string
     }
+  /**
+   * client 通道**自动重连成功**（issue #44）：每次重连成功后触发一次。
+   * `attempts` = 本次重连共尝试了几次（含成功那次）。
+   * 达到重试上限而**放弃**时**不**再触发任何事件（通道从 `channels()` 消失即为判据）。
+   */
+  | { extId: string; name: string; type: 'reconnect'; attempts: number }
 
 /** 主进程 → 渲染进程 的事件（on） */
 export interface MainEvents {

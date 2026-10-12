@@ -25,13 +25,24 @@
    - `close(name)` 统一为"按名字关闭该名字下的**一切**"（client 通道或 server），不存在时静默成功、幂等；
    - 端点**不暴露** `suffix`（服务端用不带 suffix 的稳定端点；`ipcEndpoint()` 的 `suffix` 留给未来多实例场景）。
 
+10. **客户端通道的断线自动重连**（issue #44，修订本 ADR，不新开）：
+    - **逐通道**可选：`api.ipc.connect({ id, transport: 'pipe', autoReconnect: { retries, backoffMs } })`；**只在运行时声明对象里生效**，manifest 的 `contributes.ipcChannels` 里写它**既不报错也不生效**（宿主在归一化时剥掉该键，见下条不变量）；
+    - **触发**：**首次连接成功之后**发生 `peer-crashed`（对端退出 / 套接字关闭）。首连失败仍由 `connect()` 抛 `connect-failed`（不进重连）；`channel-closed`（扩展主动 `close()` / 宿主清理）、`protocol-error`（对端发非法帧）与其它断因一律**不**重连；
+    - **退避**：`backoffMs × 2^(i−1)`，缺省 `retries = 3` / `backoffMs = 250`（即 `250, 500, 1000`），**单次等待**封顶 `30_000ms`（与默认请求超时同量级）；`retries: 0` 等价于关闭；`backoffMs: 0` = 不等待；
+    - **在途请求不重放**：断开瞬间该通道全部挂起请求立即以断因码失败，绝不在重连后补发（也不做幂等方法白名单重放）；
+    - **重连期新请求**立即以 `not-connected` 失败（不排队、不延迟）；此时 `channels()` **仍含**该通道名；
+    - **协议层状态不保留**：重连成功是一条**新通道**（新 `JsonRpcChannel`，请求 id 从 1 重新开始、挂起表为空），需要握手的扩展必须在 `onReconnect(name, ({attempts}) => …)` 里自己做；
+    - **只覆盖 pipe**：`stdio` + `autoReconnect` → `invalid-declaration`（stdio 场景仍由扩展自行在 `onClose` 里退避 `connect()`）；
+    - **服务端连接不重连**（与决策 9 的边界）：控制器只挂在 client 分支；对端回来就是一次新连入、拿一个新 ID。
+
 ## 本期明确不做（留待后续，避免半成品语义）
 
-- **自动重连**：当前是"断开即报 `peer-crashed`/`channel-closed`，扩展自行重新 `connect()`"。真正的自动重连需要先定义"重连期间在途请求如何处理、状态是否保留"，属独立设计（issue #44）。
 - **manifest 声明通道**：当前由扩展在运行时调用 `connect()` 并传声明（同一套校验函数）；manifest 贡献点属人机工程优化。
 - **沙箱化**：通道是能力封装，不宣称隔离（ADR-0015）。
 
 > 修订记录（issue #43）：本节原有第 1 条"**pipe 服务端 / 多客户端**：宿主作为服务端 listen 并接受多个连接"已实现并移入上方「决策」第 9 条。**修订既有 ADR 而非新开**：该条是本 ADR 自己预留的后续项（`ipcEndpoint` 早已预留 `suffix`），不构成"难以逆转 / 无背景者会觉得奇怪 / 存在真实取舍"的新决策。
+>
+> 修订记录（issue #44）：本节原有第 2 条"**自动重连**"已实现并移入上方「决策」第 10 条（其理由"需要先定义重连期间在途请求如何处理、状态是否保留"由第 10 条与下方「自动重连的三条语义」逐条回答）。**同样修订既有 ADR 而非新开**：该条也是本 ADR 自己写明的后续项，不构成新决策。
 
 ## 后果
 
@@ -40,16 +51,26 @@
 - **平台差异（issue #43）**：Windows 命名管道在内核命名空间、无落盘文件 → 服务端**不探测陈旧端点、不 chmod**；POSIX 域套接字有落盘文件 → `listen` 前**试连探测**（连上=有活着的服务端 → `connect-failed` 且**不删除**该文件；连不上=陈旧 → `unlink` 后重新 listen，`EADDRINUSE` 竞态重试一次），`listen` 成功后 `chmod 0600`，`dispose()` 时 `unlink`。分支由 `ipcServer.endpointPrepPlan(platform)` 这个纯函数决定并两平台单测。
 - **清理时机无新增**：服务端与既有通道走**同一函数、同一时机**（扩展停用/卸载/重载与退出 → `cleanupExtensionResources` → `closeExtensionIpc`），`extensionCleanup.ts` 未改动。宿主被强杀时 POSIX 会残留 `.sock`，下次 `listen` 的探测步骤自愈；Windows 命名管道随进程消失。
 - 不变量：
-  - 所有失败都以**稳定错误码**返回（`invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / **`too-many-connections`** / `peer-crashed` / `channel-closed`，共 **12** 个），不静默挂起；
-  - **在途请求不重放**：某条服务端连接断开的瞬间，该连接上**双向**的挂起请求（宿主发起的 `request` 与转发到渲染进程等待回包的对端请求）**立即以断因码失败**，绝不重放、绝不挂到后续新连接上；
-  - **连接 ID 单调且永不复用**：新连入的连接只会拿到严格更大的 ID，旧 ID 永久退役（同名 server 重建亦然）。
+  - 所有失败都以**稳定错误码**返回（`invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / **`too-many-connections`** / `peer-crashed` / `channel-closed`，共 **12** 个），不静默挂起；自动重连**不新增**任何错误码（窗口期复用 `not-connected`，放弃复用断连那次的 `peer-crashed`）；
+  - **在途请求不重放**：某条服务端连接断开的瞬间，该连接上**双向**的挂起请求（宿主发起的 `request` 与转发到渲染进程等待回包的对端请求）**立即以断因码失败**，绝不重放、绝不挂到后续新连接上；**客户端通道同理**（issue #44：断线瞬间的挂起请求立即失败，重连后是一条空挂起表的新通道）；
+  - **连接 ID 单调且永不复用**：新连入的连接只会拿到严格更大的 ID，旧 ID 永久退役（同名 server 重建亦然）；**客户端通道没有 `connectionId`**，重连既不申请也不保留任何 ID；
+  - **`channels()` 的包含关系是"正在重连 / 已放弃"的唯一判据**（issue #44）：重连窗口期内仍含该通道名（请求报 `not-connected` 且文案带"正在重连"），用尽次数后从表中移除（之后请求报既有的 `not-connected`）；放弃时**不**再补发第二次 `onClose`；
+  - **清单声明面不接受重连策略**（issue #44 R18）：`autoReconnect` 只在**运行时声明**上被校验与保留；清单来源的声明在归一化时被**白名单剥掉**该键（`validateIpcDeclaration` / `checkIpcDeclaration` / `checkIpcChannelList` 的接受面一字不变，清单里写非法值也不会让清单失效）。
 
 ## 服务端连接的生命周期（issue #43）
 
 - **accept**：分配 `connectionId` → 建该连接独立的 `JsonRpcChannel` → 入连接表 → 广播 `{type:'connection', connectionId}`（渲染进程分发到 `api.ipc.onConnection`）。
 - **超限拒绝**：第 17 条不回事件、不分配 ID，只写一条错误帧后关闭。
 - **断开**：对端崩溃 / 非法帧（`protocol-error`）/ 宿主 `close(name)`、停用、退出（`channel-closed`）→ 每条连接**恰好触发一次** `{type:'disconnect', connectionId, code, message}`，并结算该连接的在途转发请求；同一 server 的其它连接完全不受影响。
-- **不自动重连**：宿主**不**为服务端连接重连；对端要回来就是一次新连入、拿一个新 ID（与 issue #44 的"客户端通道可重连"是两回事，且 #44 的连接 ID 命名空间只属于服务端连接）。
+- **不自动重连**：宿主**不**为服务端连接重连；对端要回来就是一次新连入、拿一个新 ID。客户端通道的自动重连（决策 10）只作用于 **client 分支**，且客户端的连接 ID 命名空间为空（不申请、不保留）。
 - **广播是通知语义**：`broadcast` 不收集回包（返回 `Promise<void>`），已断开的连接跳过，无连接时静默成功；要定向请求用 `request(..., { connectionId })`。
+
+## 自动重连的三条语义（issue #44）
+
+| 时刻 | 语义 | 理由 |
+| --- | --- | --- |
+| **在途请求** | 断线瞬间该通道所有挂起请求**立即**以 `peer-crashed` 失败；**绝不重放**（也不做"幂等方法白名单重放"） | 重放会破坏 **at-most-once** 心智：宿主无从判断对端是否已处理该请求，自动补发可能造成重复副作用；正确做法是让扩展在 `onReconnect` 里按自己的幂等策略重新握手/重发 |
+| **重连期新请求** | `request` / `notify` 立即以 `not-connected` 失败（不排队、不延迟 resolve），`channels()` **仍含**该通道名 | 排队会让请求延迟不可预期地变长，且"重连成功后才 resolve"会把两条连接的语义混成一条；`channels()` 仍含该名字是"正在重连"的唯一判据 |
+| **状态保留** | 通道名、声明（含 `framing` 与重连策略）保留并沿用；**协议层状态全部丢弃**（新 `JsonRpcChannel`、请求 id 从 1、挂起表为空） | 只有宿主侧自己拥有的东西才"保留"；对端会话状态宿主无法代管（也不做握手重放），因此必须由扩展在 `onReconnect` 里显式重建 |
 
 Status: accepted

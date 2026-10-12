@@ -279,7 +279,7 @@ export function uninstall(ctx) {
 | `protocol-error`      | 分帧或 JSON-RPC 形状不对（对端把日志打到 stdout 也会触发——**日志请写 stderr**）；缺 `jsonrpc: "2.0"`                                                                                                                                                                                                           |
 | `message-too-large`   | 单条消息超过 8MB：拆成多条或用通知流式发送                                                                                                                                                                                                                                                                     |
 | `too-many-connections` | **服务端专属**：该 server 已经有 **16 条**连接，第 17 条被拒（扩展侧**不触发**任何事件，只有**对端**能看到这条线上错误帧的 `[too-many-connections]` 前缀）。处理：断开不再用的对端，或让对端侧限流                                                                                                              |
-| `peer-crashed`        | 对端进程退出/连接被关闭：stdio 场景下对端崩溃即断连（宿主不自动重连，需扩展自行 `connect()` 重建）；先看 `api.ipc.onStderr()` 收到的对端日志                                                                                                                                                                   |
+| `peer-crashed`        | 对端进程退出/连接被关闭：stdio 场景下对端崩溃即断连（**默认不自动重连**，需扩展自行 `connect()` 重建）；**pipe 通道**可声明 `autoReconnect` 让宿主自动重建（见下方「自动重连（`autoReconnect`）排查」）；先看 `api.ipc.onStderr()` 收到的对端日志                                                                  |
 | `not-connected`       | 通道没打开或已关闭；`close()` 后要重新 `connect()`；**服务端专属**：`connectionId` 指向的连接**已断开或不存在**（连接 ID 永不复用，旧 ID 不会"复活"）                                                                                                                                                         |
 
 **平台细节**：Windows 命名管道**不留文件**（内核命名空间）；POSIX 的 `.sock` 在进程崩溃后会残留，需由**服务端**在 listen 前清理——客户端（`connect`）只负责连接，不会替你删除别人的套接字文件；而**服务端**（`listen`，issue #43）会**自己**处理：试连探测（连得上 = 有活着的服务端 → 报 `connect-failed` 且**不删**）+ 连不上才 `unlink` + `listen` 成功后 `chmod 0600`。
@@ -291,6 +291,14 @@ export function uninstall(ctx) {
 - **对端收到 `[too-many-connections]`**：该 server 已有 16 条连接（上限见 api-reference 的限额表）。扩展侧看不到这个错误（不触发 `onConnection`），需要自己通过 `onConnection`/`onDisconnect` 的计数判断是否长期满载。
 - **`invalid-declaration` 的服务端原因**：`listen` 传了 `transport: 'stdio'`（服务端只能是 pipe）；server 名字下 `request`/`notify` **省略** `connectionId`（服务端没有"唯一对端"，宿主不会静默挑一条）；反过来给 **client 通道**传 `connectionId` 同样报错。
 - **不要在清单里写 `mode`**：`contributes.ipcChannels` 的声明面没有"角色"字段，写了会被**静默忽略**（不报错也不生效）；要起服务端请显式调用 `api.ipc.listen(...)`。
+
+**自动重连（`autoReconnect`）排查（issue #44）**：
+
+- **怎么调试重连**：订阅 `api.ipc.onReconnect(name, ({ attempts }) => …)` 看成功次数与尝试次数；用 `await api.ipc.channels()` 判断当前状态——**仍含该通道名 = 正在重连**（此时 `request` 报 `not-connected` 且文案含"正在重连"，**这是预期，不是通道丢了**），**不含 = 已放弃**（重试用尽，之后请求报既有的 `not-connected`，且**不会**补发第二次 `onClose`）。
+- **重连一直失败先查端点占用**：如果每次都只有 `connect-failed`，先确认对端**真的在监听**（端点名 = `obox-<扩展id>-<通道名>`）；POSIX 下看是否有陈旧 `.sock`（**服务端**要在 listen 前清理，见上方条目）；Windows 下看是否有旧实例残留占用同名的命名管道。次数用尽后宿主停止重试，通道从 `channels()` 消失。
+- **`autoReconnect` 不生效**：先确认它写在 `connect({...})` 的**运行时对象**里，而不是 manifest 的 `contributes.ipcChannels`（清单里写**不报错也不生效**——宿主在归一化时会剥掉该键）；再确认 `transport` 是 `pipe`（`stdio` + `autoReconnect` 直接报 `invalid-declaration`，stdio 请在 `onClose` 里自行退避 `connect()`）。
+- **重连后对端状态不对**：重连成功是**一条新通道**（协议层状态全部丢弃：请求 id 从 1 重新开始、挂起表为空），需要握手/订阅的扩展必须在 `onReconnect` 里重做；断线瞬间的**在途请求立即以 `peer-crashed` 失败且绝不重放**，要重发也得自己在 `onReconnect` 之后发。
+- **别在重连窗口期再 `connect` 同一个名字**：窗口期表项仍在（占着 1 条通道额度），会报"通道 X 已打开"；要主动停止重连请 `close(name)`（幂等，且之后不再有 `onReconnect`）。
 
 **调试建议**：先用 `api.ipc.onStderr()` 打印对端日志；对端可先用最简单的"回声"实现（读一行、回一行）验证分帧，再接入真实逻辑。
 

@@ -11,6 +11,7 @@ import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IpcCoreError, type JsonRpcResponseMessage } from '../src/main/ipcCore'
+import { isReconnectableCloseReason, createReconnectController } from '../src/main/ipcReconnect'
 import {
   openPipeClientTransport,
   openStdioTransport,
@@ -278,5 +279,91 @@ describe('pipe 传输 · 对端主动请求宿主', () => {
     )
     await new Promise((r) => setTimeout(r, 80))
     expect(received).toEqual({ jsonrpc: '2.0', id: 42, result: { echoed: { q: 1 } } })
+  })
+})
+
+/**
+ * issue #44 V2：真实管道 / UDS 上"kill 对端 → 重启 → 自动连上"。
+ *
+ * 本文件保持 **electron-free**，因此这里只组一个**最小本地壳**（退避 + 重建传输，约 20 行）来验证
+ * 机制本身；生产壳层（注册表 / 窗口期 `not-connected` / `close`・`reconnect` 事件广播）由
+ * `test/ipc-reconnect.test.ts` 覆盖。断因分类（`peer-crashed` 才重连）用生产函数
+ * `isReconnectableCloseReason`，因此"对端崩了才重连"这条规则没有被测试自己重写一遍。
+ */
+describe('pipe 传输 · 断线自动重连（issue #44 V2）', () => {
+  it('重连：真实管道/UDS 上 kill 对端 → 重启 → 自动连上（无需重新 connect）', async () => {
+    const endpoint = endpointFor('auto-reconnect')
+    const sockets = new Set<net.Socket>()
+    let server: net.Server | null = null
+
+    /** 起一个只应答 ping 的真实对端 */
+    const listenPeer = async (): Promise<void> => {
+      const created = createServer((send, msg) => {
+        if (msg.method === 'ping') send({ jsonrpc: '2.0', id: msg.id, result: 'pong' })
+      })
+      created.on('connection', (socket) => {
+        sockets.add(socket)
+        socket.on('close', () => sockets.delete(socket))
+      })
+      await listen(created, endpoint)
+      server = created
+      cleanups.push(() => {
+        if (server?.listening) server.close()
+      })
+    }
+    /** 模拟对端进程崩溃：断掉全部连接并停止监听（POSIX 上还要清掉陈旧 `.sock`） */
+    const killPeer = async (): Promise<void> => {
+      for (const socket of [...sockets]) socket.destroy()
+      const dying = server
+      server = null
+      if (dying) await new Promise<void>((resolve) => dying.close(() => resolve()))
+      if (process.platform !== 'win32') await fs.unlink(endpoint).catch(() => {})
+    }
+
+    await listenPeer()
+    let transport = openPipeClientTransport({ endpoint })
+    cleanups.push(() => transport.dispose())
+    await transport.ready
+    await expect(transport.channel.request('ping')).resolves.toBe('pong')
+
+    // ---- 最小本地壳：断线（可重连断因）→ 退避等待 → 重建传输 ----
+    let releaseSleep: (() => void) | null = null
+    let reconnected: { attempts: number } | null = null
+    const controller = createReconnectController({
+      retries: 5,
+      backoffMs: 250,
+      sleep: (): Promise<void> =>
+        new Promise<void>((resolve) => {
+          releaseSleep = resolve
+        }),
+      attempt: async (): Promise<void> => {
+        const next = openPipeClientTransport({ endpoint })
+        try {
+          await next.ready
+        } catch (err) {
+          next.dispose()
+          throw err
+        }
+        transport = next
+      },
+      onSuccess: (info): void => {
+        reconnected = info
+      }
+    })
+    transport.channel.onClose((err) => {
+      if (isReconnectableCloseReason(err)) controller.start()
+    })
+
+    await killPeer()
+    // 窗口期：退避等待已经发起，但还没有任何重连尝试（对端还没回来）
+    expect(await waitFor(() => releaseSleep !== null)).toBe(true)
+    expect(reconnected).toBeNull()
+
+    await listenPeer() // 重启对端（同一端点）——不触碰客户端、不重新 connect()
+    releaseSleep?.()
+    expect(await waitFor(() => reconnected !== null)).toBe(true)
+    expect(reconnected).toEqual({ attempts: 1 })
+    // 自动连上后无需扩展做任何事：新传输上直接可用（协议层状态归零，故重新发一条）
+    await expect(transport.channel.request('ping')).resolves.toBe('pong')
   })
 })

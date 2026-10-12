@@ -396,7 +396,21 @@ export interface ExtensionActivationApi {
    * const pong = await api.ipc.request('svc', 'ping', {}, { connectionId: 1 })
    * await api.ipc.broadcast('svc', 'tick', { n: 1 }) // 通知语义：不收集回包
    * api.ipc.onDisconnect('svc', (connectionId, err) => {})
+   *
+   * // 断线自动重连：只对 pipe 的**运行时**声明生效（issue #44）
+   * await api.ipc.connect({ id: 'bus', transport: 'pipe', autoReconnect: { retries: 5 } })
+   * api.ipc.onReconnect('bus', ({ attempts }) => api.ipc.request('bus', 'hello')) // 自行握手
    * ```
+   *
+   * **三条重连语义**（issue #44，逐条测过）：
+   * 1. **在途请求绝不重放**：断线瞬间该通道所有挂起请求立即以断因码（`peer-crashed`）失败，
+   *    不会在重连后补发；重连后请自行重发（这正是 `onReconnect` 的用途）；
+   * 2. **重连期的新请求立即失败**：窗口期内 `request`/`notify` 立即以 `not-connected` 返回
+   *    （不排队、不延迟），但 `channels()` **仍含**该通道名（不含 = 已放弃重连）；
+   * 3. **协议层状态不保留**：重连成功是一条**新通道**（请求 id 从 1 重新开始、挂起表为空），
+   *    需要握手的扩展必须在 `onReconnect` 里自己做；`autoReconnect` **只能写在运行时声明对象里**
+   *    （写进 manifest 的 `contributes.ipcChannels` 既不报错也不生效），且**只对 `pipe` 有效**
+   *    （`stdio` + `autoReconnect` → `invalid-declaration`，stdio 请自行在 `onClose` 里退避重连）。
    *
    * 稳定错误码：`invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` /
    * `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` /
@@ -404,7 +418,11 @@ export interface ExtensionActivationApi {
    * 注意：本能力是**能力封装而非安全边界**（扩展与宿主同上下文，见 ADR-0015）。
    */
   ipc: {
-    /** 打开通道：`stdio` 由宿主拉起子进程（program 必须是扩展目录内相对路径）；`pipe` 连接已在运行的进程 */
+    /**
+     * 打开通道：`stdio` 由宿主拉起子进程（program 必须是扩展目录内相对路径）；`pipe` 连接已在运行的进程。
+     * `declaration.autoReconnect`（issue #44）**只在此处（运行时声明对象）生效**，且只对 `pipe` 有效；
+     * 清单里写它不报错也不生效。
+     */
     connect(declaration: IpcChannelDeclaration | string): Promise<void>
 
     /**
@@ -493,6 +511,17 @@ export interface ExtensionActivationApi {
       name: string,
       cb: (connectionId: number, err: { code: string; message: string }) => void
     ): Disposable
+
+    /**
+     * 订阅 client 通道的**重连成功**（issue #44；只在声明了 `autoReconnect` 的 `pipe` 通道上会触发）：
+     * - 每次重连成功后触发一次；`info.attempts` = 本次重连共尝试几次（含成功那次，首次即成功为 1）；
+     * - **不自动握手**：重连后是一条**新通道**（协议层状态全部丢弃、请求 id 从 1 重新开始、
+     *   挂起表为空），需要握手的扩展必须在这里自己做（例如重新 `request('hello')`）；
+     * - **达到 `retries` 上限仍失败时不会触发本事件**：通道会从 `channels()` 消失
+     *   （`channels()` 仍含该通道名 = 正在重连；不含 = 已放弃），此后请求报 `not-connected`；
+     * - 断线瞬间的 `onClose` 每个断连周期**恰好一次**（在第一次重试尝试之前）。
+     */
+    onReconnect(name: string, cb: (info: { attempts: number }) => void): Disposable
   }
   /** 输出通道（底部输出面板，多通道 tab） */
   output: {

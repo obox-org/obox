@@ -207,6 +207,39 @@ describe('validateManifest contributes.ipcChannels（issue #45）', () => {
       expect(Object.keys(checked.declarations[0])).toEqual(['id', 'transport'])
     }
   })
+
+  /**
+   * issue #44（Q2 = 方案 A 的第二把锁 · **锁 1b**）：`autoReconnect` 在**运行时**声明里
+   * 是**被校验的已知键**，因此必须保证它**不会**让清单校验面开始校验它 —— 否则清单里写
+   * `{ retries: -1 }` 这类值会让**整个清单无效**（违反 R13"不报错"）。
+   *
+   * 喂**非法值**而不是合法值：只喂 `{}` 时，若有人给清单路径加上"值必须合法"的校验，
+   * 该用例仍会绿 —— 无效锁。
+   */
+  it('autoReconnect：清单项带该键（含非法值 {retries:-1}）时清单仍然有效（锁 1b）', () => {
+    expect(
+      errors({
+        ...valid,
+        contributes: {
+          ipcChannels: [
+            { id: 'bus', transport: 'pipe', autoReconnect: { retries: -1 } },
+            { id: 'bus2', transport: 'pipe', autoReconnect: {} },
+            { id: 'bus3', transport: 'pipe', autoReconnect: 5 }
+          ]
+        }
+      })
+    ).toEqual([])
+
+    // 同一把锁的构造面：校验过后的声明里没有该键（因此清单里写的策略不可能生效）
+    const checked = checkIpcChannelList([
+      { id: 'bus', transport: 'pipe', autoReconnect: { retries: 5, backoffMs: 1 } }
+    ])
+    expect(checked).toEqual({ ok: true, declarations: [{ id: 'bus', transport: 'pipe' }] })
+    if (checked.ok) {
+      expect('autoReconnect' in checked.declarations[0]).toBe(false)
+      expect(Object.keys(checked.declarations[0])).toEqual(['id', 'transport'])
+    }
+  })
 })
 
 describe('validateManifest 贡献点数组形状（issue #84）', () => {
