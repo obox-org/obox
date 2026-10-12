@@ -1250,8 +1250,23 @@ class ExtensionHost {
           throw new Error(`[${r.code ?? 'invalid-declaration'}] ${r.error ?? 'listen 失败'}`)
       },
       close: async (name: string): Promise<void> => {
-        listeners.delete(name)
-        await window.api.ipcClose(ext.id, name)
+        // 顺序即契约（真机 v11/v12 run5/run6 的缺陷回归）：主进程在这次 `ipc:close` invoke 里
+        // 才发出该通道的收尾事件——client 通道是 `close{channel-closed}`，server 通道是**每条**
+        // 活动连接各一条 `disconnect{channel-closed}`。先 `listeners.delete(name)` 会把这次
+        // `close()` 自己的事件一起吞掉（扩展的 `onClose` / `onDisconnect` 永不触发），违反
+        // `src/api/types.ts` 的契约（onClose："每扩展主动 `close()` 与每次断连各触发一次"；
+        // onDisconnect："每条连接恰好触发一次……宿主关闭 server 或 `close()` 时为 channel-closed"）。
+        // 因此**先等事件投递完**（Electron 帧内消息 FIFO：in-pipe 事件先于 invoke 回复到达渲染进程），
+        // 再清理本地监听表；`finally` 让清理无条件执行（桥调用失败时该通道状态已不可知，
+        // 留着旧订阅只会错投后续事件）。
+        // 为什么不会泄漏/悬挂：清理是无条件的、且不持有任何定时器/句柄（唯一异步步骤是这一次
+        // invoke，它必然 settle）；`close()` 返回后该名字的订阅全部作废，同名通道重新
+        // `listen`/`connect` 从空表开始，不会被残留监听器影响。
+        try {
+          await window.api.ipcClose(ext.id, name)
+        } finally {
+          listeners.delete(name)
+        }
       },
       channels: (): Promise<string[]> => window.api.ipcList(ext.id),
       request: async (name, method, params, opts): Promise<unknown> => {
