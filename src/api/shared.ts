@@ -37,6 +37,19 @@ export interface Memento {
 }
 
 /**
+ * 断线自动重连策略（issue #44）。**只在运行时声明对象里生效**：
+ * `api.ipc.connect({ id, transport: 'pipe', autoReconnect: { retries: 5 } })`。
+ * 写进 manifest 的 `contributes.ipcChannels` **既不报错也不生效**（R13/R18）。
+ * 仅对 `transport: 'pipe'` 有效；`stdio` + `autoReconnect` → `invalid-declaration`。
+ */
+export interface IpcAutoReconnect {
+  /** 重试次数上限（缺省 3；`0` 等价于关闭；必须是非负整数；**不额外封顶**） */
+  retries?: number
+  /** 首次退避毫秒（缺省 250；按 ×2 递增，单次封顶 30000；`0` = 不等待；必须是非负有限数） */
+  backoffMs?: number
+}
+
+/**
  * 外部进程通道声明（`api.ipc.connect`）。
  * 传输**只有两种，都不使用 TCP 端口**：
  * - `stdio`：宿主拉起子进程，用它的 stdin/stdout 双向通信（`program` 必须是扩展目录内的相对路径）
@@ -52,4 +65,6 @@ export interface IpcChannelDeclaration {
   args?: string[]
   /** 分帧：`content-length`（默认，二进制安全）或 `ndjson`（换行分隔 JSON） */
   framing?: 'content-length' | 'ndjson'
+  /** 断线自动重连（仅 `transport: 'pipe'` 的**运行时**声明；见 `IpcAutoReconnect`） */
+  autoReconnect?: IpcAutoReconnect
 }

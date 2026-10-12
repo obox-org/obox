@@ -6,10 +6,14 @@ import { describe, expect, it } from 'vitest'
 import {
   checkIpcChannelList,
   checkIpcDeclaration,
+  DEFAULT_RECONNECT_BACKOFF_MS,
+  DEFAULT_RECONNECT_RETRIES,
   isValidIpcName,
   IpcDeclarationError,
+  MAX_BACKOFF_MS,
   resolveIpcChannelDeclaration,
-  validateIpcDeclaration
+  validateIpcDeclaration,
+  validateRuntimeIpcDeclaration
 } from '../src/shared/ipcDeclaration'
 
 describe('validateIpcDeclaration 矩阵', () => {
@@ -207,5 +211,149 @@ describe("resolveIpcChannelDeclaration（connect('<通道id>') 的解析）", ()
     expect(resolveIpcChannelDeclaration(declarations, 'nope')).toBeUndefined()
     expect(resolveIpcChannelDeclaration([], 'worker')).toBeUndefined()
     expect(resolveIpcChannelDeclaration(undefined, 'worker')).toBeUndefined()
+  })
+})
+
+/**
+ * issue #44 R18 的四把锁（**双锁死**：接受面 + 归一化构造）。这是本 PR 风险最高的不变量：
+ * `autoReconnect` 必须是**运行时的已知键**（R1/R2），而清单里写它必须**既不报错也不生效**（R13/Q2=A）。
+ * 靠"没人读它"是不够的 —— 清单里的对象是**原样**送进主进程校验器的（F12），只有
+ * `resolveIpcChannelDeclaration` 的白名单归一化能由**构造**保证它进不去。
+ */
+describe('autoReconnect：清单路径的接受面与归一化（issue #44 R18）', () => {
+  it('锁 1a：清单路径的校验器不校验它（未知键静默忽略），且归一化后不含该键', () => {
+    const shapes = [
+      { id: 'bus', transport: 'pipe', autoReconnect: { retries: -1 } },
+      { id: 'bus', transport: 'pipe', autoReconnect: 5 },
+      { id: 'bus', transport: 'pipe', autoReconnect: null }
+    ]
+    for (const raw of shapes) {
+      const label = JSON.stringify(raw)
+      // ① 不抛错（**非法值也不抛**：清单不会因为这个键变成无效）
+      expect(() => validateIpcDeclaration(raw), label).not.toThrow()
+      // ② 返回值只有白名单字段
+      expect(validateIpcDeclaration(raw), label).toEqual({ id: 'bus', transport: 'pipe' })
+      expect(Object.keys(validateIpcDeclaration(raw)), label).toEqual(['id', 'transport'])
+      // ③④ 不抛错形式的两个清单入口同样通过
+      const checked = checkIpcDeclaration(raw)
+      expect(checked.ok, label).toBe(true)
+      if (checked.ok) expect('autoReconnect' in checked.declaration, label).toBe(false)
+      const list = checkIpcChannelList([raw])
+      expect(list.ok, label).toBe(true)
+      if (list.ok) expect('autoReconnect' in list.declarations[0], label).toBe(false)
+    }
+  })
+
+  it('锁 2：resolveIpcChannelDeclaration 归一化后不含该键（清单里写它不生效）', () => {
+    const resolved = resolveIpcChannelDeclaration(
+      [{ id: 'bus', transport: 'pipe', autoReconnect: { retries: 5, backoffMs: 1 } }],
+      'bus'
+    )
+    expect(resolved).toEqual({ id: 'bus', transport: 'pipe' })
+    expect('autoReconnect' in (resolved ?? {})).toBe(false)
+    expect(Object.keys(resolved ?? {})).toEqual(['id', 'transport'])
+
+    // 顺带把 #43 R15 的"未知键静默"一并钉住（同一个归一化器）
+    const unknown = resolveIpcChannelDeclaration(
+      [{ id: 'bus', transport: 'pipe', mode: 'server' } as never],
+      'bus'
+    )
+    expect(unknown).toEqual({ id: 'bus', transport: 'pipe' })
+    expect('mode' in (unknown ?? {})).toBe(false)
+  })
+
+  it('锁 3（运行时对照）：只有运行时入口校验并归一化 autoReconnect（缺省填充 / 非法拒绝 / stdio 拒绝）', () => {
+    // 缺省填充
+    expect(
+      validateRuntimeIpcDeclaration({ id: 'bus', transport: 'pipe', autoReconnect: {} })
+    ).toEqual({ id: 'bus', transport: 'pipe', autoReconnect: { retries: 3, backoffMs: 250 } })
+    // 只给一个字段
+    expect(
+      validateRuntimeIpcDeclaration({ id: 'bus', transport: 'pipe', autoReconnect: { retries: 5 } })
+    ).toEqual({ id: 'bus', transport: 'pipe', autoReconnect: { retries: 5, backoffMs: 250 } })
+    // E2：retries **不封顶**（扩展声明的意图不被静默截断）
+    expect(
+      validateRuntimeIpcDeclaration({
+        id: 'bus',
+        transport: 'pipe',
+        autoReconnect: { retries: 100_000 }
+      }).autoReconnect
+    ).toEqual({ retries: 100_000, backoffMs: 250 })
+    // E4：backoffMs: 0 合法（= 不等待）
+    expect(
+      validateRuntimeIpcDeclaration({
+        id: 'bus',
+        transport: 'pipe',
+        autoReconnect: { backoffMs: 0 }
+      }).autoReconnect
+    ).toEqual({ retries: 3, backoffMs: 0 })
+    // E3：未知键静默忽略（与顶层逐键白名单同风格）
+    expect(
+      validateRuntimeIpcDeclaration({
+        id: 'bus',
+        transport: 'pipe',
+        autoReconnect: { retries: 5, jitterMs: 50 }
+      }).autoReconnect
+    ).toEqual({ retries: 5, backoffMs: 250 })
+
+    // `retries: 0` = 关闭（R2）：**不写回**该键 → 调用方不挂任何重连绑定
+    const disabled = validateRuntimeIpcDeclaration({
+      id: 'bus',
+      transport: 'pipe',
+      autoReconnect: { retries: 0 }
+    })
+    expect(disabled).toEqual({ id: 'bus', transport: 'pipe' })
+    expect('autoReconnect' in disabled).toBe(false)
+
+    // 非法值：负数 / 非整数 / 非数字 / 非有限 / 非对象 / 数组
+    const bad = [
+      { retries: -1 },
+      { retries: 1.5 },
+      { retries: Number.NaN },
+      { retries: '3' },
+      { backoffMs: -1 },
+      { backoffMs: Number.POSITIVE_INFINITY },
+      { backoffMs: 'x' },
+      'nope',
+      5,
+      null,
+      []
+    ]
+    for (const autoReconnect of bad) {
+      const label = JSON.stringify(autoReconnect)
+      expect(
+        () => validateRuntimeIpcDeclaration({ id: 'bus', transport: 'pipe', autoReconnect }),
+        label
+      ).toThrow(IpcDeclarationError)
+    }
+
+    // Q3 = A（R12）：stdio + autoReconnect → invalid-declaration（文案给出替代路径）
+    expect(() =>
+      validateRuntimeIpcDeclaration({
+        id: 'w',
+        transport: 'stdio',
+        program: 'bin/w.js',
+        autoReconnect: {}
+      })
+    ).toThrow(/只支持 pipe/)
+    expect(() =>
+      validateRuntimeIpcDeclaration({
+        id: 'w',
+        transport: 'stdio',
+        program: 'bin/w.js',
+        autoReconnect: {}
+      })
+    ).toThrow(/自行 connect\(\)/)
+
+    // 不传该键 → 与清单路径**同形**（运行时能力存在，但不声明就不启用）
+    expect(validateRuntimeIpcDeclaration({ id: 'bus', transport: 'pipe' })).toEqual({
+      id: 'bus',
+      transport: 'pipe'
+    })
+
+    // 常量单源
+    expect(MAX_BACKOFF_MS).toBe(30_000)
+    expect(DEFAULT_RECONNECT_RETRIES).toBe(3)
+    expect(DEFAULT_RECONNECT_BACKOFF_MS).toBe(250)
   })
 })

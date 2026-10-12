@@ -25,6 +25,13 @@ import {
   resolveStdioSpawn,
   validateIpcDeclaration
 } from './ipcCore'
+import {
+  createReconnectController,
+  isReconnectableCloseReason,
+  type ReconnectController
+} from './ipcReconnect'
+import { validateRuntimeIpcDeclaration, type ResolvedAutoReconnect } from '../shared/ipcDeclaration'
+import type { RuntimeIpcChannelDeclaration } from '../shared/ipcDeclaration'
 import type { Framing } from './ipcCore'
 import {
   openPipeClientTransport,
@@ -46,9 +53,31 @@ export const MAX_CONNECTIONS_PER_SERVER = 16
 /** 把对端请求转发给渲染进程后的等待上限 */
 const FORWARD_TIMEOUT_MS = 30_000
 
+/**
+ * client 通道上的重连绑定（issue #44）：**只有声明了 `autoReconnect` 且 `retries > 0` 的
+ * pipe 通道**才有它（`retries: 0` 在声明层就等价于关闭，不会写回该键）。
+ */
+interface ClientReconnectBinding {
+  /** 生效策略（缺省已在声明层填好） */
+  policy: ResolvedAutoReconnect
+  /** 用**首次连接时算出的端点与 framing**重建传输并等它就绪（R8：通道名/声明/framing 保留） */
+  rebuild: () => Promise<IpcTransportHandles>
+  /** 当前控制器（窗口期有；成功/放弃后为 null） */
+  controller: ReconnectController | null
+}
+
+/** 一条 client 通道（`connect` / 已有流）；重连窗口期 `transport` 为 null（R8） */
+type ClientChannel = {
+  kind: 'client'
+  /** `reconnecting` = 自动重连窗口期（协议层状态已全丢，`channels()` 仍含该名字） */
+  state: 'open' | 'reconnecting'
+  transport: IpcTransportHandles | null
+  /** 断线自动重连绑定（issue #44；未启用重连的通道没有该字段） */
+  reconnect?: ClientReconnectBinding
+}
+
 /** 一条已打开的通道：client（拨号/stdio/已有流）或 server（listen 多连接）；两者**共用命名空间** */
-type OpenChannel =
-  { kind: 'client'; transport: IpcTransportHandles } | { kind: 'server'; server: IpcServerHandles }
+type OpenChannel = ClientChannel | { kind: 'server'; server: IpcServerHandles }
 
 const channels = new Map<string, Map<string, OpenChannel>>()
 /** 在途转发请求表：requestId → 等待回包者 + **归属连接**（用于断连时的定向失败） */
@@ -91,6 +120,19 @@ function failure(err: unknown): { ok: false; code: string; error: string } {
   }
 }
 
+/**
+ * 运行时声明校验 + **错误码形状统一**：共享校验器抛的是 `IpcDeclarationError`，
+ * 而桥的契约要求 `invalid-declaration`（与 `ipcCore.validateIpcDeclaration` 的包装同一做法，
+ * 只是本 issue 的入口在 `ipc.ts`，因此不再改动 `ipcCore.ts`）。
+ */
+function validateRuntimeDeclaration(raw: unknown): RuntimeIpcChannelDeclaration {
+  try {
+    return validateRuntimeIpcDeclaration(raw)
+  } catch (err) {
+    throw new IpcCoreError('invalid-declaration', err instanceof Error ? err.message : String(err))
+  }
+}
+
 function requireChannel(extId: string, name: string): OpenChannel {
   const channel = channels.get(extId)?.get(name)
   if (!channel) {
@@ -106,6 +148,21 @@ function requireServer(extId: string, name: string): IpcServerHandles {
     throw new IpcCoreError('invalid-declaration', `通道 ${name} 是客户端通道（不是服务端通道）`)
   }
   return channel.server
+}
+
+/**
+ * 取一条 client 通道**可用**的传输句柄（issue #44 R6/K3）：
+ * 重连窗口期内（`state === 'reconnecting'`）请求**立即**以 `not-connected` 失败——
+ * 不排队、不等待重连；`channels()` 仍含该通道名，因此"正在重连"与"已放弃"可区分。
+ */
+function requireClientTransport(channel: ClientChannel, name: string): IpcTransportHandles {
+  if (channel.state === 'reconnecting' || !channel.transport) {
+    throw new IpcCoreError(
+      'not-connected',
+      `通道 ${name} 正在重连（请求不排队，请在 onReconnect 后重发）`
+    )
+  }
+  return channel.transport
 }
 
 /**
@@ -131,7 +188,7 @@ function resolveTarget(
         `通道 ${name} 是客户端通道，没有连接 ID 命名空间（请去掉 connectionId）`
       )
     }
-    return { kind: 'client', transport: channel.transport }
+    return { kind: 'client', transport: requireClientTransport(channel, name) }
   }
   if (connectionId === undefined) {
     const verb = what === 'request' ? '请求' : '通知'
@@ -217,16 +274,57 @@ function assertChannelSlot(extId: string, name: string): Map<string, OpenChannel
 }
 
 /**
- * 把一条已就绪的传输登记为通道：转发 stderr、挂关闭广播与注销、把对端请求交给渲染进程。
- * `openExtensionChannel`（自己 spawn/连接）与 `registerStreamChannel`（用调用方给的流）共用这段。
+ * 把一条已就绪的 client 传输登记为通道：转发 stderr、挂关闭广播与注销、把对端请求交给渲染进程。
+ * `openExtensionChannel`（自己 spawn/连接）、`registerStreamChannel`（用调用方给的流）与
+ * **重连成功后的重新挂载**（issue #44）共用这段——因此它可被**重复调用**（每次是新的 `JsonRpcChannel`）。
  */
-function registerChannel(extId: string, name: string, transport: IpcTransportHandles): void {
+function attachClientChannel(
+  extId: string,
+  name: string,
+  transport: IpcTransportHandles,
+  reconnect?: ClientReconnectBinding
+): ClientChannel {
+  const entry: ClientChannel = {
+    kind: 'client',
+    state: 'open',
+    transport,
+    ...(reconnect ? { reconnect } : {})
+  }
   transport.onStderr((text) => broadcast({ extId, name, type: 'stderr', text: text.trimEnd() }))
-  transport.channel.onClose((err) => {
-    // 通道关闭：登记表移除，并通知扩展（err 为 null 表示扩展自己关闭）
-    if (channels.get(extId)?.get(name) === undefined) return
-    channels.get(extId)?.delete(name)
-    if (channels.get(extId)?.size === 0) channels.delete(extId)
+  transport.channel.onClose((err) => handleClientClose(extId, name, entry, err))
+  transport.channel.setDefaultHandler((method, params) =>
+    // client/stdio 路径没有连接 ID：显式 null
+    forwardInboundRequest(extId, name, null, method, params)
+  )
+  channelMap(extId).set(name, entry)
+  return entry
+}
+
+/**
+ * client 通道断开（issue #44 §4.4）：按**可重连断因封闭清单**分流。
+ *
+ * - **可重连**（`peer-crashed` 且该通道带 `reconnect` 绑定）：进入窗口期——`transport = null`、
+ *   `state = 'reconnecting'`、**保留表项**（`channels()` 仍含它，额度仍占）、广播一次
+ *   `close{peer-crashed}`（在第一次重试**之前**，R7）、启动退避控制器；
+ * - **不可重连**（`err === null` / `protocol-error` / 其它，或未启用重连）：与今天**逐字节一致**
+ *   ——删表 + 广播 `close`；**只有曾带 `reconnect` 绑定的通道**额外 `dispose()` 收尾（E5，R16）。
+ */
+function handleClientClose(
+  extId: string,
+  name: string,
+  entry: ClientChannel,
+  err: IpcCoreError | null
+): void {
+  const map = channels.get(extId)
+  // 早已注销（`close()` / 扩展停用）或已被后来的连接顶替 → 什么都不做
+  if (!map || map.get(name) !== entry) return
+
+  const reconnect = entry.reconnect
+  if (!reconnect || !isReconnectableCloseReason(err)) {
+    map.delete(name)
+    if (map.size === 0) channels.delete(extId)
+    // E5：未启用重连的通道**不**多调一次 dispose（保住 R16 的"逐字节一致"）
+    if (reconnect) entry.transport?.dispose()
     broadcast({
       extId,
       name,
@@ -234,12 +332,48 @@ function registerChannel(extId: string, name: string, transport: IpcTransportHan
       code: err?.code ?? 'channel-closed',
       message: err?.message ?? '通道已关闭'
     })
+    return
+  }
+
+  // ① 幂等收尾半死套接字 ② 进入窗口期（协议层状态全丢：新通道、id 从 1、挂起表为空）
+  entry.transport?.dispose()
+  entry.transport = null
+  entry.state = 'reconnecting'
+  // `channels()` 仍含该通道名：这是"正在重连"与"已放弃"的唯一判据（K3）
+  broadcast({
+    extId,
+    name,
+    type: 'close',
+    code: err?.code ?? 'peer-crashed',
+    message: err?.message ?? '对端连接已关闭'
   })
-  transport.channel.setDefaultHandler((method, params) =>
-    // client/stdio 路径没有连接 ID：显式 null
-    forwardInboundRequest(extId, name, null, method, params)
-  )
-  channelMap(extId).set(name, { kind: 'client', transport })
+
+  const controller = createReconnectController({
+    retries: reconnect.policy.retries,
+    backoffMs: reconnect.policy.backoffMs,
+    attempt: async (): Promise<void> => {
+      const next = await reconnect.rebuild()
+      // 窗口期内被 `close()` / 扩展停用取消 → 不得把它重新登记回来
+      if (channels.get(extId)?.get(name) !== entry) {
+        next.dispose()
+        throw new IpcCoreError('channel-closed', `通道 ${name} 的重连已取消`)
+      }
+      attachClientChannel(extId, name, next, reconnect)
+    },
+    onSuccess: (info): void => {
+      reconnect.controller = null
+      broadcast({ extId, name, type: 'reconnect', attempts: info.attempts })
+    },
+    onGiveUp: (): void => {
+      reconnect.controller = null
+      // E1：放弃时**不**再广播第二次 close（"已放弃"由 `channels()` 不含该名字表达）
+      if (channels.get(extId)?.get(name) !== entry) return
+      map.delete(name)
+      if (map.size === 0) channels.delete(extId)
+    }
+  })
+  reconnect.controller = controller
+  controller.start()
 }
 
 /** 把一条已就绪的 server 登记为通道（与 client 通道**共用**命名空间与额度） */
@@ -247,16 +381,23 @@ function registerServer(extId: string, name: string, server: IpcServerHandles): 
   channelMap(extId).set(name, { kind: 'server', server })
 }
 
-/** 打开一条通道（校验声明 → 建传输 → 接事件）；失败抛 IpcCoreError */
+/**
+ * 打开一条通道（校验声明 → 建传输 → 接事件）；失败抛 IpcCoreError。
+ *
+ * issue #44：校验走**只服务运行时声明**的 `validateRuntimeIpcDeclaration`（唯一接受
+ * `autoReconnect` 的入口；清单来源的声明在 `resolveIpcChannelDeclaration` 已被剥掉该键，R18）。
+ * 首连**失败**不挂控制器（`connect-failed` 直接抛给扩展，R4）；首连成功后按策略挂重连绑定。
+ */
 export async function openExtensionChannel(
   extId: string,
   rawDeclaration: IpcChannelDeclaration
 ): Promise<void> {
-  const declaration = validateIpcDeclaration(rawDeclaration)
+  const declaration = validateRuntimeDeclaration(rawDeclaration)
   assertChannelSlot(extId, declaration.id)
 
   const extensionDir = extensionSourceDir(extId)
-  let transport: IpcTransportHandles
+  /** 建一条**新的**传输（重连时用同一份端点/program/framing 再建一次，R8） */
+  let createTransport: () => IpcTransportHandles
   if (declaration.transport === 'stdio') {
     const program = resolveProgramInExtension(extensionDir, declaration.program ?? '')
     const cwd = join(extensionDir, 'data')
@@ -270,22 +411,45 @@ export async function openExtensionChannel(
       args: declaration.args,
       execPath: process.execPath
     })
-    transport = openStdioTransport({
-      program: spawn.program,
-      args: spawn.args,
-      cwd,
-      framing: declaration.framing,
-      env: spawn.env
-    })
+    createTransport = (): IpcTransportHandles =>
+      openStdioTransport({
+        program: spawn.program,
+        args: spawn.args,
+        cwd,
+        framing: declaration.framing,
+        env: spawn.env
+      })
   } else {
     const socketDir = ipcSocketDir()
     await fs.mkdir(socketDir, { recursive: true })
     const endpoint = ipcEndpoint({ socketDir, extensionId: extId, name: declaration.id })
-    transport = openPipeClientTransport({ endpoint, framing: declaration.framing })
+    createTransport = (): IpcTransportHandles =>
+      openPipeClientTransport({ endpoint, framing: declaration.framing })
   }
 
+  const policy = declaration.autoReconnect
+  // `retries: 0` 在声明层就等价于关闭（不会写回该键）→ 这里只可能是 retries > 0
+  const reconnect: ClientReconnectBinding | undefined = policy
+    ? {
+        policy,
+        controller: null,
+        rebuild: async (): Promise<IpcTransportHandles> => {
+          const next = createTransport()
+          try {
+            await next.ready
+          } catch (err) {
+            // 尝试失败（`connect-failed` 等）只是"继续退避"：收尾这条半成品再抛给控制器
+            next.dispose()
+            throw err
+          }
+          return next
+        }
+      }
+    : undefined
+
+  const transport = createTransport()
   await transport.ready
-  registerChannel(extId, declaration.id, transport)
+  attachClientChannel(extId, declaration.id, transport, reconnect)
 }
 
 /**
@@ -367,13 +531,13 @@ export function registerStreamChannel(
     framing: streams.framing,
     onDispose: streams.onDispose
   })
-  registerChannel(extId, name, transport)
+  attachClientChannel(extId, name, transport)
   return transport
 }
 
 /**
  * 统一 `close(name)`：按名字关闭该名字下的**一切**。
- * - 该名字是 client 通道 → 断开该通道；
+ * - 该名字是 client 通道 → 断开该通道（**含重连窗口期**：先取消剩余重试，R10）；
  * - 该名字是 server → 停止监听并断开它**全部**连接；
  * - 两类都不存在 → **静默成功**；**幂等**（重复调用无副作用、不抛错）。
  */
@@ -381,18 +545,40 @@ export function closeExtensionChannel(extId: string, name: string): void {
   const map = channels.get(extId)
   const channel = map?.get(name)
   if (!channel) return
-  if (channel.kind === 'client') channel.transport.dispose()
+  if (channel.kind === 'client') closeClientChannel(extId, name, channel)
   else channel.server.dispose()
   map?.delete(name)
   if (map && map.size === 0) channels.delete(extId)
+}
+
+/**
+ * 关掉一条 client 通道（`close(name)` 与扩展停用共用）。
+ * issue #44 R10：**先**取消重连控制器（清掉在途退避定时器、之后不再有任何 `onReconnect`），
+ * **再** dispose 传输。
+ *
+ * 窗口期没有可 dispose 的传输，但"扩展主动 `close()` 触发一次 `onClose`"是既有语义
+ * （`api/types.ts` 的 `onClose` 文档）：因此这里补一次 `close{channel-closed}`，与 dispose
+ * 触发的广播**同形**。R16 不受影响——只有带过重连绑定的通道才可能走到补发分支。
+ */
+function closeClientChannel(extId: string, name: string, channel: ClientChannel): void {
+  channel.reconnect?.controller?.cancel()
+  if (channel.reconnect) channel.reconnect.controller = null
+  const transport = channel.transport
+  channel.transport = null
+  if (transport) {
+    transport.dispose()
+    return
+  }
+  if (!channel.reconnect) return
+  broadcast({ extId, name, type: 'close', code: 'channel-closed', message: '通道已关闭' })
 }
 
 /** 扩展停用/卸载/重载时清理它的全部通道与 server（与定时器/DB/watch/通知同一时机） */
 export function closeExtensionIpc(extId: string): void {
   const map = channels.get(extId)
   if (!map) return
-  for (const channel of [...map.values()]) {
-    if (channel.kind === 'client') channel.transport.dispose()
+  for (const [name, channel] of [...map.entries()]) {
+    if (channel.kind === 'client') closeClientChannel(extId, name, channel)
     else channel.server.dispose()
   }
   channels.delete(extId)

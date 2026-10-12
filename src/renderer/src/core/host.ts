@@ -1162,6 +1162,8 @@ class ExtensionHost {
       /** issue #43：server 连接事件（按通道名聚合，回调参数与 IpcEvent 一一对应） */
       connections: Set<(connectionId: number) => void>
       disconnects: Set<(connectionId: number, err: { code: string; message: string }) => void>
+      /** issue #44：client 通道自动重连成功（attempts = 本次共尝试次数，含成功那次） */
+      reconnects: Set<(info: { attempts: number }) => void>
     }
     const listeners = new Map<string, ChannelListeners>()
     const forChannel = (name: string): ChannelListeners => {
@@ -1173,7 +1175,8 @@ class ExtensionHost {
         closes: new Set(),
         stderrs: new Set(),
         connections: new Set(),
-        disconnects: new Set()
+        disconnects: new Set(),
+        reconnects: new Set()
       }
       listeners.set(name, created)
       return created
@@ -1203,6 +1206,10 @@ class ExtensionHost {
         for (const cb of [...target.disconnects]) {
           cb(e.connectionId, { code: e.code, message: e.message })
         }
+        return
+      }
+      if (e.type === 'reconnect') {
+        for (const cb of [...target.reconnects]) cb({ attempts: e.attempts })
         return
       }
       // 对端发来的请求：交给扩展处理器，并把结果回传给主进程（再由主进程回给对端）
@@ -1296,6 +1303,11 @@ class ExtensionHost {
         const target = forChannel(name)
         target.disconnects.add(cb)
         return { dispose: (): void => void target.disconnects.delete(cb) }
+      },
+      onReconnect: (name, cb): Disposable => {
+        const target = forChannel(name)
+        target.reconnects.add(cb)
+        return { dispose: (): void => void target.reconnects.delete(cb) }
       }
     }
   }
