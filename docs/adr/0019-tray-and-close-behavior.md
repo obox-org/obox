@@ -70,3 +70,32 @@ name: 'com.obox.app', enabled: true })`；读必须传**同样的 path/args**（
     后迁移并删除；同时修掉"写关闭行为时整对象覆盖、会抹掉其它偏好字段"的既有缺陷。
 
 **本次明确不做**：macOS/Linux 的开机自启（需 Login Items / `.desktop`，本机无法验证）；启动时的其它自动动作（如自动检查更新）。
+
+## 修订：托盘点击时序抽成纯状态机（决策 3 的技术性澄清与加固，2026-10-13 落地）
+
+**背景**：有反馈"托盘左键单击不再弹出菜单"。本次**实测复核**（Windows 11 + Electron 44 本机，合成鼠标点击 + 截图）
+得到的结论与 ADR 原假设**不同**，据此对本决策做技术性修订（契约不变）：
+
+17. **澄清"系统固有行为"**：`tray.setContextMenu(menu)` 在 Windows 上**只**让**右键**弹菜单；**左键单击**只发
+    `click` 事件，系统**不会**代弹（Electron `shell/browser/ui/win/notify_icon.cc` 的 `HandleClickEvent`：
+    `left_mouse_click` 分支只 `NotifyClicked`，`PopUpContextMenu` 只在"单击右键且已 `setContextMenu`"分支）。
+    因此决策 3 里"用双击间隔区分，避免单击时先弹菜单"的**动机表述不准确**——不存在"系统已弹一份、
+    我们再弹一份"的双菜单叠加；单击弹菜单**必须**由宿主显式 `popUpContextMenu()` 完成。
+    **两者都要保留**：`setContextMenu`（右键菜单）+ 单击显式 `popUpContextMenu(menu)`。
+18. **点击时序改为纯状态机**：`trayCore.ts` 新增 `createTrayClickState` / `trayClickTransition` /
+    `trayClickTeardown`（`idle | pending | menuOpen` 三态，返回 `schedule-menu` / `cancel-menu` /
+    `show-menu` / `open-window` 动作），`tray.ts` 只做定时器与 Electron 调用的接线。
+    原先的定时器逻辑**没有测试**（回归根因之一），现在 **`test/tray-core.test.ts` 钉住**：单击 → 延迟后弹菜单；
+    双击 → 取消待弹菜单 + 打开主窗口；连续单击 → 取消上一次再重排（同一时刻只有一份待弹菜单）；
+    `destroy` → 清掉待弹定时器。`DOUBLE_CLICK_GAP_MS`（220ms）随状态机迁到 `trayCore.ts`。
+19. **单次点击的 220ms 等待保留**（明确取舍）：单击不会立刻弹菜单，而是等一个双击间隔。代价是单击有约 0.2s
+    迟滞；收益是双击（开主窗口）不会先闪一下菜单。**明确不做**"单击立即弹菜单 + 双击再开窗"——那会在双击时
+    先弹菜单再开窗，观感更差。
+20. **实测记录（2026-10-13，Windows 11 本机，`npm run dev` + 合成点击）**：托盘图标默认在 Windows 11 的
+    **隐藏图标浮出层**（点任务栏托盘区的 `^` 展开）——这**不是**缺陷，但会让用户误以为"托盘图标不见了/点了没反应"，
+    已写进 troubleshooting。实机结果：左键单击 5/5 次弹出菜单（打开/设置/关于/——/退出）、右键弹出同一菜单、
+    双击打开主窗口（截图见本次提交的复核记录）；**未能复现"左键单击不弹菜单"**，故本次按"澄清 + 抽状态机 +
+    加回归测试 + 写排查表"处置，未改变契约与 UI。
+
+**扩展侧无影响**：托盘仍是宿主能力，扩展不参与。
+

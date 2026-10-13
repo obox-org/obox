@@ -19,6 +19,25 @@ const KEYBINDING_SETTING_PREFIX = 'keybinding.'
 class KeybindingStore {
   readonly entries = reactive<KeybindingEntry[]>([])
 
+  /**
+   * 捕获态：设置页正在录一个新按键时置 true（issue #85）。
+   *
+   * 为什么放在 store 而不是组件里：全局 `keydown` 处理器（`App.vue`）也读它。
+   * 捕获期间若不做全局守卫，用户按 `Ctrl+Shift+P` 会被全局处理器拦去打开命令面板
+   * （`preventDefault()`），捕获框拿不到按键 —— 改键因此"看起来没反应"。
+   * `matchKeydown` 在捕获态一律返回 null，全局侧再加一层显式早退（双保险）。
+   */
+  private capturing = false
+
+  get isCapturing(): boolean {
+    return this.capturing
+  }
+
+  /** 进入/退出捕获态（设置页 startCapture / 取消 / 收尾时调用） */
+  setCapturing(value: boolean): void {
+    this.capturing = value
+  }
+
   register(entry: KeybindingEntry): void {
     this.entries.push(entry)
   }
@@ -55,6 +74,8 @@ class KeybindingStore {
 
   /** 按键事件 → 组合键字符串；匹配注册的快捷键并返回命令（若无匹配返回 null） */
   matchKeydown(e: KeyboardEvent): string | null {
+    // 捕获态：全局快捷键一律不参与匹配（改键期间按键归设置页的捕获框）
+    if (this.capturing) return null
     const combo = this.captureCombo(e)
     if (!combo) return null
     for (const entry of this.entries) {

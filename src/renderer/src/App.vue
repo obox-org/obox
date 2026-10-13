@@ -22,6 +22,10 @@ function selectNav(id: string): void {
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {
+  // 捕获态守卫（issue #85）：设置页正在录按键时，全局快捷键一律不触发，
+  // 否则 Ctrl+Shift+P 会被这里拦下并打开命令面板，捕获框永远拿不到该键。
+  // `matchKeydown` 内部也有同样的早退（双保险，见 core/keybindings.ts）。
+  if (keybindingStore.isCapturing) return
   // 快捷键系统：匹配内置/扩展快捷键（内置命令面板 + 扩展命令通用执行）
   const command = keybindingStore.matchKeydown(e)
   if (!command) return

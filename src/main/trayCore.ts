@@ -43,3 +43,80 @@ export function trayTooltip(appName: string, version: string): string {
 export function trayActionIds(items: readonly TrayMenuItem[]): TrayMenuItemId[] {
   return items.flatMap((item) => (item.id ? [item.id] : []))
 }
+
+// ---- 点击时序（单击弹菜单 / 双击打开主窗口，ADR-0019 决策 3） ----
+
+/**
+ * 单击与双击的区分窗口（毫秒）。Windows 的双击判定由系统完成（`WM_LBUTTONDBLCLK`），
+ * 该间隔只是"单击后延迟多久弹菜单"的等待量：双击落在这个窗口内时，待弹菜单被取消。
+ */
+export const DOUBLE_CLICK_GAP_MS = 220
+
+/** 点击时序状态：`idle` 无待办；`pending` 已排定一次延迟弹菜单；`menuOpen` 菜单已弹出 */
+export type TrayClickPhase = 'idle' | 'pending' | 'menuOpen'
+
+export interface TrayClickState {
+  phase: TrayClickPhase
+}
+
+/** 一次点击事件应产生的动作（由 `tray.ts` 映射到 Electron 调用） */
+export type TrayClickAction = 'schedule-menu' | 'cancel-menu' | 'show-menu' | 'open-window'
+
+/** 新建时序状态 */
+export function createTrayClickState(): TrayClickState {
+  return { phase: 'idle' }
+}
+
+/**
+ * 状态转移（**纯函数**，不碰计时器与 Electron）：
+ *
+ * | 当前 | 事件 | 下一状态 | 动作 |
+ * | --- | --- | --- | --- |
+ * | idle / menuOpen | click | pending | schedule-menu |
+ * | pending | click | pending | cancel-menu + schedule-menu |
+ * | pending | double-click | idle | cancel-menu + open-window |
+ * | idle / menuOpen | double-click | idle | open-window（`menuOpen` 时菜单已弹出过，不再重复取消） |
+ * | pending | watchdog-fire | menuOpen | show-menu |
+ * | idle / menuOpen | watchdog-fire | 不变 | 无（迟到的定时器回调被忽略） |
+ *
+ * 返回的 `actions` 按顺序执行；空数组表示本次事件不该做任何事。
+ * Windows 的双击必然带来一次 `click`（`WM_LBUTTONDOWN`）+ 一次 `double-click`
+ * （`WM_LBUTTONDBLCLK`），因此"双击取消待弹菜单"落在 `pending` 分支上。
+ */
+export function trayClickTransition(
+  state: TrayClickState,
+  event: 'click' | 'double-click' | 'watchdog-fire'
+): { state: TrayClickState; actions: TrayClickAction[] } {
+  switch (event) {
+    case 'click':
+      if (state.phase === 'pending') {
+        // 连续单击：取消上一次待弹菜单，重新排定一次（避免两次弹菜单）
+        return {
+          state: { phase: 'pending' },
+          actions: ['cancel-menu', 'schedule-menu']
+        }
+      }
+      return { state: { phase: 'pending' }, actions: ['schedule-menu'] }
+    case 'double-click':
+      if (state.phase === 'pending') {
+        return {
+          state: { phase: 'idle' },
+          actions: ['cancel-menu', 'open-window']
+        }
+      }
+      return { state: { phase: 'idle' }, actions: ['open-window'] }
+    case 'watchdog-fire':
+      if (state.phase === 'pending') {
+        return { state: { phase: 'menuOpen' }, actions: ['show-menu'] }
+      }
+      return { state, actions: [] }
+  }
+}
+
+/**
+ * 销毁时的收尾：`pending` 需要清掉待弹菜单；已弹出的菜单由 Electron 随托盘销毁关闭。
+ * 返回动作清单（`idle` / `menuOpen` 时为空）。
+ */
+export function trayClickTeardown(state: TrayClickState): TrayClickAction[] {
+  return state.phase === 'pending' ? ['cancel-menu'] : []
+}

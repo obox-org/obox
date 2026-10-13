@@ -16,7 +16,7 @@ src/
 │   ├── window.ts    # 无边框窗口 + 窗口控制 IPC（最小化/最大化/关闭/状态推送）
 │   ├── appWindow.ts # App 子窗口管理（单开聚焦/多开序号/主机关闭全关）
 │   ├── tray.ts      # 系统托盘（仅 Windows）：菜单 打开/设置/关于/退出，单击弹菜单、双击打开（ADR-0019）
-│   ├── trayCore.ts  # 托盘菜单/tooltip 的纯逻辑（可单测）
+│   ├── trayCore.ts  # 托盘菜单/tooltip/点击时序（单击弹菜单 vs 双击开窗）的纯逻辑（可单测）
 │   ├── windowBehavior.ts     # 关闭行为：偏好读写 + 关闭拦截 + 原生提示（ADR-0019）
 │   ├── windowBehaviorCore.ts # 关闭行为纯逻辑：偏好解析/决策矩阵/提示文案（可单测）
 │   ├── extensionCleanup.ts   # 扩展主进程资源统一清理（热移除与退出共用同一组函数，ADR-0019）
@@ -75,7 +75,7 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 | `state.ts`             | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）**                                                                                                   |
 | `appStore.ts`          | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理）                                                                                                                                              |
 | `theme.ts`             | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题                                                                                                                                      |
-| `keybindings.ts`       | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化                                                                                                                                                   |
+| `keybindings.ts`       | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化、**捕获态守卫**（改键时全局快捷键让路，ADR-0006 修订）                                                                                           |
 | `extensionSettings.ts` | 扩展设置页注册表（api.settings.register / manifest 声明）                                                                                                                                              |
 | `extensionI18n.ts`     | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间）                                                                                                                                                 |
 | `uiStore.ts`           | 应用内交互状态（模态/表单/quickPick/进度/toast），主窗口与 App 子窗口共用，驱动 `PromptHost`/`ToastHost`                                                                                               |
