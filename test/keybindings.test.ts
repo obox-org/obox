@@ -152,3 +152,46 @@ describe('keybindingStore · 按键事件', () => {
     )
   })
 })
+
+/**
+ * 捕获态（issue #85）：设置页"编辑"改键期间，全局快捷键一律不得触发。
+ * 这是"快捷键不支持配置"的第二个叠加原因——捕获框没焦点，即使有焦点也会先被
+ * 全局 keydown 处理器抢走按键。
+ */
+describe('keybindingStore · 捕获态守卫（issue #85）', () => {
+  it('默认不在捕获态', () => {
+    keybindingStore.setCapturing(false)
+    expect(keybindingStore.isCapturing).toBe(false)
+  })
+
+  it('捕获态下 matchKeydown 不返回任何命令（已注册的命中键也不返回）', () => {
+    keybindingStore.register({
+      command: 'kb-cap.palette',
+      labelKey: 'p',
+      defaultKey: 'Ctrl+Shift+P'
+    })
+    keybindingStore.setCapturing(false)
+    expect(keybindingStore.matchKeydown(keydown({ key: 'P', ctrlKey: true, shiftKey: true }))).toBe(
+      'kb-cap.palette'
+    )
+    keybindingStore.setCapturing(true)
+    expect(keybindingStore.matchKeydown(keydown({ key: 'P', ctrlKey: true, shiftKey: true }))).toBe(
+      null
+    )
+    keybindingStore.setCapturing(false)
+    expect(keybindingStore.matchKeydown(keydown({ key: 'P', ctrlKey: true, shiftKey: true }))).toBe(
+      'kb-cap.palette'
+    )
+  })
+
+  it('捕获态不影响 captureCombo（捕获框仍要能把按键转成组合键）与 setKey', () => {
+    keybindingStore.register({ command: 'kb-cap.combo', labelKey: 'c', defaultKey: 'Ctrl+Alt+C' })
+    keybindingStore.setCapturing(true)
+    const combo = keybindingStore.captureCombo(keydown({ key: 'j', ctrlKey: true, altKey: true }))
+    expect(combo).toBe('Ctrl+Alt+J')
+    expect(keybindingStore.setKey('kb-cap.combo', combo as string).conflict).toBeNull()
+    expect(keybindingStore.currentKey('kb-cap.combo')).toBe('Ctrl+Alt+J')
+    keybindingStore.reset('kb-cap.combo')
+    keybindingStore.setCapturing(false)
+  })
+})

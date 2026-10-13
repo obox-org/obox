@@ -343,6 +343,27 @@ export function uninstall(ctx) {
 
 **注意**：关窗不再等于退出，所以**不要**把扩展清理只挂在窗口关闭上——宿主仍会在扩展停用/卸载时调用 `extension:cleanup`。
 
+**托盘单击/双击/右键"没反应"怎么分诊（issue #85 追加，2026-10-13 实机核对）**：
+
+先排除**平台机制**再怀疑代码（Electron 源码 `shell/browser/ui/win/notify_icon.cc` 的 `HandleClickEvent`）：
+
+| 现象                               | 机制（不是 bug）                                                                                                                              | 处理                                                                          |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 托盘图标"找不到"                   | Windows 11 默认把新图标收进**隐藏图标浮出层**（点任务栏的 `^`）——obox 图标默认就在里面                                                        | 点任务栏附近托盘区的 `^` 展开；或把 obox 图标拖到托盘可见区，之后单击/右键都在 |
+| 左键单击不弹菜单                   | Windows 上 `tray.setContextMenu(menu)` **只**让右键弹菜单；左键单击只发 `click` 事件，系统不会代弹。所以宿主必须自己 `popUpContextMenu()`      | 宿主行为，别只靠 `setContextMenu`；见 `src/main/tray.ts` 的 `show-menu`       |
+| 左键单击**要等一下**才弹菜单       | 设计如此：为了区分双击，单击后等一个双击间隔（`DOUBLE_CLICK_GAP_MS = 220`，`src/main/trayCore.ts`）再弹                                   | 等待约 0.2s 属正常，别误判成"没反应"而再点一次（再点一次会被当成双击 → 开主窗口） |
+| 双击应打开主窗口，结果只弹了菜单   | 两次点击间隔超过双击间隔（220ms）→ 宿主按"两次单击"处理                                                                                       | 双击要快；或直接用托盘菜单的「打开」                                          |
+| 右键弹不出菜单                     | 没调 `setContextMenu`（`popUpContextMenu` 无参且无菜单时直接返回）；或 `SetForegroundWindow` 失败（Electron 内部 `PopUpContextMenu` 会静默 return） | 确认 `createTray` 走到了 `setContextMenu`；宿主日志 `[tray] 单击弹菜单跳过：托盘已失效` 说明托盘已销毁 |
+| 菜单"一闪就关"                     | 宿主不会同时弹两份：`PopUpContextMenu` 内部会先 `CloseContextMenu()` 再弹。若真看到闪烁，先看是不是**两次点击**各弹了一次                    | 单击后别连点；宿主侧点了两次会"取消上一次待弹菜单再重排"（有一条单测钉着）      |
+
+**回归防线（别再"改时序却不加测试"）**：点击时序已抽成 `src/main/trayCore.ts` 的纯状态机
+（`createTrayClickState` / `trayClickTransition` / `trayClickTeardown`），单测在 `test/tray-core.test.ts`：
+单击 → `schedule-menu` → `watchdog-fire` → `show-menu`；双击 → `cancel-menu` + `open-window`；
+连续单击 → `cancel-menu` + `schedule-menu`；`destroy` → `cancel-menu`（清定时器）。
+
+**扩展侧注意事项**：托盘是**宿主**能力，扩展不用（也无法）自己建托盘；要放"退出/设置"这类入口，
+用 `api.statusBar` / 命令贡献点，别去抢托盘图标。
+
 ## 28. 安装 `.oix` 报 `forbidden-entry`（包内含 `data/`）
 
 **症状**：安装 `.oix` 时扩展管理器提示安装失败，错误码 `forbidden-entry`，文案「包内不得包含 data/ 目录：它是扩展运行时数据目录，升级时由宿主保留」。
@@ -376,3 +397,45 @@ export function uninstall(ctx) {
 **修复**：装接收桥 + 首帧兜底——最小代码见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议) 的 `applyTokens` / `message` 监听 / `obox-theme-request` 三件套（脚手架生成的骨架已内置 `installAppThemeBridge()`）。兜底值集中在**一处常量**（不要散在 CSS 里，否则既拿不到主题又难维护）。
 
 **已知坑（跨窗口主题同步依赖 `storage` 事件，ADR-0022）**：子窗口是**独立 document**，主窗口切主题不会自动改子窗口的 `:root`。自 ADR-0022 起，主窗口写 `obox:state:v1` 后由 Chromium 的 `storage` 事件把快照送到子窗口（`src/renderer/src/core/state.ts` 的 `applyExternal`），子窗口据此 `applyCurrent()` 再推给 iframe。若日志里**一条 `[AppWindow] 下发主题` 都没有**而页面明明开着，按 ADR-0022 的退路排查（改用主进程 `webContents.send` 广播）；此时**不要**在扩展侧"绕过宿主自己读 localStorage"——`app://` 页面有**自己的** localStorage，与宿主**不共享**。
+
+## 30. "配置了快捷键但按了没反应" / 改键时全局快捷键抢键（issue #85）
+
+**症状**（两个叠加原因，分别看）：
+
+- 设置-快捷键里点「编辑」，覆盖层出来了，但**按键完全没反应**（不记录、不报冲突）；
+- 更隐蔽的一种：改键时按 `Ctrl+Shift+P`，**命令面板被打开**了，而捕获框还是"按下新的按键组合…"。
+
+**根因**（宿主自身缺陷，已修复）：
+
+1. **捕获框拿不到焦点**：覆盖层是 `v-if` 渲染出来的，`<div class="capture-box" tabindex="0" @keydown=...>` 若不在渲染后显式 `focus()`，键盘事件永远到不了它（`document.activeElement` 停在 `<body>`）。
+2. **全局快捷键把键抢走**：`App.vue` 的 `window.addEventListener('keydown', onGlobalKeydown)` 命中已注册快捷键就 `preventDefault()` 并执行命令——捕获期间没有守卫，`Ctrl+Shift+P` 直接被命令面板吃掉。
+
+**规避/使用**：升级到含该修复的版本即可；修复后「编辑」会自动聚焦捕获框、捕获期间全局快捷键一律不触发、`Esc` 取消、「重置」与冲突检测行为不变。
+
+**给扩展开发者（重要）**：如果你的扩展也要做"按键捕获"类 UI，**不要**只在组件内部 `@keydown.stop` 就算完——只要宿主用 `window.addEventListener('keydown', ...)` 做全局快捷键，事件就已经被双份派发了。正确做法是**把捕获态暴露成全局可见的开关**：宿主已提供 `keybindingStore.setCapturing(true/false)`（读 `keybindingStore.isCapturing`），`matchKeydown` 在捕获态直接返回 `null`，全局处理器也显式早退。捕获结束（含 Esc / 取消 / 成功 / 组件卸载）**必须**复位，否则全局快捷键会被永久挡住。
+
+**回归防线**：`test/keybindings.test.ts`（捕获态下 `matchKeydown` 返回 `null`、`captureCombo`/`setKey` 不受影响）与 `test/settings-view-wiring.test.ts`（`startCapture` 里 `await nextTick()` + `focus()`、捕获态经 store 暴露、`App.vue` 早退在 `matchKeydown` 之前）。
+
+## 31. 设置页"首次进入没按持久化配置显示"怎么排查（issue #85）
+
+**症状**：冷启动后第一次进设置页，某个控件显示的是**默认值**（不是上次退出时的值），而切走再切回来又对了——或者干脆一直不对。
+
+**根因分类**（逐分区核对"首屏取值来源"，别只看一个控件）：
+
+| 分区       | 首屏取值来源                                                                     | 踩坑点                                                                     |
+| ---------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 外观（主题） | `themeStore.currentId` getter：读 `stateStore.getSetting('theme')` + 已注册主题 | 主题**尚未注册**时 getter 会回落默认 dark——首屏读得太早就会显示默认主题     |
+| 语言       | `i18n.global.locale`（**响应式**，`loadLocale()` 在模块求值时读 `obox:locale:v1`） | 只要不是"在 setup 里一次性取成普通字符串"就没问题                          |
+| 快捷键     | `keybindingStore.list()` → 每项 `currentKey()` → `stateStore.getSetting(...)`     | `currentKey` 是**方法**（渲染期调用即响应式）；若在 setup 里取成数组快照就僵 |
+| 网络/通用  | 见下                                                                             | 本分区最容易写成"一次性快照"                                               |
+| 扩展设置   | `fieldValue()` → `stateStore.getSetting(key)`，缺省回落 `field.default`           | 同上                                                                       |
+
+**两条硬规则**：
+
+1. **不要**在 `setup` 阶段把 `stateStore` 的值取成**普通 ref**（`const x = ref(stateStore.getSetting(...))`）——那是一次性快照，之后任何变更（跨窗口 `storage` 合并 / 主进程回写）都不会反映到表单上。要么在**渲染期**直读（模板里调 `fieldValue()` / `isNotifDisabled()` 这类方法），要么 `stateStore.onSettingsChanged(...)` 里同步。
+2. **确有可编辑输入框时**（如代理配置）用 `reactive` 表单对象 + `onSettingsChanged` 同步，并用一个内部标志抑制"自己写 → 自己收到通知 → 再写回"的回环。
+
+**排查手法（不用挂载组件）**：预置一份 `localStorage['obox:state:v1']`，用 `npm run dev` 冷启动，打开设置页逐分区读控件值（DevTools 里 `document.querySelector('.settings-content select').value`）。`test/settings-first-paint.test.ts` 把这条路径钉成了单测（快照里每个值都故意与代码默认值不同）。
+
+**覆盖边界**：仓库 vitest 是 `node` 环境、没有 jsdom / `@vue/test-utils`，所以**不能挂载 `.vue`**；组件接线由 `test/settings-view-wiring.test.ts`（读源文件）覆盖，取数路径由 `test/settings-first-paint.test.ts` 覆盖。
+

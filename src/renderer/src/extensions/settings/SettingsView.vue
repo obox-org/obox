@@ -6,7 +6,7 @@
  * - 快捷键：内置快捷键列表 + 修改 + 冲突检测
  * - 扩展：非内置扩展设置项（api.settings.register / manifest 声明）
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { themeStore } from '../../core/theme'
 import { keybindingStore } from '../../core/keybindings'
@@ -56,21 +56,47 @@ function onLocaleChange(e: Event): void {
   setLocale(code)
 }
 
+// 设置存储任意变更的计数：让"渲染期直读 stateStore"的表单重新求值。
+// 声明在使用点之前（`const` 在渲染期访问不会有 TDZ 问题）。
+const settingsRevision = ref(0)
+
 // ---- 快捷键 ----
-const keybindings = computed(() => keybindingStore.list())
+/**
+ * 依赖 `settingsRevision`：`keybindingStore.list()` 内部直读 `stateStore`，
+ * 单靠 `entries`（reactive）**不会**在"改键写盘"后重新求值——改完键表格仍显示旧按键，
+ * 直到别的响应式源触发重渲染（实测复现，issue #85）。
+ */
+const keybindings = computed(() => {
+  void settingsRevision.value
+  return keybindingStore.list()
+})
 const capturing = ref<string | null>(null)
 const conflictMsg = ref('')
+/** 捕获框元素：显示后必须显式 focus()，否则 keydown 事件根本到不了它（issue #85） */
+const captureBox = ref<HTMLElement | null>(null)
 
-function startCapture(command: string): void {
+async function startCapture(command: string): Promise<void> {
   capturing.value = command
   conflictMsg.value = ''
+  // 全局守卫：捕获期间 matchKeydown / App.vue 的全局 keydown 处理器都不触发命令
+  keybindingStore.setCapturing(true)
+  // 覆盖层是本帧 v-if 出来的：nextTick 之后才拿得到元素
+  await nextTick()
+  captureBox.value?.focus()
+}
+
+/** 退出捕获态（Esc / 取消按钮 / 改键成功 / 组件卸载都要走这里，避免守卫卡住不放） */
+function cancelCapture(): void {
+  capturing.value = null
+  keybindingStore.setCapturing(false)
 }
 
 function onCaptureKeydown(e: KeyboardEvent): void {
   if (!capturing.value) return
   e.preventDefault()
+  e.stopPropagation()
   if (e.key === 'Escape') {
-    capturing.value = null
+    cancelCapture()
     return
   }
   const combo = keybindingStore.captureCombo(e)
@@ -83,7 +109,7 @@ function onCaptureKeydown(e: KeyboardEvent): void {
     })
     return
   }
-  capturing.value = null
+  cancelCapture()
 }
 
 // ---- 更新 ----
@@ -112,7 +138,10 @@ async function checkUpdate(): Promise<void> {
     return
   }
   updateStatus.value = 'checking'
-  const result = await window.api.checkUpdate({ feedUrl: active.feedUrl, proxy: proxyConfig.value })
+  const result = await window.api.checkUpdate({
+    feedUrl: active.feedUrl,
+    proxy: { ...proxyConfig }
+  })
   if (result.ok) {
     if (result.available && result.available !== oboxVersion.value) {
       updateStatus.value = 'available'
@@ -141,7 +170,6 @@ async function installUpdate(): Promise<void> {
 }
 
 // 订阅更新事件（下载进度/完成）
-import { onMounted, onUnmounted } from 'vue'
 let offUpdate: (() => void) | undefined
 onMounted(() => {
   offUpdate = window.events.on('update:event', (e) => {
@@ -162,31 +190,71 @@ onUnmounted(() => offUpdate?.())
 // ---- 网络（代理） ----
 import type { ProxyConfig } from '../../core/types'
 import type { AutoStartState, CloseBehavior } from '../../../../shared/types'
-const proxyConfig = ref<ProxyConfig>(
-  stateStore.getSetting<ProxyConfig>('network.proxy') ?? { enabled: false, host: '', noProxy: [] }
-)
-const noProxyText = ref((proxyConfig.value.noProxy ?? []).join('\n'))
+const DEFAULT_PROXY: ProxyConfig = { enabled: false, host: '', noProxy: [] }
+
+/** `localStorage['obox:state:v1'].settings['network.proxy']` 的快照或空配置 */
+function readProxyConfig(): ProxyConfig {
+  return stateStore.getSetting<ProxyConfig>('network.proxy') ?? { ...DEFAULT_PROXY }
+}
+
+/**
+ * 首屏值来自持久化快照；**并订阅后续变更**（issue #85：此前是一次性快照，
+ * 状态在挂载后被替换（跨窗口 `storage` 合并 / 主进程回写）时表单会停在旧值）。
+ * `savingProxy` 抑制"自己写入 → 自己收到通知 → 再写回"的回环。
+ */
+const proxyConfig = reactive<ProxyConfig>(readProxyConfig())
+const noProxyText = computed({
+  get: () => (proxyConfig.noProxy ?? []).join('\n'),
+  set: (value: string) => {
+    proxyConfig.noProxy = value
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }
+})
+
+let savingProxy = false
+
+function syncProxyFromStore(): void {
+  if (savingProxy) return
+  const next = readProxyConfig()
+  proxyConfig.enabled = next.enabled ?? false
+  proxyConfig.host = next.host ?? ''
+  proxyConfig.port = next.port
+  proxyConfig.username = next.username
+  proxyConfig.password = next.password
+  proxyConfig.ignoreSSL = next.ignoreSSL
+  proxyConfig.noProxy = [...(next.noProxy ?? [])]
+}
 
 function saveProxy(): void {
-  proxyConfig.value.noProxy = noProxyText.value
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  stateStore.setSetting('network.proxy', { ...proxyConfig.value })
+  savingProxy = true
+  try {
+    stateStore.setSetting('network.proxy', {
+      ...proxyConfig,
+      noProxy: [...(proxyConfig.noProxy ?? [])]
+    })
+  } finally {
+    savingProxy = false
+  }
 }
 
 // ---- 通知（逐扩展开关） ----
 const notificationExts = computed(() => host.getExtensions())
+// 计数值：通知开关直接读 stateStore（渲染期读取即建立依赖），这里只需在变更时触发重渲染
+const notificationRevision = ref(0)
 
 function isNotifDisabled(id: string): boolean {
+  void notificationRevision.value
   return stateStore.isNotificationDisabled(id)
 }
 
 function toggleNotif(id: string, disabled: boolean): void {
   stateStore.setNotificationDisabled(id, disabled)
+  notificationRevision.value++
 }
 
-// ---- 通用：关闭行为（偏好存主进程 userData/window-behavior.json；仅 Windows 有托盘，见 ADR-0019） ----
+// ---- 通用：关闭行为（偏好存主进程 userData/app-preferences.json；仅 Windows 有托盘，见 ADR-0019） ----
 const isWindows = window.api.env.platform === 'win32'
 const closeBehavior = ref<CloseBehavior>('ask')
 void window.api.getCloseBehavior().then((value) => {
@@ -195,8 +263,15 @@ void window.api.getCloseBehavior().then((value) => {
 
 async function onCloseBehaviorChange(e: Event): Promise<void> {
   const value = (e.target as HTMLSelectElement).value as CloseBehavior
+  const previous = closeBehavior.value
   closeBehavior.value = value
-  await window.api.setCloseBehavior(value)
+  try {
+    await window.api.setCloseBehavior(value)
+  } catch (err) {
+    // 写失败回弹到上一次的生效值（主进程是权威）
+    closeBehavior.value = previous
+    console.error('[settings] 写入关闭行为失败', err)
+  }
 }
 
 // ---- 通用：开机自启（仅 Windows 且非开发版；状态以系统为准，ADR-0019 决策 12–14） ----
@@ -220,12 +295,28 @@ function extDisplayName(id: string): string {
 }
 
 function fieldValue(_page: RegisteredSettingsPage, key: string): unknown {
+  void settingsRevision.value
   return stateStore.getSetting(key)
 }
 
 function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknown): void {
   stateStore.setSetting(key, value)
 }
+
+let offSettingsChanged: (() => void) | undefined
+
+onMounted(() => {
+  offSettingsChanged = stateStore.onSettingsChanged((key) => {
+    settingsRevision.value++
+    if (key === undefined || key === 'network.proxy') syncProxyFromStore()
+  })
+})
+
+onUnmounted(() => {
+  offSettingsChanged?.()
+  // 卸载时释放捕获守卫，避免"改键到一半切走"把全局快捷键永久挡住
+  if (keybindingStore.isCapturing) keybindingStore.setCapturing(false)
+})
 </script>
 
 <template>
@@ -375,7 +466,7 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
                 >
                   {{ t('settings.keyboard.edit') }}
                 </button>
-                <button v-else class="btn" @click="capturing = null">
+                <button v-else class="btn" @click="cancelCapture">
                   {{ t('common.cancel') }}
                 </button>
                 <button class="btn ghost" @click="keybindingStore.reset(kb.command)">
@@ -386,9 +477,15 @@ function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknow
           </tbody>
         </table>
         <p v-if="conflictMsg" class="config-error">{{ conflictMsg }}</p>
-        <!-- 捕获按键的全局监听 -->
-        <div v-if="capturing" class="capture-overlay" @click="capturing = null">
-          <div class="capture-box" tabindex="0" @keydown="onCaptureKeydown" @click.stop>
+        <!-- 捕获按键的覆盖层：显示后由 startCapture() 聚焦 capture-box -->
+        <div v-if="capturing" class="capture-overlay" @click="cancelCapture">
+          <div
+            ref="captureBox"
+            class="capture-box"
+            tabindex="0"
+            @keydown="onCaptureKeydown"
+            @click.stop
+          >
             <p>{{ t('settings.keyboard.captureHint') }}</p>
           </div>
         </div>
