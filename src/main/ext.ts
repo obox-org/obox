@@ -3,38 +3,67 @@
  * 都是 Electron 现成能力的薄 IPC 封装。
  */
 import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+import type { DialogOpenOptions, DialogOpenResult, DialogProperty } from '../shared/types'
+
+/** 归一后的对话框属性（顺序固定：openDirectory 模式在前，multiSelections 追加在后） */
+export type NormalizedDialogProperties = Array<'openFile' | 'openDirectory' | 'multiSelections'>
+
+/** `properties` 的合法取值（未知字符串一律忽略，不抛错） */
+const KNOWN_DIALOG_PROPERTIES: readonly DialogProperty[] = [
+  'openFile',
+  'openDirectory',
+  'multiSelections'
+]
+
+/**
+ * 归一 `dialog:open` 的 `properties`（**纯函数**，不碰 Electron，单测直接调）。
+ *
+ * 规则（spec §9.11 H-1）：
+ * - 不传 / 传空数组 ⇒ `['openFile']`（**既有默认行为逐字不变**）
+ * - `openDirectory` 与 `openFile` **互斥**：出现 `openDirectory` 即按目录模式归一，
+ *   只保留 `openDirectory`（+ 可选的 `multiSelections`），丢弃 `openFile`
+ * - 未知值**忽略**（不得抛错）
+ * - `multiSelect` 旧字段继续兼容（等价于 `multiSelections`）
+ *
+ * 注意：`filters` **不在这里处理**——目录模式下是否传 filters 由调用方按
+ * `isDirectoryProperties()` 判定丢弃（Electron 不对目录应用过滤器）。
+ */
+export function normalizeDialogProperties(
+  opts?: Pick<DialogOpenOptions, 'properties' | 'multiSelect'> | null
+): NormalizedDialogProperties {
+  const requested = Array.isArray(opts?.properties) ? opts.properties : []
+  const known = requested.filter((p): p is DialogProperty =>
+    KNOWN_DIALOG_PROPERTIES.includes(p as DialogProperty)
+  )
+  // 旧字段 `multiSelect` 继续兼容：与 properties 里的 `multiSelections` 等价
+  const wantsMulti = known.includes('multiSelections') || opts?.multiSelect === true
+  if (known.includes('openDirectory')) {
+    return ['openDirectory', ...(wantsMulti ? ['multiSelections' as const] : [])]
+  }
+  return ['openFile', ...(wantsMulti ? ['multiSelections' as const] : [])]
+}
+
+/** 归一结果是否为"选目录"模式（目录模式下 filters 必须丢弃） */
+export function isDirectoryProperties(props: NormalizedDialogProperties): boolean {
+  return props.includes('openDirectory')
+}
 
 export function registerExtIpc(): void {
   // ---- 对话框 ----
-  ipcMain.handle(
-    'dialog:open',
-    async (
-      _e,
-      opts: {
-        title?: string
-        filters?: Array<{ name: string; extensions: string[] }>
-        multiSelect?: boolean
-      }
-    ): Promise<{ ok: boolean; filePaths?: string[]; canceled?: boolean; error?: string }> => {
-      try {
-        const win = BrowserWindow.getFocusedWindow()
-        const result = win
-          ? await dialog.showOpenDialog(win, {
-              title: opts?.title,
-              filters: opts?.filters,
-              properties: ['openFile', ...(opts?.multiSelect ? ['multiSelections' as const] : [])]
-            })
-          : await dialog.showOpenDialog({
-              title: opts?.title,
-              filters: opts?.filters,
-              properties: ['openFile', ...(opts?.multiSelect ? ['multiSelections' as const] : [])]
-            })
-        return { ok: true, filePaths: result.filePaths, canceled: result.canceled }
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
+  ipcMain.handle('dialog:open', async (_e, opts: DialogOpenOptions): Promise<DialogOpenResult> => {
+    try {
+      const properties = normalizeDialogProperties(opts)
+      // 目录模式下丢弃 filters：Electron 不对目录应用过滤器
+      const filters = isDirectoryProperties(properties) ? undefined : opts?.filters
+      const win = BrowserWindow.getFocusedWindow()
+      const result = win
+        ? await dialog.showOpenDialog(win, { title: opts?.title, filters, properties })
+        : await dialog.showOpenDialog({ title: opts?.title, filters, properties })
+      return { ok: true, filePaths: result.filePaths, canceled: result.canceled }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-  )
+  })
 
   ipcMain.handle(
     'dialog:save',

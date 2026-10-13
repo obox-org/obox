@@ -33,6 +33,36 @@ export interface WindowState {
   isFocused: boolean
 }
 
+/** 文件对话框过滤器（Electron `FileFilter` 的最小子集） */
+export interface DialogFilter {
+  name: string
+  extensions: string[]
+}
+
+/**
+ * 打开对话框的 `properties`（Electron `OpenDialogOptions['properties']` 的最小子集）。
+ * `openDirectory` 与 `openFile` **互斥**（同时传按目录模式归一，见 `src/main/ext.ts` 的
+ * `normalizeDialogProperties`）；目录模式下 `filters` 不生效（Electron 不对目录应用过滤器）。
+ */
+export type DialogProperty = 'openFile' | 'openDirectory' | 'multiSelections'
+
+/** `dialogOpen` 入参（主进程 / preload 类型 / 扩展 API **三处共用同一份**，避免签名漂移） */
+export interface DialogOpenOptions {
+  title?: string
+  filters?: DialogFilter[]
+  multiSelect?: boolean
+  /** 不传 ⇒ `['openFile']`（既有默认行为不变）；未知值被忽略，不抛错 */
+  properties?: DialogProperty[]
+}
+
+/** 打开对话框的返回形状（目录选择与文件选择**共用 `filePaths`**，不新增字段） */
+export interface DialogOpenResult {
+  ok: boolean
+  filePaths?: string[]
+  canceled?: boolean
+  error?: string
+}
+
 /** 应用信息 */
 export interface AppInfo {
   name: string
@@ -299,11 +329,7 @@ export interface MainApi {
   fsExists(extId: string, rel: string): Promise<{ ok: boolean; exists?: boolean; error?: string }>
   fsRemove(extId: string, rel: string): Promise<{ ok: boolean; error?: string }>
   // ---- 扩展能力：对话框 / 外链 / 剪贴板 / 任务栏进度 ----
-  dialogOpen(opts: {
-    title?: string
-    filters?: Array<{ name: string; extensions: string[] }>
-    multiSelect?: boolean
-  }): Promise<{ ok: boolean; filePaths?: string[]; canceled?: boolean; error?: string }>
+  dialogOpen(opts: DialogOpenOptions): Promise<DialogOpenResult>
   dialogSave(opts: {
     title?: string
     defaultName?: string
