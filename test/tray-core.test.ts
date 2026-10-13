@@ -1,36 +1,28 @@
 /**
- * 托盘菜单纯逻辑的测试（ADR-0019 决策 3/4）：顺序、分隔符、中英文案、tooltip，
- * 以及**点击时序状态机**（单击延迟弹菜单 / 双击取消并开窗 / 连续单击 / 销毁清理）。
- * 断言"菜单覆盖了全部动作"，避免以后加动作却漏加菜单项（或反过来）。
+ * 托盘纯逻辑的测试（ADR-0019 决策 3/4/21）：菜单顺序、分隔符、中英文案、tooltip 文案，
+ * 以及**契约门禁**——"左键单击弹菜单"已被用户决策移除，
+ * 因此 `trayCore` 不得再导出点击时序状态机（`DOUBLE_CLICK_GAP_MS` /
+ * `createTrayClickState` / `trayClickTransition` / `trayClickTeardown`），
+ * `tray.ts` 也不得再注册 `click` 处理器。这些用例防的就是"悄悄改回单击弹菜单"。
  */
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
-  DOUBLE_CLICK_GAP_MS,
   TRAY_MENU_ORDER,
-  createTrayClickState,
   trayActionIds,
-  trayClickTeardown,
-  trayClickTransition,
   trayMenuItems,
   trayTooltip,
-  type TrayClickAction,
-  type TrayClickState,
   type TrayMenuItem
 } from '../src/main/trayCore'
+import * as trayCoreModule from '../src/main/trayCore'
 
-/** 按序喂事件，返回逐次动作与最终状态（模拟 tray.ts 的接线） */
-function drive(events: Array<'click' | 'double-click' | 'watchdog-fire'>): {
-  actions: TrayClickAction[][]
-  state: TrayClickState
-} {
-  let state = createTrayClickState()
-  const actions: TrayClickAction[][] = []
-  for (const event of events) {
-    const next = trayClickTransition(state, event)
-    state = next.state
-    actions.push(next.actions)
-  }
-  return { actions, state }
+/** 去掉块注释与行注释，避免文档/注释里的字符串把断言喂成假绿 */
+function traySource(): string {
+  const path = fileURLToPath(new URL('../src/main/tray.ts', import.meta.url))
+  return readFileSync(path, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '')
 }
 
 describe('trayMenuItems', () => {
@@ -69,75 +61,70 @@ describe('trayMenuItems', () => {
   })
 })
 
-describe('trayTooltip', () => {
-  it('名称 + 版本', () => {
-    expect(trayTooltip('obox', '1.0.4')).toBe('obox 1.0.4')
+describe('trayTooltip（含"双击打开 / 右键菜单"可发现性提示）', () => {
+  it('中文：名称 + 版本 + 双击/右键提示', () => {
+    expect(trayTooltip('obox', '1.0.4', 'zh-CN')).toBe('obox 1.0.4 — 双击打开 / 右键菜单')
   })
 
-  it('缺名称/版本时的兜底', () => {
-    expect(trayTooltip('', '1.0.4')).toBe('obox 1.0.4')
-    expect(trayTooltip('obox', '   ')).toBe('obox')
-    expect(trayTooltip('  ', '')).toBe('obox')
+  it('英文：名称 + 版本 + 双击/右键提示', () => {
+    expect(trayTooltip('obox', '1.0.4', 'en-US')).toBe(
+      'obox 1.0.4 — Double-click to open / Right-click for menu'
+    )
+  })
+
+  it('locale 缺失按英文（与 pickLocale / trayMenuItems 同一规则）', () => {
+    expect(trayTooltip('obox', '1.0.4', undefined)).toContain('Double-click to open')
+  })
+
+  it('提示只讲"双击打开 / 右键菜单"，不暗示左键单击（也不出现"单击"字样）', () => {
+    for (const locale of ['zh-CN', 'en-US', undefined]) {
+      const tip = trayTooltip('obox', '1.0.4', locale)
+      expect(tip).toMatch(/双击打开 \/ 右键菜单|Double-click to open \/ Right-click for menu/)
+      expect(tip).not.toContain('单击')
+      expect(tip.toLowerCase()).not.toContain('single-click')
+      expect(tip.toLowerCase()).not.toContain('left-click')
+    }
+    // 中英各自一套，且**只**提双击这一种打开方式
+    expect(trayTooltip('obox', '1.0.4', 'zh-CN')).toContain('双击打开')
+    expect(trayTooltip('obox', '1.0.4', 'en-US')).toContain('Double-click to open')
+  })
+  it('缺名称/版本时的兜底（提示仍在）', () => {
+    expect(trayTooltip('', '1.0.4', 'zh-CN')).toBe('obox 1.0.4 — 双击打开 / 右键菜单')
+    expect(trayTooltip('obox', '   ', 'zh-CN')).toBe('obox — 双击打开 / 右键菜单')
+    expect(trayTooltip('  ', '', 'en-US')).toBe(
+      'obox — Double-click to open / Right-click for menu'
+    )
   })
 })
 
-describe('托盘点击时序（trayCore，ADR-0019 决策 3）', () => {
-  it('初始状态 idle、无待办', () => {
-    expect(createTrayClickState()).toEqual({ phase: 'idle' })
+describe('托盘契约门禁：左键单击不再有任何行为（ADR-0019 决策 21）', () => {
+  it('trayCore 不再导出点击时序状态机（防"悄悄改回单击弹菜单"）', () => {
+    for (const name of [
+      'DOUBLE_CLICK_GAP_MS',
+      'createTrayClickState',
+      'trayClickTransition',
+      'trayClickTeardown'
+    ]) {
+      expect(name in trayCoreModule).toBe(false)
+    }
+    // 点击相位/动作类型同样不该再存在
+    expect('TrayClickPhase' in trayCoreModule).toBe(false)
+    expect('TrayClickAction' in trayCoreModule).toBe(false)
   })
 
-  it('单击：排定一次延迟弹菜单；定时器到点才弹菜单', () => {
-    const { actions, state } = drive(['click', 'watchdog-fire'])
-    expect(actions).toEqual([['schedule-menu'], ['show-menu']])
-    expect(state).toEqual({ phase: 'menuOpen' })
+  it("tray.ts 不再注册 click 处理器（源码里没有 tray.on('click')）", () => {
+    const src = traySource()
+    expect(src).not.toContain("on('click'")
+    expect(src).not.toContain('"click"')
+    expect(src).not.toContain('clickTimer')
+    expect(src).not.toContain('popUpContextMenu')
+    expect(src).not.toContain('DOUBLE_CLICK_GAP_MS')
   })
 
-  it('双击：取消待弹菜单并打开主窗口（不弹菜单）', () => {
-    const { actions, state } = drive(['click', 'double-click'])
-    expect(actions).toEqual([['schedule-menu'], ['cancel-menu', 'open-window']])
-    expect(state).toEqual({ phase: 'idle' })
-    // 取消后**不再**有 watchdog-fire（定时器已被清掉）；即便迟到也不弹
-    const late = trayClickTransition(state, 'watchdog-fire')
-    expect(late.actions).toEqual([])
-    expect(late.state).toEqual({ phase: 'idle' })
-  })
-
-  it('连续单击：取消上一次待弹菜单再重排（同一时刻最多一次待弹菜单）', () => {
-    const { actions, state } = drive(['click', 'click'])
-    expect(actions).toEqual([['schedule-menu'], ['cancel-menu', 'schedule-menu']])
-    expect(state).toEqual({ phase: 'pending' })
-  })
-
-  it('菜单已弹出后再单击：重新排定（不会出现"两次弹菜单"叠加）', () => {
-    const { actions } = drive(['click', 'watchdog-fire', 'click'])
-    expect(actions).toEqual([['schedule-menu'], ['show-menu'], ['schedule-menu']])
-  })
-
-  it('菜单已弹出时双击：不再重复取消，直接开窗', () => {
-    const { actions } = drive(['click', 'watchdog-fire', 'double-click'])
-    expect(actions).toEqual([['schedule-menu'], ['show-menu'], ['open-window']])
-  })
-
-  it('未单击时收到 watchdog-fire（迟到回调）→ 什么都不做', () => {
-    const { actions, state } = drive(['watchdog-fire'])
-    expect(actions).toEqual([[]])
-    expect(state).toEqual({ phase: 'idle' })
-  })
-
-  it('双击间隔常量仍是用于区分单击的等待量（正数）', () => {
-    expect(DOUBLE_CLICK_GAP_MS).toBeGreaterThan(0)
-  })
-
-  describe('销毁清理（destroy）', () => {
-    it('pending：需要清掉待弹定时器', () => {
-      const { state } = drive(['click'])
-      expect(trayClickTeardown(state)).toEqual(['cancel-menu'])
-    })
-
-    it('idle / menuOpen：没有待弹定时器可清', () => {
-      expect(trayClickTeardown(createTrayClickState())).toEqual([])
-      const open = drive(['click', 'watchdog-fire']).state
-      expect(trayClickTeardown(open)).toEqual([])
-    })
+  it('tray.ts 仍接双击打开与右键菜单', () => {
+    const src = traySource()
+    expect(src).toContain("tray.on('double-click'")
+    expect(src).toContain('actions.open()')
+    expect(src).toContain('tray.setContextMenu(menu)')
   })
 })
