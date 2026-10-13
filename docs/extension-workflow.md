@@ -146,3 +146,19 @@ extensions/<扩展英文名>/
 - **阶段内提问**（门禁那一次见 §五）一律遵守 `AGENTS.md` 的提问约定：**中文**、**`ask_user_question` 工具**、**单次一个问题**、**每个问题 2–4 个具体选项 + 每个选项写明优缺点 + 恰好一个「推荐」置于首位 + 一个「其他（我来说明）」逃生选项**。
 - 事实自己查（读代码、跑命令、派子代理），**不要把可查的事实当问题问用户**。
 - 文档只写代码的实际行为；未实机验证的必须显式标注"未实机验证"。
+
+## 十一、把九个技能装进 DSH（可选；本机已装）
+
+九个技能**不在** `AGENTS.md` / `README.md` 留指针（§一入口决策），但可以装成 DSH 技能以便直接点名触发。推荐用 **junction**（Windows 目录联接，**不需要管理员权限**）指向仓库 —— **单一真源、不产生第二份副本**：
+
+```powershell
+# 在仓库根执行
+foreach ($d in Get-ChildItem skills -Directory) {
+  cmd /c mklink /J "$env:USERPROFILE\.dsh\skills\$($d.Name)" "$($d.FullName)"
+}
+```
+
+- DSH 扫描 `~/.dsh/skills`、`~/.agents/skills`、`<repo>/.dsh/skills`、`<repo>/.agents/skills`；装到 `~/.dsh/skills` 即与 `rb-*` 家族同层。
+- 装了 junction 后，**仓库里改技能内容立即生效**（无需重装）。
+- **禁用某个技能**：把它的目录**移出**扫描路径（例：移到 `~/.dsh/skills-disabled/`），比加后缀改名更可靠。
+- 与本仓库扩展模型不符的 `obox-extension-dev`（WASM/wasip1 模型）已移到 `~/.dsh/skills-disabled/`，避免模型在两套扩展模型间选错。
