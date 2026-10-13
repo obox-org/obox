@@ -274,16 +274,16 @@ export function uninstall(ctx) {
 
 **按错误码逐条排查**：
 
-| 错误码                | 常见原因与处理                                                                                                                                                                                                                                                                                                 |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid-declaration` | `program` 不是**扩展目录内的相对路径**（绝对路径/盘符/`..` 都会被拒）；`pipe` 声明里不要写 `program`；传了 `tcp`/`http` 之类传输（本能力**只用 stdio 或 pipe，不含端口**）；**服务端专属**：`listen` 传了 `stdio`、server 名字下 `request`/`notify` 没给 `connectionId`、或反过来给 client 通道传了 `connectionId`（见下方「服务端专属排查」） |
-| `connect-failed`      | stdio：程序不存在/不可执行（Windows 上**不能直接执行 `.cjs` 文本文件**——用 `.js/.cjs/.mjs` 由宿主 Node 运行，或编译成可执行文件）；pipe：对端没在监听，或端点名不一致（端点由宿主按 **扩展 id + 通道名** 推导：Windows `\\.\pipe\obox-<扩展id>-<通道名>`，POSIX `<userData>/ipc/obox-<扩展id>-<通道名>.sock`）；**服务端 `listen`**：端点已被占用（文案含"已被占用"，见下方「服务端专属排查」） |
-| `timeout`             | 对端没回包：检查它的分帧是否与声明一致（默认 `Content-Length: <n>\r\n\r\n`，不是换行分隔——除非你声明了 `framing: 'ndjson'`）；慢任务请在 `request(..., { timeoutMs })` 里放宽                                                                                                                                  |
-| `protocol-error`      | 分帧或 JSON-RPC 形状不对（对端把日志打到 stdout 也会触发——**日志请写 stderr**）；缺 `jsonrpc: "2.0"`                                                                                                                                                                                                           |
-| `message-too-large`   | 单条消息超过 8MB：拆成多条或用通知流式发送                                                                                                                                                                                                                                                                     |
-| `too-many-connections` | **服务端专属**：该 server 已经有 **16 条**连接，第 17 条被拒（扩展侧**不触发**任何事件，只有**对端**能看到这条线上错误帧的 `[too-many-connections]` 前缀）。处理：断开不再用的对端，或让对端侧限流                                                                                                              |
-| `peer-crashed`        | 对端进程退出/连接被关闭：stdio 场景下对端崩溃即断连（**默认不自动重连**，需扩展自行 `connect()` 重建）；**pipe 通道**可声明 `autoReconnect` 让宿主自动重建（见下方「自动重连（`autoReconnect`）排查」）；先看 `api.ipc.onStderr()` 收到的对端日志                                                                  |
-| `not-connected`       | 通道没打开或已关闭；`close()` 后要重新 `connect()`；**服务端专属**：`connectionId` 指向的连接**已断开或不存在**（连接 ID 永不复用，旧 ID 不会"复活"）                                                                                                                                                         |
+| 错误码                 | 常见原因与处理                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid-declaration`  | `program` 不是**扩展目录内的相对路径**（绝对路径/盘符/`..` 都会被拒）；`pipe` 声明里不要写 `program`；传了 `tcp`/`http` 之类传输（本能力**只用 stdio 或 pipe，不含端口**）；**服务端专属**：`listen` 传了 `stdio`、server 名字下 `request`/`notify` 没给 `connectionId`、或反过来给 client 通道传了 `connectionId`（见下方「服务端专属排查」）                                                  |
+| `connect-failed`       | stdio：程序不存在/不可执行（Windows 上**不能直接执行 `.cjs` 文本文件**——用 `.js/.cjs/.mjs` 由宿主 Node 运行，或编译成可执行文件）；pipe：对端没在监听，或端点名不一致（端点由宿主按 **扩展 id + 通道名** 推导：Windows `\\.\pipe\obox-<扩展id>-<通道名>`，POSIX `<userData>/ipc/obox-<扩展id>-<通道名>.sock`）；**服务端 `listen`**：端点已被占用（文案含"已被占用"，见下方「服务端专属排查」） |
+| `timeout`              | 对端没回包：检查它的分帧是否与声明一致（默认 `Content-Length: <n>\r\n\r\n`，不是换行分隔——除非你声明了 `framing: 'ndjson'`）；慢任务请在 `request(..., { timeoutMs })` 里放宽                                                                                                                                                                                                                   |
+| `protocol-error`       | 分帧或 JSON-RPC 形状不对（对端把日志打到 stdout 也会触发——**日志请写 stderr**）；缺 `jsonrpc: "2.0"`                                                                                                                                                                                                                                                                                            |
+| `message-too-large`    | 单条消息超过 8MB：拆成多条或用通知流式发送                                                                                                                                                                                                                                                                                                                                                      |
+| `too-many-connections` | **服务端专属**：该 server 已经有 **16 条**连接，第 17 条被拒（扩展侧**不触发**任何事件，只有**对端**能看到这条线上错误帧的 `[too-many-connections]` 前缀）。处理：断开不再用的对端，或让对端侧限流                                                                                                                                                                                              |
+| `peer-crashed`         | 对端进程退出/连接被关闭：stdio 场景下对端崩溃即断连（**默认不自动重连**，需扩展自行 `connect()` 重建）；**pipe 通道**可声明 `autoReconnect` 让宿主自动重建（见下方「自动重连（`autoReconnect`）排查」）；先看 `api.ipc.onStderr()` 收到的对端日志                                                                                                                                               |
+| `not-connected`        | 通道没打开或已关闭；`close()` 后要重新 `connect()`；**服务端专属**：`connectionId` 指向的连接**已断开或不存在**（连接 ID 永不复用，旧 ID 不会"复活"）                                                                                                                                                                                                                                           |
 
 **平台细节**：Windows 命名管道**不留文件**（内核命名空间）；POSIX 的 `.sock` 在进程崩溃后会残留，需由**服务端**在 listen 前清理——客户端（`connect`）只负责连接，不会替你删除别人的套接字文件；而**服务端**（`listen`，issue #43）会**自己**处理：试连探测（连得上 = 有活着的服务端 → 报 `connect-failed` 且**不删**）+ 连不上才 `unlink` + `listen` 成功后 `chmod 0600`。
 
@@ -343,23 +343,28 @@ export function uninstall(ctx) {
 
 **注意**：关窗不再等于退出，所以**不要**把扩展清理只挂在窗口关闭上——宿主仍会在扩展停用/卸载时调用 `extension:cleanup`。
 
-**托盘单击/双击/右键"没反应"怎么分诊（issue #85 追加，2026-10-13 实机核对）**：
+**托盘"没反应"怎么分诊（issue #85 追加，2026-10-13 实机核对；当日按用户决策改为"左键无行为"，见 ADR-0019 决策 21–22）**：
+
+**先记住当前契约**：**左键单击无任何行为**（不是 bug）、**双击**打开主窗口、**右键**弹菜单。
+悬停提示已写明"双击打开 / 右键菜单"（`trayTooltip`，中英两份）。
 
 先排除**平台机制**再怀疑代码（Electron 源码 `shell/browser/ui/win/notify_icon.cc` 的 `HandleClickEvent`）：
 
-| 现象                               | 机制（不是 bug）                                                                                                                              | 处理                                                                          |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 托盘图标"找不到"                   | Windows 11 默认把新图标收进**隐藏图标浮出层**（点任务栏的 `^`）——obox 图标默认就在里面                                                        | 点任务栏附近托盘区的 `^` 展开；或把 obox 图标拖到托盘可见区，之后单击/右键都在 |
-| 左键单击不弹菜单                   | Windows 上 `tray.setContextMenu(menu)` **只**让右键弹菜单；左键单击只发 `click` 事件，系统不会代弹。所以宿主必须自己 `popUpContextMenu()`      | 宿主行为，别只靠 `setContextMenu`；见 `src/main/tray.ts` 的 `show-menu`       |
-| 左键单击**要等一下**才弹菜单       | 设计如此：为了区分双击，单击后等一个双击间隔（`DOUBLE_CLICK_GAP_MS = 220`，`src/main/trayCore.ts`）再弹                                   | 等待约 0.2s 属正常，别误判成"没反应"而再点一次（再点一次会被当成双击 → 开主窗口） |
-| 双击应打开主窗口，结果只弹了菜单   | 两次点击间隔超过双击间隔（220ms）→ 宿主按"两次单击"处理                                                                                       | 双击要快；或直接用托盘菜单的「打开」                                          |
-| 右键弹不出菜单                     | 没调 `setContextMenu`（`popUpContextMenu` 无参且无菜单时直接返回）；或 `SetForegroundWindow` 失败（Electron 内部 `PopUpContextMenu` 会静默 return） | 确认 `createTray` 走到了 `setContextMenu`；宿主日志 `[tray] 单击弹菜单跳过：托盘已失效` 说明托盘已销毁 |
-| 菜单"一闪就关"                     | 宿主不会同时弹两份：`PopUpContextMenu` 内部会先 `CloseContextMenu()` 再弹。若真看到闪烁，先看是不是**两次点击**各弹了一次                    | 单击后别连点；宿主侧点了两次会"取消上一次待弹菜单再重排"（有一条单测钉着）      |
+| 现象                   | 机制（不是 bug）                                                                                                                        | 处理                                                                              |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 托盘图标"找不到"       | Windows 11 默认把新图标收进**隐藏图标浮出层**（点任务栏的 `^`）——obox 图标默认就在里面（与单击行为无关，仍然成立）                      | 点任务栏托盘区的 `^` 展开；或把 obox 图标拖到托盘可见区，之后双击/右键都在        |
+| **左键单击什么都没有** | **设计如此**（ADR-0019 决策 21）：上一版的"单击弹菜单 + 220ms 迟滞"已按用户决策移除，`tray.ts` 里**没有** `click` 处理器了              | 取菜单用**右键**、开窗口用**双击**；这是有意行为，别当故障报                      |
+| 双击打开主窗口没反应   | 两次点击被系统判成"两次独立单击"（超过 Windows 双击阈值）而非 `WM_LBUTTONDBLCLK`                                                        | 双击要快；或直接用托盘菜单的「打开」                                              |
+| 右键弹不出菜单         | 没调 `setContextMenu`；或 `SetForegroundWindow` 失败（Electron 内部 `PopUpContextMenu` 会静默 return）                                  | 确认 `createTray` 走到了 `tray.setContextMenu(menu)`                              |
+| 菜单"一闪就关"         | 托盘菜单是 Chromium views 菜单，`PopUpContextMenu` 内部会先 `CloseContextMenu()` 再弹；一般是同时弹了两次（例如两个实例各建了一个托盘） | 确认只有一个 obox 实例（单实例锁，ADR-0019 决策 9）；别用 `popUpContextMenu` 抢弹 |
 
-**回归防线（别再"改时序却不加测试"）**：点击时序已抽成 `src/main/trayCore.ts` 的纯状态机
-（`createTrayClickState` / `trayClickTransition` / `trayClickTeardown`），单测在 `test/tray-core.test.ts`：
-单击 → `schedule-menu` → `watchdog-fire` → `show-menu`；双击 → `cancel-menu` + `open-window`；
-连续单击 → `cancel-menu` + `schedule-menu`；`destroy` → `cancel-menu`（清定时器）。
+**回归防线（防"悄悄改回单击弹菜单"）**：`test/tray-core.test.ts` 现在断言
+① `trayCore` **不再导出** `DOUBLE_CLICK_GAP_MS` / `createTrayClickState` / `trayClickTransition` / `trayClickTeardown`；
+② `tray.ts` 源码里**没有** `on('click'` / `popUpContextMenu` / 定时器，且**仍**接 `on('double-click'` 与 `setContextMenu`；
+③ tooltip 含中英两种"双击打开 / 右键菜单"提示。要恢复单击行为必须**先改 ADR-0019 决策 21 契约**，否则这些用例会红。
+
+**历史事实（保留）**：2026-10-13 实测（Windows 11 + Electron 44，合成点击 + 截图）当时**左键单击 5/5 次都能弹出菜单**、
+右键弹同一菜单、双击开窗口，**未能复现**"左键单击不弹菜单"。本次取消单击行为是**用户产品决策**，不是修那个"缺陷"。
 
 **扩展侧注意事项**：托盘是**宿主**能力，扩展不用（也无法）自己建托盘；要放"退出/设置"这类入口，
 用 `api.statusBar` / 命令贡献点，别去抢托盘图标。
@@ -422,13 +427,13 @@ export function uninstall(ctx) {
 
 **根因分类**（逐分区核对"首屏取值来源"，别只看一个控件）：
 
-| 分区       | 首屏取值来源                                                                     | 踩坑点                                                                     |
-| ---------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| 外观（主题） | `themeStore.currentId` getter：读 `stateStore.getSetting('theme')` + 已注册主题 | 主题**尚未注册**时 getter 会回落默认 dark——首屏读得太早就会显示默认主题     |
-| 语言       | `i18n.global.locale`（**响应式**，`loadLocale()` 在模块求值时读 `obox:locale:v1`） | 只要不是"在 setup 里一次性取成普通字符串"就没问题                          |
-| 快捷键     | `keybindingStore.list()` → 每项 `currentKey()` → `stateStore.getSetting(...)`     | `currentKey` 是**方法**（渲染期调用即响应式）；若在 setup 里取成数组快照就僵 |
-| 网络/通用  | 见下                                                                             | 本分区最容易写成"一次性快照"                                               |
-| 扩展设置   | `fieldValue()` → `stateStore.getSetting(key)`，缺省回落 `field.default`           | 同上                                                                       |
+| 分区         | 首屏取值来源                                                                       | 踩坑点                                                                       |
+| ------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 外观（主题） | `themeStore.currentId` getter：读 `stateStore.getSetting('theme')` + 已注册主题    | 主题**尚未注册**时 getter 会回落默认 dark——首屏读得太早就会显示默认主题      |
+| 语言         | `i18n.global.locale`（**响应式**，`loadLocale()` 在模块求值时读 `obox:locale:v1`） | 只要不是"在 setup 里一次性取成普通字符串"就没问题                            |
+| 快捷键       | `keybindingStore.list()` → 每项 `currentKey()` → `stateStore.getSetting(...)`      | `currentKey` 是**方法**（渲染期调用即响应式）；若在 setup 里取成数组快照就僵 |
+| 网络/通用    | 见下                                                                               | 本分区最容易写成"一次性快照"                                                 |
+| 扩展设置     | `fieldValue()` → `stateStore.getSetting(key)`，缺省回落 `field.default`            | 同上                                                                         |
 
 **两条硬规则**：
 
@@ -438,4 +443,3 @@ export function uninstall(ctx) {
 **排查手法（不用挂载组件）**：预置一份 `localStorage['obox:state:v1']`，用 `npm run dev` 冷启动，打开设置页逐分区读控件值（DevTools 里 `document.querySelector('.settings-content select').value`）。`test/settings-first-paint.test.ts` 把这条路径钉成了单测（快照里每个值都故意与代码默认值不同）。
 
 **覆盖边界**：仓库 vitest 是 `node` 环境、没有 jsdom / `@vue/test-utils`，所以**不能挂载 `.vue`**；组件接线由 `test/settings-view-wiring.test.ts`（读源文件）覆盖，取数路径由 `test/settings-first-paint.test.ts` 覆盖。
-
