@@ -1,5 +1,7 @@
 # Manifest Reference
 
+> **本文件是 obox 扩展 manifest（贡献点 schema 与校验规则）的唯一真相，位置 `docs/extension-api/`**：仓库内其它文档一律引用本文件，不复制副本。
+
 扩展清单（manifest）声明扩展的身份、入口与贡献点。宿主扫描后统一解析注册（两阶段启动：先注册贡献点、后激活）。
 
 > 代码证据一律写 `path:line`，本文省略公共前缀：`core/xxx.ts` = `src/renderer/src/core/xxx.ts`，`api/` = `src/api/`，`main/` = `src/main/`，`shared/` = `src/shared/`，`extensions/<id>/` = `src/renderer/src/extensions/<id>/`。

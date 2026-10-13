@@ -3,7 +3,7 @@
  * create-extension — Obox **内置扩展**脚手架。
  *
  * 用法：
- *   node skills/obox-ext-dev/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]
+ *   node skills/obox-ext-init/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]
  *
  * 在**当前 obox 仓库**的 src/renderer/src/extensions/<id>/ 生成：
  *   manifest.json + index.ts（default 插件函数 + 具名导出视图）+ <Pascal>View.vue（scoped + 主题 token）
@@ -22,22 +22,25 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
-/** 仓库根：skills/obox-ext-dev/scripts → 上三级 */
+/** 仓库根：skills/obox-ext-init/scripts → 上三级 */
 const PROJECT_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
 
 /**
- * 脚手架自己的 id 校验：**仍带 `i`**（未与宿主同步，见 scripts/README.md 与 issue #77）。
- * 宿主 `core/manifest.ts:11` 的 `NAME_RE` 已**不带 `i`**（大写 id 非法），因此这里放宽时
- * 可能生成宿主判为「清单无效」的大写 id 骨架——传小写 id 即可避免。
+ * 脚手架自己的 id 校验：与宿主 `src/renderer/src/core/manifest.ts:11` 的 `NAME_RE`
+ * 及仓库校验脚本 `scripts/validate-manifest.mjs:39` 的 `NAME_RE` **逐字一致** ——
+ * 三者都是 `/^[a-z0-9][a-z0-9._-]*$/`，**不带 `i`**（大写 id 非法，issue #77）。
+ *
+ * 为什么必须同源收紧：脚本一旦接受大写 id，生成的 manifest 会被宿主判「清单无效」，
+ * 而脚本自己 exit 0 —— 门禁等于形同虚设。宁可在这里快速失败。
  */
-const ID_RE = /^[a-z0-9][a-z0-9._-]*$/i
+const ID_RE = /^[a-z0-9][a-z0-9._-]*$/
 
 const HELP = [
   '用法:',
-  '  node skills/obox-ext-dev/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]',
+  '  node skills/obox-ext-init/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]',
   '',
   '说明: 在 <obox 仓库>/src/renderer/src/extensions/<id>/ 生成内置扩展骨架。',
-  '      <id> 须匹配 ^[a-z0-9][a-z0-9._-]*$（宿主 NAME_RE 已不带 i：含大写即清单无效，请用小写）',
+  '      <id> 须匹配 ^[a-z0-9][a-z0-9._-]*$（只小写；与宿主 NAME_RE 逐字一致，含大写即清单无效）。',
   '      用户扩展（纯 ESM + .oix）请用 create-user-extension.mjs',
   '',
   '退出码: 0 = 成功｜1 = 生成失败｜2 = 用法错误'
@@ -132,7 +135,15 @@ const displayName = title ?? id
 const desc = description ?? ''
 
 if (!ID_RE.test(id)) {
-  fail(`扩展 id 非法: ${id}（须匹配 ^[a-z0-9][a-z0-9._-]*$，与宿主 NAME_RE 一致）`)
+  fail(
+    `扩展 id 非法: ${id}\n` +
+      '  规则：name 只能小写字母/数字/./_/-，且首字符必须是字母或数字（^[a-z0-9][a-z0-9._-]*$）。\n' +
+      '  出处：宿主 src/renderer/src/core/manifest.ts:11 的 NAME_RE 与 scripts/validate-manifest.mjs:39\n' +
+      '        的 NAME_RE 逐字相同，都不带 i —— 大写 id 会被宿主判「清单无效」。\n' +
+      '  宿主校验器对同样内容的 name 会报（原文）：\n' +
+      '    [validate-manifest] ✗ <manifest.json>: [error] name 必填，且只能含字母/数字/./_/-\n' +
+      '  请改用全小写 id（kebab-case，如 my-ext）。'
+  )
 }
 
 const extensionsDir = await assertOboxRepo(PROJECT_ROOT)
@@ -223,7 +234,7 @@ const title = ${jsLiteral(displayName)}
 </template>
 
 <style scoped>
-/* 主题 token 一律写成 var(--token, fallback)：主题扩展缺该 token 时仍然可读（token 表见 themes-settings.md） */
+/* 主题 token 一律写成 var(--token, fallback)：主题扩展缺该 token 时仍然可读（token 表见 docs/extension-api/themes-settings.md） */
 .page {
   height: 100%;
   padding: 16px;
@@ -261,9 +272,9 @@ i18n（不补词条时导航项会显示原始 key ${navTitleKey}）：把下面
 下一步：
   - 编辑 manifest.json 声明贡献点（navItems/statusBarItems/commands/views/keybindings/menus）
   - 编辑 index.ts 绑定命令实现、注册事件、可选 api.app.register 注册到应用
-  - 校验 manifest：node skills/obox-ext-dev/scripts/validate-manifest.mjs ${join(extDir, 'manifest.json')}
+  - 校验 manifest：node scripts/validate-manifest.mjs ${join(extDir, 'manifest.json')}
   - 质量门禁：npm run typecheck && npm run lint && npm test；npm run dev 实机验证
-  - 开发流程与文档：skills/obox-ext-dev/references/guides-builtin.md`)
+  - 开发流程与文档：docs/extension-workflow.md；内置扩展路线：docs/extension-api/guides-builtin.md`)
 
 function capitalize(s) {
   // 按分隔符分词，各词首字母大写（test-scaffold → TestScaffold）

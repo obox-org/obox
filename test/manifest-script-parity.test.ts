@@ -1,11 +1,14 @@
 /**
- * 差分门禁：同一批 fixture 同时喂**宿主规则**与**skill 校验脚本**，两边结论必须逐字一致。
+ * 差分门禁：同一批 fixture 同时喂**宿主规则**与**仓库级校验脚本**，两边结论必须逐字一致。
  *
- * 为什么要这道门禁：`skills/obox-ext-dev/scripts/validate-manifest.mjs` 是宿主规则的自包含副本
+ * 为什么要这道门禁：`scripts/validate-manifest.mjs` 是宿主规则的自包含副本
  * （Node 原生跑 `.mjs` 解析不了 `src/` 内部的无扩展名 import，脚本因此不能 import `core/manifest.ts`
  * 与 `shared/ipcDeclaration.ts`）。副本一定会漂移，而且漂移的典型表现正是"给非法 manifest 发绿灯"
  * （历史上脚本漏掉 ipcChannels/keybindings/menus/views 四类 error，对 `transport:"tcp"` 输出「✓ 通过」）。
  * 只有逐字比对 `{level, message}` 才能拦住文案与规则的漂移。
+ *
+ * 脚本自 ADR-0023 决策 5 起位于仓库级 `scripts/`（不再是 `skills/obox-ext-dev/scripts/`），
+ * 但"自包含 + 可复制到无 obox 源码的扩展仓库"这条性质不变——它仍然只 import `node:` 内建模块。
  *
  * 覆盖面说明：宿主 `validateManifest()` **只产出 error**，warning 是在 `host.ts` 的
  * `registerContributions` 阶段追加的（依赖运行期状态：keybindingStore、入口模块导出表）。
@@ -21,7 +24,7 @@ import { validateManifest } from '../src/renderer/src/core/manifest'
 
 /** 仓库根（本文件在 <root>/test/ 下；resolve 会去掉 `..` 带出的尾部路径分隔符） */
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const scriptPath = join(repoRoot, 'skills', 'obox-ext-dev', 'scripts', 'validate-manifest.mjs')
+const scriptPath = join(repoRoot, 'scripts', 'validate-manifest.mjs')
 const fixturesDir = join(repoRoot, 'test', 'fixtures', 'manifest-parity')
 
 interface Message {
@@ -85,9 +88,24 @@ const requiredFixtures = [
   'missing-main.json'
 ]
 
-describe('manifest 校验：宿主规则与 skill 脚本的差分门禁', () => {
+describe('manifest 校验：宿主规则与仓库脚本的差分门禁', () => {
   it('fixtures 覆盖设计要求的全部用例', () => {
     expect(fixtures).toEqual(expect.arrayContaining(requiredFixtures))
+  })
+
+  it('脚本保持自包含：只 import node 内建模块（可复制到没有 obox 源码的扩展仓库）', () => {
+    // 注释里出现的 import 字样不算：先剥掉块注释再抽真实的 import 说明符
+    const code = readFileSync(scriptPath, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const specifiers: string[] = []
+    const importRe = /\bimport\b[\s\S]*?from\s*['"]([^'"]+)['"]/g
+    let match = importRe.exec(code)
+    while (match) {
+      specifiers.push(match[1])
+      match = importRe.exec(code)
+    }
+    expect(specifiers.length).toBeGreaterThan(0)
+    // 只允许 node: 内建模块——不得出现 src/**、相对路径或 npm 包
+    expect(specifiers.filter((s) => !s.startsWith('node:'))).toEqual([])
   })
 
   it.each(fixtures)('%s：脚本与宿主的 {level, message} 多重集逐字一致', (name) => {

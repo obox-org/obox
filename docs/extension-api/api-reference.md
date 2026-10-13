@@ -1,5 +1,7 @@
 # API Reference
 
+> **本文件是 obox 扩展 API 的唯一真相（single source of truth），位置 `docs/extension-api/`**：`ExtensionActivationApi`、宿主能力与贡献点注册的说明只此一份，仓库内其它文档（九步链各阶段、扩展工程文档）一律引用本目录，不复制副本。
+
 宿主在激活扩展时构造 `ExtensionActivationApi` 作为插件函数的唯一参数注入（`api`）。本文按其成员逐节说明；类型定义的物理位置见文末「类型文件位置」。
 
 > **代码引用约定**：未写目录的 `xxx.ts` 一律指 `src/renderer/src/core/xxx.ts`（如 `host.ts`、`registry.ts`、`manifest.ts`、`appStore.ts`）；`src/api/*`、`src/main/*`、`src/shared/*` 一律写全相对路径（如 `src/api/types.ts`、`src/main/timer.ts`）。注意 `core/types.ts` 只是 `src/api` 的历史兼容再导出（`core/types.ts:7`），**类型定义在 `src/api/types.ts`**。
@@ -393,7 +395,7 @@ await db.close()
 - 条件对象（`get_by`/`update`/`del_by` 的 where）只支持**等值匹配**，多键为 AND；复杂条件用 `query` 写 SQL
 - 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:648-654`）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 也**不经 `call()`**，直接返回 IPC 原始结果（`host.ts:678`，主进程侧是无返回值句柄关闭，`src/main/sqlite.ts:78-80`），因此对不存在的库 `close()` 静默无操作、**不会抛错**
 - 全部方法 `async`（经 IPC 到主进程）；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
-- **数据目录的生命周期**：库文件在 `<扩展>/data/<name>.db`（安装态即 `userData/extensions/<扩展id>/data/`）；**覆盖安装（升级）时宿主保留 `data/`**，所以数据不会因升级丢失；**卸载时 `data/` 随扩展目录一起删除**。因此打包时不要把 `data/` 放进 `.oix`——宿主会直接拒收（见 [guides-user.md](guides-user.md) §6）
+- **数据目录的生命周期**：库文件在 `<扩展>/data/<name>.db`（安装态即 `userData/extensions/<扩展id>/data/`）；**覆盖安装（升级）时宿主保留 `data/`**，所以数据不会因升级丢失；**卸载时 `data/` 随扩展目录一起删除**。因此打包时不要把 `data/` 放进 `.oix`——宿主会直接拒收（见 `docs/extension-api/guides-user.md` §6「打包 `.oix`」）
 
 ### notification（系统提醒，操作系统通知）
 

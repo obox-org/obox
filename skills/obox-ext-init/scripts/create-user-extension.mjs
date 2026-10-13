@@ -3,20 +3,21 @@
  * create-user-extension — Obox **用户扩展**脚手架（纯 ESM JavaScript + `.oix` 打包）。
  *
  * 用法：
- *   node skills/obox-ext-dev/scripts/create-user-extension.mjs <id> [选项]
+ *   node skills/obox-ext-init/scripts/create-user-extension.mjs <id> [选项]
  *
  * 选项：
  *   --title "显示名"   扩展显示名（默认 = id）
  *   --author "作者"    作者（默认留空；.oix 安装目录名 = <name>_<author>，见 src/main/oixCore.ts:51）
  *   --desc "简介"      简介
- *   --dir <父目录>     生成到哪个父目录下的 <id>/（默认 <仓库根>/extensions/）
+ *   --dir <父目录>     生成到哪个父目录下的 <id>/（**相对当前工作目录**解析，也可给绝对路径；
+ *                      省略时 = <仓库根>/extensions/，见下方 REPO_ROOT）
  *   --vue              额外生成 Vue 子应用骨架（Vite 构建期依赖；运行时入口仍是纯 ESM）
  *
  * 生成物（生成即可用，零运行时依赖）：
  *   <id>/manifest.json          views/commands/statusBarItems/i18n 声明（main: "./index.js"）
  *   <id>/index.js               纯 ESM：default 插件函数 + 具名导出 greet + cleanup
  *   <id>/page.html + page.js    App 卡片子窗口的静态页（脚本是**独立文件**，不是内联）
- *   <id>/theme.js               子窗口主题接收桥（宿主 obox-theme 推送；协议见 themes-settings.md）
+ *   <id>/theme.js               子窗口主题接收桥（宿主 obox-theme 推送；协议见 docs/extension-api/themes-settings.md）
  *   <id>/test/extension.test.js node --test + mock api（零依赖）
  *   <id>/scripts/pack.mjs       zip → out/<id>-<version>.oix（零依赖，自己写 zip）
  *   <id>/package.json           type: module；scripts: test / pack / release
@@ -24,29 +25,34 @@
  *
  * 退出码：0 = 生成成功｜1 = 生成失败（id 非法 / 目录已存在）｜2 = 用法错误
  *
- * 与 create-extension.mjs（内置扩展，TS + Vite、随应用打包）的区别见 references/guides-user.md。
+ * 与 create-extension.mjs（内置扩展，TS + Vite、随应用打包）的区别见 docs/extension-api/guides-user.md。
  */
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
-/** 仓库根：skills/obox-ext-dev/scripts → 上三级 */
+/** 仓库根：skills/obox-ext-init/scripts → 上三级 */
 const REPO_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
 
 /**
- * 脚手架自己的 id 校验：**仍带 `i`**（未与宿主同步，见 scripts/README.md 与 issue #77）。
- * 宿主 `core/manifest.ts:11` 的 `NAME_RE` 已**不带 `i`**（大写 id 非法）——请传小写 id。
+ * 脚手架自己的 id 校验：与宿主 `src/renderer/src/core/manifest.ts:11` 的 `NAME_RE`
+ * 及仓库校验脚本 `scripts/validate-manifest.mjs:39` 的 `NAME_RE` **逐字一致** ——
+ * 三者都是 `/^[a-z0-9][a-z0-9._-]*$/`，**不带 `i`**（大写 id 非法，issue #77）。
+ *
+ * 为什么必须同源收紧：脚本一旦接受大写 id，生成的 manifest 会被宿主判「清单无效」，
+ * 而脚本自己 exit 0 —— 门禁等于形同虚设。宁可在这里快速失败。
  */
-const ID_RE = /^[a-z0-9][a-z0-9._-]*$/i
+const ID_RE = /^[a-z0-9][a-z0-9._-]*$/
 
 const HELP = [
   '用法:',
-  '  node skills/obox-ext-dev/scripts/create-user-extension.mjs <id> [--title "显示名"]',
+  '  node skills/obox-ext-init/scripts/create-user-extension.mjs <id> [--title "显示名"]',
   '       [--author "作者"] [--desc "简介"] [--dir <父目录>] [--vue]',
   '',
   '说明: 生成 <父目录>/<id>/（默认 <仓库根>/extensions/<id>/）—— 纯 ESM 用户扩展 + .oix 打包脚本。',
-  '      <id> 须匹配 ^[a-z0-9][a-z0-9._-]*$（宿主 NAME_RE 已不带 i：含大写即清单无效，请用小写）',
+  '      <id> 须匹配 ^[a-z0-9][a-z0-9._-]*$（只小写；与宿主 NAME_RE 逐字一致，含大写即清单无效）。',
+  '      --dir <父目录> 相对当前工作目录解析（也可给绝对路径）；省略时默认 <仓库根>/extensions/。',
   '',
   '退出码: 0 = 成功｜1 = 生成失败｜2 = 用法错误'
 ].join('\n')
@@ -117,7 +123,15 @@ const id = positionals[0]
 const displayName = title ?? id
 
 if (!ID_RE.test(id)) {
-  fail(`扩展 id 非法: ${id}（须匹配 ^[a-z0-9][a-z0-9._-]*$，与宿主 NAME_RE 一致）`)
+  fail(
+    `扩展 id 非法: ${id}\n` +
+      '  规则：name 只能小写字母/数字/./_/-，且首字符必须是字母或数字（^[a-z0-9][a-z0-9._-]*$）。\n' +
+      '  出处：宿主 src/renderer/src/core/manifest.ts:11 的 NAME_RE 与 scripts/validate-manifest.mjs:39\n' +
+      '        的 NAME_RE 逐字相同，都不带 i —— 大写 id 会被宿主判「清单无效」。\n' +
+      '  宿主校验器对同样内容的 name 会报（原文）：\n' +
+      '    [validate-manifest] ✗ <manifest.json>: [error] name 必填，且只能含字母/数字/./_/-\n' +
+      '  请改用全小写 id（kebab-case，如 my-ext）。'
+  )
 }
 
 const parentDir = resolve(dirArg ?? join(REPO_ROOT, 'extensions'))
@@ -280,7 +294,7 @@ export default function ${camelName}(api) {
 // ---------------------------------------------------------------- 静态页
 
 /**
- * 子窗口主题接收桥（宿主 → iframe 单向推送，协议见 references/themes-settings.md 与 ADR-0022）。
+ * 子窗口主题接收桥（宿主 → iframe 单向推送，协议见 docs/extension-api/themes-settings.md 与 ADR-0022）。
  *
  * 为什么需要它：子窗口是独立文档（app:// 协议），与父文档**跨源** ⇒ CSS 自定义属性不跨文档继承、
  * 宿主也注入不了 <style>。宿主在 iframe load / 主题变化 / 收到 obox-theme-request 时会 postMessage
@@ -290,7 +304,7 @@ export default function ${camelName}(api) {
  * CSS 里仍写 var(--token, fallback)：宿主可用时两个来源同值，宿主不可用时兜住可读性。
  * ⚠️ 消息形状与宿主协议一致，**勿改**。
  */
-const themeJs = `/** 宿主子窗口主题接收桥（obox-theme）；协议见 skills/obox-ext-dev/references/themes-settings.md */
+const themeJs = `/** 宿主子窗口主题接收桥（obox-theme）；协议见 docs/extension-api/themes-settings.md */
 const FALLBACK_TOKENS = {
   '--bg': '#1e1e1e',
   '--bg-input': '#3c3c3c',
@@ -612,7 +626,7 @@ const packJs = `#!/usr/bin/env node
  * 安装器按根 manifest.json 读 id/version/main 并检查入口在包内（src/main/oixCore.ts:198-222）。
  *
  * **data/ 不进包**：它是扩展运行时数据目录（覆盖安装时由宿主保留），含 data/ 的包会被安装器
- * 以 forbidden-entry 直接拒收（见 skills/obox-ext-dev/references/guides-user.md 第 6 节）；
+ * 以 forbidden-entry 直接拒收（见 docs/extension-api/guides-user.md 第 6 节）；
  * 本脚本的 SKIP_DIRS 已显式排除 data/、out/、node_modules/、.git/，并在收集后兜底拒绝。
  *
  * 零依赖：只用 node:zlib 自己写 zip —— 用户扩展不引入任何 npm 依赖。
@@ -641,7 +655,7 @@ const DIRS = ['dist', 'assets']
 
 /**
  * 永不进包的目录名（任意层级）：data/ 是扩展运行时数据目录 —— 宿主升级时保留它，
- * 且安装器对含 data/ 的包直接报 forbidden-entry 拒收（guides-user.md 第 6 节）。
+ * 且安装器对含 data/ 的包直接报 forbidden-entry 拒收（docs/extension-api/guides-user.md 第 6 节）。
  */
 const SKIP_DIRS = new Set(['data', 'out', 'node_modules', '.git'])
 
@@ -829,7 +843,7 @@ ${vue ? 'npm install && npm run build   # 构建 Vue 子应用（构建期依赖
 - 改 \`index.js\` / \`manifest.json\` 后在扩展管理器里**停用再启用**（或重启应用）即生效。
 - 入口是**纯 ESM JavaScript**：不能 \`import\` npm 包，也不能 \`import\` 宿主源码，只能用注入的 \`api\`。
 - 校验清单（在 obox 仓库里执行）：
-  \`node skills/obox-ext-dev/scripts/validate-manifest.mjs manifest.json\`
+  \`node scripts/validate-manifest.mjs manifest.json\`
 
 ## 打包与安装
 
@@ -838,7 +852,7 @@ ${vue ? 'npm install && npm run build   # 构建 Vue 子应用（构建期依赖
 - 安装：扩展管理器点「安装」选 \`.oix\`，或把 \`.oix\` 拖进 obox 窗口。
 - 安装位置：\`<userData>/extensions/${id}${author ? `_${author.toLowerCase().replace(/[^a-z0-9._-]/g, '')}` : ''}/\`（目录名 = \`<name>_<author>\`）。
 - 开发期也可以不走安装：宿主启动参数 \`--debug-extension ${id}@<本目录绝对路径>\`，
-  经 \`app://debug/${id}/\` 直接加载本地目录（详见 \`skills/obox-ext-dev/references/guides-user.md\`）。
+  经 \`app://debug/${id}/\` 直接加载本地目录（详见 \`docs/extension-api/guides-user.md\`）。
 
 ## 贡献点与 i18n（titleKey 说明）
 
@@ -857,7 +871,7 @@ ${vue ? 'npm install && npm run build   # 构建 Vue 子应用（构建期依赖
 1. **不要写内联 \`<script>\`**：App 卡片的 \`html\`（srcdoc）模式继承宿主 CSP
    \`script-src 'self' app:\`，内联脚本会被直接拦掉（按钮点了没反应）。用独立 \`.js\` 文件。
 2. 子窗口是独立文档（\`app://\` 协议），**CSS 自定义属性不跨文档继承**；宿主会通过
-   \`obox-theme\` 消息**下发**主题 token（协议见 \`skills/obox-ext-dev/references/themes-settings.md\`），
+   \`obox-theme\` 消息**下发**主题 token（协议见 \`docs/extension-api/themes-settings.md\`），
    \`theme.js\` 的 \`installAppThemeBridge()\` 已装好接收桥；**在收到之前**用 \`var(--token, fallback)\`
    兜住首帧 / 老宿主（两者同值时以宿主推送为准）。
 `
@@ -1043,8 +1057,8 @@ console.log(`[create-user-extension] 已生成用户扩展${vue ? '（含 Vue �
 下一步（在 ${extDir} 里执行）：
   npm test                      # node --test，零依赖
 ${vue ? '  npm install && npm run build   # 先构建 Vue 子应用（构建期依赖）\n' : ''}  npm run pack                  # 生成 out/${id}-${version}.oix
-  校验清单：node ${join(SCRIPT_DIR, 'validate-manifest.mjs')} ${join(extDir, 'manifest.json')}
-  开发流程与文档：skills/obox-ext-dev/references/guides-user.md`)
+  校验清单：node ${join(REPO_ROOT, 'scripts', 'validate-manifest.mjs')} ${join(extDir, 'manifest.json')}
+  开发流程与文档：docs/extension-workflow.md；用户扩展路线：docs/extension-api/guides-user.md`)
 
 function camel(s) {
   const parts = s

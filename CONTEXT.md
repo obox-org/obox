@@ -154,3 +154,37 @@ _Avoid_: 数据库路径、数据文件
 **Global Timer / 全局定时器**:
 经 `api.timer` 使用的宿主级定时器，运行在**主进程**（不受渲染进程后台节流影响），间隔为**整数秒**（≥1s）；按扩展隔离，扩展停用自动清理。与扩展自己 `setTimeout` 的区别：后者在渲染进程，窗口最小化时被节流到 1 秒粒度。
 _Avoid_: 系统定时器、计划任务
+
+## 扩展开发流程（obox-ext 九步链）
+
+**Stage Chain / 九步链**:
+扩展开发的固定阶段顺序：**init → grill → proposal → design → validation → task → dev → check → ship**，每步一个独立技能（`obox-ext-*`），上一步的产物是下一步的输入。
+_Avoid_: 流水线、pipeline
+
+**Gate / 门禁**:
+每个阶段结尾对用户的提问，固定四选项：**通过并自动进入下一步 / 部分修改后重跑本步 / 回到上一步 / 暂停**。任何阶段都不得跳过门禁自行推进。
+_Avoid_: 确认框、检查点
+
+**Change / 变更**:
+一次需求在扩展工程 `openspec/changes/<change-id>/` 下的产物集合，含官方四件套（proposal / design / tasks / specs）与自研产物（`notes/`）。
+_Avoid_: 任务、工单
+
+**Change ID**:
+变更的机器标识，**lower-case kebab-case 英文短名**（OpenSpec 强制：禁大写、下划线、连续连字符、中文）。用于目录名与 `openspec validate`。
+_Avoid_: 变更名、需求号
+
+**UID / 归档标识**:
+变更的人读标识，形如 `UID-{YYYYMMDDHHmmss}-{≤10字中文描述}`，用作交付归档目录名；与 Change ID **双向映射**（change 的 `.openspec.yaml` 记 `uid`，归档的 `index.md` 记 `change-id`）。
+_Avoid_: 编号、序号
+
+**Feature Archive / 交付归档**:
+`ship` 阶段写入 `<扩展工程>/docs/spec/UID-…/` 的最终产物副本（含 proposal / design / tasks / spec delta / validation / check 报告与映射 `index.md`），面向人阅读与随扩展发版。
+_Avoid_: 备份、导出
+
+**API Common Home / API 公共目录**:
+仓库级 `docs/extension-api/`，是扩展 API、manifest 贡献点与主题/设置文档的**唯一真相**；九步链的 proposal / design / validation / dev 等阶段都引用它，不在扩展工程内保留副本。
+_Avoid_: API 文档、接口清单
+
+**Finding Grade / 问题三档**:
+`validation` 与 `check` 对发现的结论分级：**一般建议 / 普通问题 / 严重问题**；每条附修复意见，随后按档提问——严重问题逐条问、普通问题合并为一次多选、一般建议默认登记并在门禁统一问一次。
+_Avoid_: 缺陷等级、bug 级别

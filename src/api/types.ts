@@ -283,7 +283,7 @@ export interface ExtensionActivationApi {
      * 打开对话框 → 选中路径数组（**目录选择与文件选择共用 `filePaths`**）。
      * `opts.properties`: 不传 ⇒ `['openFile']`（默认行为不变）；传 `['openDirectory']` ⇒ 弹**目录**框
      * （与 `openFile` 互斥，目录模式下 `filters` 不生效）。**老宿主会忽略 `properties`** ⇒ 拿到路径后
-     * 请自证它是不是目录（见 `skills/obox-ext-dev/references/troubleshooting.md` 第 32 节）。
+     * 请自证它是不是目录（见 `docs/extension-api/troubleshooting.md` 第 32 节）。
      */
     showOpenDialog(opts?: DialogOpenOptions): Promise<DialogOpenResult>
     /** 保存对话框 → 保存路径 */
@@ -499,7 +499,7 @@ export interface ExtensionActivationApi {
      * 处理**对端发来的请求**（双向）：返回值作为 JSON-RPC result 回给对端（client / server 通道都可用）。
      *
      * **按通道名寻址的两条已知限制**（本期不改签名，见 issue #43 设计 D2 与
-     * `skills/obox-ext-dev/references/api-reference.md` 的「每连接独立会话」）：
+     * `docs/extension-api/api-reference.md` 的「每连接独立会话」）：
      * - 回调**不携带 `connectionId`**：server 通道上无法从 handler 得知请求来自哪条连接，
      *   要按连接分派只能在 `onConnection` / `onDisconnect` 里自行维护映射（回包由宿主按内部
      *   requestId 路由，不需要 ID）；

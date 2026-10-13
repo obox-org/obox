@@ -20,6 +20,18 @@
 5. **临时产物与归档**：`tmp/` 整体进 `.gitignore`（spec / 设计文档 / 临时 ADR 都是本地工作产物）；需求完成后 `tmp/spec/` → `<开发目录>/docs/spec/`、`tmp/adr/` → `<开发目录>/docs/adr/`，随后**删除整个 `tmp/`**。三级落点：用户扩展 → `extensions/<id>/docs/`；内置扩展 → `src/renderer/src/extensions/<id>/docs/`；宿主 / 扩展系统 / 仓库自身 → 仓库 `docs/`（ADR 续现有编号，本仓库自身开发的归档先例是 `docs/spec/`）。
 6. **文档只写代码实际行为**：描述与代码不符时改文档；没实机验证的（如 VS Code `launch.json` 模板、`urlFilter` 依赖 electron-vite 默认端口）必须显式标注"未实机验证"。代码与测试意图冲突（`manifest.ts` 的 `name` 正则带 `i` vs `test/manifest.test.ts` 的标题意图）不在文档需求内改代码，另立 issue。
 
+## 修订（2026-10-13）：流程拆为九步链，产物改用 OpenSpec 范式
+
+**已由 [ADR-0023](./0023-extension-dev-openspec-workflow.md) 取代本文的：**
+
+- **决策 1 的前半**（references 按主题保留在 `skills/obox-ext-dev/` 内）⇒ 共享文档迁至仓库级公共目录 `docs/extension-api/`（唯一真相），`SKILL.md` 不再是"受众判定 + 流程骨架"的单入口。
+- **决策 4**（M1–M8 提问 + `tmp/spec/` → 用户确认 → 设计 → 开发 → 测试与独立审视 → `tmp/adr/` 的强制流程）⇒ 拆为九个顺序技能，产物落 `openspec/changes/<change-id>/`。
+- **决策 5**（`tmp/` 两段归档）⇒ 改为 `openspec/changes/archive/` 与 `<开发目录>/docs/spec/UID-…/` 分工归档。
+
+**仍然沿用：** 决策 2（**不注册为 DSH skill**，且进一步不在 `AGENTS.md` 放流程入口，只由用户点名触发）、决策 3（校验脚本自包含副本 + `manifest-script-parity` 差分门禁）、决策 6（文档只写代码实际行为、未实机验证必须标注）。
+
+下文"后果"与"落地与验证"两节记录的是**原始决策**的实施情况，保留为历史。`AGENTS.md` 中与扩展开发相关的**流程描述整段删除**，仅保留"改宿主 API/manifest/IPC 必须同步文档"的同步义务一句（指向 `docs/extension-api/` 与受影响的 `skills/obox-ext-*`）。
+
 ## 后果
 
 - **好处**：两类受众各读一条线，context 减半；16 处硬错误归零且新增一道 CI 可见的差分门禁；需求先澄清再动手，决策留痕在 `docs/`（ADR 长期保留、spec 可追溯），代理不再自行扩大范围。
