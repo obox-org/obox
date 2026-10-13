@@ -16,7 +16,7 @@
 ## 2. 建目录 / 脚手架
 
 ```bash
-node skills/obox-ext-dev/scripts/create-extension.mjs my-hello --title "你好" --desc "示例扩展"
+node skills/obox-ext-init/scripts/create-extension.mjs my-hello --title "你好" --desc "示例扩展"
 ```
 
 生成 `src/renderer/src/extensions/my-hello/{manifest.json,index.ts,HelloView.vue}`；目录已存在则中止（不覆盖）。手工建目录等价，最少需要 `manifest.json` + `index.ts` 两个文件。

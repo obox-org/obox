@@ -1,65 +1,102 @@
 ---
 name: obox-ext-dev
-description: 在 obox 桌面应用（Electron + Vue + Cordis 版，扩展宿主运行在渲染进程）中开发、调试扩展的完整指南。当用户要新建/修改/调试 obox 扩展，声明贡献点（导航项 / 状态栏项 / 命令 / 树视图 / App 卡片 / 主题 / 快捷键 / 菜单 / 设置），或对接扩展 API、`.oix` 分发与扩展调试时使用。
+description: 按任务卡实现 obox 扩展代码并跑通质量门槛（不提交）。当用户要求按任务卡开发扩展、并行实现任务、修复 check 报错后回到开发、或九步链走到第 7 步时使用。
 ---
 
-# obox 扩展开发
+# obox 扩展开发 · 第 7 步：正式开发
 
-**本仓库的 obox 是 Electron + Vue 3 + TypeScript 版**：扩展宿主运行在渲染进程，扩展系统基于 Cordis，仿 VS Code 模型——清单（manifest）声明贡献点、宿主解析注册、两阶段启动。
+## 职责
 
-## 一、先判定：你在做哪一类扩展
+**做**：按任务卡派子代理实现代码与测试，跑通门槛，汇总每卡的"改动清单 + 门槛原始输出"。
+**不做**：**不提交、不推送**；不改任务卡与 spec / design；不碰任务卡文件所有权之外的文件（本步自己的 `notes/dev.md` 除外）。
 
-| 判据                     | 类型         | 扩展放哪                                                                                  | 入口                                                      | 分发             | 教程                           |
-| ------------------------ | ------------ | ----------------------------------------------------------------------------------------- | --------------------------------------------------------- | ---------------- | ------------------------------ |
-| 随应用打包、要改仓库源码 | **内置扩展** | `src/renderer/src/extensions/<id>/`                                                       | `index.ts`（TypeScript，经 Vite 转换）                    | 随应用，不可卸载 | `references/guides-builtin.md` |
-| 独立仓库、给别人安装     | **用户扩展** | 独立仓库（本地 `extensions/<id>/`，已 gitignore）→ `userData/extensions/<name>_<author>/` | `index.js`（**纯 ESM JavaScript**，无转换、零运行时依赖） | `.oix`（zip 包） | `references/guides-user.md`    |
+**边界**：本步只写代码，工作区保持未提交，交付归档 / 文档同步 / 提交 / 发版全在 `obox-ext-ship`。
 
-两者的入口语言、构建链、分发方式全不同，**猜错必返工**——分不清就问用户（`references/workflow.md` 的 M1）。
+公共约定见 `docs/extension-workflow.md`（§七 任务卡与并行、§八 dev 与 ship 的边界、§五 门禁）。扩展的 API、贡献点与主题用法查 `docs/extension-api/`（`api-reference.md` / `manifest-reference.md` / `themes-settings.md` / `troubleshooting.md`），**引用时给出具体章节或 `文件:行`，不凭记忆写 API**。
 
-## 二、必做流程（不许跳过、不许自行扩大范围）
+## 输入与前置检查
 
-```
-提问（M1–M8）→ spec 写入 tmp/spec/ → 用户确认 → 设计文档 → 开发
-  → 测试 + 独立审视（审视报的问题必须逐条处置）→ ADR 写入 tmp/adr/
-  → 归档到 <开发目录>/docs/{spec,adr}/ → 删除整个 tmp/
-```
+| 输入              | 路径                                                      |
+| ----------------- | --------------------------------------------------------- |
+| 任务卡            | `openspec/changes/<change-id>/notes/tasks/<nn>-<slug>.md` |
+| 任务清单          | `openspec/changes/<change-id>/tasks.md`                   |
+| spec delta / 设计 | `openspec/changes/<change-id>/specs/**`、`design.md`      |
 
-改变「对外行为 / 贡献点 / 数据结构」的需求走全流程；只改文案/样式/单点 bug 走轻流程（提问 + 开发 + 测试）。**必问清单、个性化追问、三条硬边界、spec 与设计文档模板见 `references/workflow.md`。**
+开工前逐项确认，**任一项不过就回到对应步骤，不得继续**：
 
-## 三、最小路径
+1. 任务卡齐备且每张六字段完整，文件所有权两两无交集。
+2. 每张卡的"验收命令"在本机能跑（命令存在、依赖已装）。
+3. `git status --porcelain=v1` 记录开工前的脏文件，收尾时对比，避免把既有改动当成本次成果。
+4. 按扩展类型读了对应教程：用户扩展 `docs/extension-api/guides-user.md`，内置扩展 `docs/extension-api/guides-builtin.md`（入口语言、构建链、分发方式三者不同，读错必返工）。
 
-**内置扩展**：① 读 `src/api/` 与已有扩展（`ext-manager`、`app`）→ ② `node skills/obox-ext-dev/scripts/create-extension.mjs <id>`（脚手架会生成导航项 + 示例命令 + 视图，需求用不到就删掉——多一个也算越界）→ ③ 写 `manifest.json` 的 `contributes` → ④ 写 `index.ts`（`export default (api) => cleanup` + 具名导出视图组件）→ ⑤ `npm run typecheck && npm run lint && npm test && npm run dev` 验证。
+## 步骤
 
-**用户扩展**：① `node skills/obox-ext-dev/scripts/create-user-extension.mjs <id>`（默认生成零构建纯 JS；要 Vue 富界面加 `--vue` 生成 Vite+Vue 子应用骨架；`--dir <父目录>` 改生成位置，默认落在本地 `extensions/`）→ ② 写 `manifest.json`（`main: "./index.js"`）→ ③ 写纯 ESM `index.js`（只用注入的 `api`）→ ④ 富界面用 `app://extensions/<id>/page.html` 装进 App 卡片子窗口 → ⑤ 在**生成的扩展项目内**跑 `node --test` 与 `node scripts/pack.mjs` 出 `.oix`（这两个 `scripts/` 指扩展项目自己的目录），再用 `node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json>` 校验清单。
+### 1. 定并行批次
 
-## 四、铁律
+同组并行、跨组串行；有依赖的卡等其前置卡完成。
 
-1. **声明式贡献点**：导航项/状态栏项/命令等的元数据必须写进 manifest `contributes`，宿主只认 manifest，不用 `ctx.register*` 命令式注册。
-2. **命令必须先声明**：`api.registerCommand(id, handler)` 的 id 未在本扩展 manifest 声明时，宿主**直接抛错**（`registry.ts`）→ `plugin(api)` 抛错 → 扩展标红 `activationError`。这不是 warning。
-3. **视图必须具名导出**：navItem 的 `view` 引用的组件要在入口具名 `export`，否则内容栏空白。
-4. **依赖环不跳过**：`extensionDependencies` 成环时环内扩展**仍会激活**，只是排在最后；缺失依赖不阻塞激活。
-5. **Disposable**：`registerCommand` / `on` / `app.register` / `statusBar.createItem` 都返回 `{ dispose() }`；插件函数返回的 cleanup 与它们一起被宿主在停用时统一释放，不返回会在热重载时泄漏。
-6. **只在主窗口调用插件函数**：App 子窗口（`?obox-window=app`）**同样会 import 每个扩展入口并注册贡献点——模块顶层代码会执行**，只是不调用 `default` 插件函数。所以定时器 / DB 连接 / 文件监听一律放进插件函数，别写模块顶层，否则每个子窗口都会重跑；子窗口交互走 `api.app.onMessage` 消息桥。
-7. **命令 id 全局唯一**：跨扩展同名会被拒绝并记日志；扩展热移除/覆盖安装时其命令从注册表物理移除，同 id 可重新声明。
-8. **生命周期钩子**：入口具名导出 `install(ctx)` / `uninstall(ctx)`，两者都可选。`install` 在 `.oix` 安装完成后立刻执行（覆盖安装会重跑，`ctx.upgraded === true`），失败按激活失败处理；`uninstall` 在删除目录**之前**执行（禁用态扩展也会临时加载入口来跑），失败只告警但仍继续删目录。两者都要自行保证幂等。
-9. **i18n**：只有**导航项与树视图**支持 `titleKey`（词条加在 `src/renderer/src/i18n/locales/{zh,en}.ts`，**用户扩展改不了宿主语言包，所以对它无效**）；命令与状态栏项**没有**这个字段，要双语得自己接 `api.i18n` 并随语言变更刷新文本。
-10. **平台**：托盘、开机自启、系统通知**仅 Windows**；其余平台按缺失处理，不要假设存在。
-11. **扩展是受信代码（无沙箱）**：入口被动态 `import` 进宿主渲染进程，与宿主同进程同上下文；`ExtensionActivationApi` 是能力封装、**不是安全边界**（扩展可直接摸到 `window.api`）。不要用它承载不可信第三方代码，需要强隔离时改用独立进程/子窗口（`docs/adr/0015`）。
-12. **用户扩展零运行时依赖，且没有主窗口 Vue 视图**：入口只依赖注入的 `api`；带 Vue 的富界面属于**构建期**（编译成静态页，只能落在 App 卡片子窗口里），**不能**给主窗口贡献 `navItems[].view` 组件——用户扩展没有宿主的 Vue 构建管线。
-13. **内置扩展没有磁盘目录、也没有系统信息能力**：它跑在渲染进程且 `nodeIntegration:false` + `contextIsolation:true`，没有 `child_process` / `fs`；`app://builtin` 通道虽注册但无人填充，所以它也**取不到自己的文件目录**。要执行命令、读系统信息（例如 git 分支）**只能新增主进程 API**——命中 M7，停下来问用户。
+**完成判据**：列出批次表（批次 → 卡号），每批内的卡文件所有权不重叠且无依赖。
 
-## 五、references 索引
+### 2. 按卡派子代理
 
-| 何时读                                       | 文件                               |
-| -------------------------------------------- | ---------------------------------- |
-| 开工前走流程、必问清单                       | `references/workflow.md`           |
-| 做内置扩展                                   | `references/guides-builtin.md`     |
-| 做用户扩展、打包调试                         | `references/guides-user.md`        |
-| manifest 字段与校验规则                      | `references/manifest-reference.md` |
-| 扩展 API 方法签名与限额                      | `references/api-reference.md`      |
-| 主题 token、设置系统、App 子窗口主题下发协议 | `references/themes-settings.md`    |
-| 出问题了（按症状查）                         | `references/troubleshooting.md`    |
+一卡一个子代理，任务书里**逐字带上卡的目标、输入锚点、文件所有权、验收命令**，并明确一句："**只改所有权内的文件；要改宿主 API 或新增 API 就停下报回**"。
 
-## 六、持续更新（强制）
+**完成判据**：每张卡都被派发过一次；派发记录里能看到卡号与批次。
 
-改扩展 API → 更新 `references/api-reference.md`；改 manifest 校验 → `references/manifest-reference.md`；改宿主生命周期或扩展约定 → 本文件 + 对应 reference；发现新坑 → `references/troubleshooting.md`；新增示例或脚手架 → `references/guides-*.md` 与 `scripts/`。完整条款与提交/PR 约定见 `AGENTS.md`。
+### 3. 收每卡回执
+
+回执**必须**含：**改动清单**（新增/修改/删除的文件路径）＋ **门槛原始输出**（命令与完整 stdout/stderr，不摘写、不概括）。缺任一项就退回重跑。
+
+**完成判据**：每张卡都有回执，且回执里的文件清单与其文件所有权自洽——所有权外出现文件即越界，当场处理。
+
+### 4. 跑门槛
+
+- **宿主动作涉及 `src/**`**：`npm run typecheck`、`npm run lint`、`npm test`。三者都过才算过。
+- **扩展工程（条件门槛）**：**仅当该扩展 `package.json` 有 `build` 脚本时**才跑 `npm run build`；清理对象以该扩展构建配置的 `outDir` 为准（脚手架带 `--vue` 是 `dist/`，`extensions/rdp` / `extensions/webapp` 是 `ui/`），先清旧产物再构建，避免把旧界面打进包。**没有 `build` 脚本就不跑、也不去动任何产物目录**，改用该扩展自带测试（`npm test` / `node --test`）＋清单校验（`node scripts/validate-manifest.mjs <manifest.json>`）。
+- **打包**：该扩展 `package.json` 有 `pack` 脚本就跑 `node scripts/pack.mjs` 产出 `out/<name>-<版本>.oix`（带 `--vue` 的 `pack` 自带 `build`，跑它即可）。
+
+保留**原始输出**；失败就修到过，修的仍是本步范围。**没跑 build 的，必须在回执与 `notes/dev.md` 里写明原因**（该扩展无 `build` 脚本，改以测试 + 清单校验为准）。
+
+**中文输出编码**：门槛输出要原文粘贴，含中文的 stdout/stderr 在 Windows PowerShell 5.1 下经 `Get-Content` 会显示成乱码——用 `Get-Content -Encoding utf8` 读取，或直接读文件、或让命令把输出写进 UTF-8 文件再读；**粘贴前先确认中文没坏**。
+
+**完成判据**：该跑的门槛逐条有原始输出且全绿，不适用的门槛已写明原因；`.oix` 产出路径可查、manifest 校验通过。
+
+### 5. 越界即停
+
+**发现要改宿主 API、贡献点 schema、主进程 IPC，或要新增 API 时，停下来用 `ask_user_question` 问用户一次**（选项含"改规格走 `proposal` / 扩范围 / 不做"），拿到答复再动；ADR 落位随之改判。
+
+**完成判据**：本步改动的每个文件都能追溯到某张卡的所有权；越界项已由用户裁定并留痕。
+
+### 6. 汇总并核工作区
+
+把回执与门槛输出汇总写入 `openspec/changes/<change-id>/notes/dev.md`，末尾列出**本次全部改动文件**；`git status --porcelain=v1` 里不应出现你未预期的条目，**确认没有任何提交**（`git log` 未新增）。
+
+**完成判据**：`notes/dev.md` 存在；改动文件清单与 `git status` 一致；`git log -1` 仍是开工前的那条提交。
+
+### 7. 门禁
+
+见下。
+
+## 产物与路径
+
+- 代码 + 测试（按任务卡的文件所有权）
+- `openspec/changes/<change-id>/notes/dev.md`（回执汇总 + 改动文件清单 + 门槛原始输出）
+- 扩展工程的 `.oix`（在 `out/`，未提交）
+
+## 门禁
+
+用 `ask_user_question` 问「本步产出是否符合要求？」：
+
+1. **通过，自动进入 `obox-ext-check`（推荐）** —— 下一步读 `skills/obox-ext-check/SKILL.md` 并照做，对 spec delta / design / 任务卡逐条纯检查并复跑门槛。
+2. **部分修改后重跑本步** —— 用户说明要改哪张卡的哪部分。
+3. **回到上一步 `obox-ext-task`** —— 回退并重做任务卡拆分。
+4. **暂停** —— 用户先人工检查。
+
+被选 1 时**读取 `skills/obox-ext-check/SKILL.md` 并照做**，不依赖 Skill 工具。
+
+## 完成判据
+
+- 每张任务卡都有"改动清单 + 门槛原始输出"回执，且无越界改动；
+- 该跑的门槛全绿并留有原始输出（扩展工程另含 `outDir` 清空后重建的 `build` 与 `.oix`；无 `build` 脚本的扩展以自带测试 + 清单校验为准，且已写明没跑 build 的原因）；
+- 工作区**未提交**，改动文件清单已写入 `notes/dev.md`；
+- 门禁问过并拿到用户选择。

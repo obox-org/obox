@@ -1,5 +1,9 @@
 # spec：obox 扩展开发 skill（`skills/obox-ext-dev/`）优化
 
+> **历史记录（已被取代）**：本文描述的是**单技能 `skills/obox-ext-dev/` + M1–M8 提问 + `tmp/spec/` → `tmp/adr/` 两段工序**的流程，它**已由 [ADR-0023](../adr/0023-extension-dev-openspec-workflow.md) 取代**：现行为**九步链**（`obox-ext-init` → `obox-ext-grill` → `obox-ext-proposal` → `obox-ext-design` → `obox-ext-validation` → `obox-ext-task` → `obox-ext-dev` → `obox-ext-check` → `obox-ext-ship`）加 OpenSpec 产物（`openspec/changes/<change-id>/`）。
+> 本文**仅作为历史记录保留**，描述的是取代前的做法，不再代表当前流程。
+> 当前流程总览见 [docs/extension-workflow.md](../extension-workflow.md)；扩展 API / manifest 文档的公共位置见 `docs/extension-api/`。
+
 | 项       | 值                                                                                                                                                                                                                                                                                               |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 状态     | ✅ 已完成（spec 于开发前经用户确认；实现见 PR #85 文档层、#86 脚本层，验收记录见文末「验收记录」）                                                                                                                                                                                               |

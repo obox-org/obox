@@ -1,5 +1,7 @@
 # 主题与设置参考
 
+> **本文件是 obox 主题与设置（主题 token、设置页字段、App 子窗口主题下发）的唯一真相，位置 `docs/extension-api/`**：仓库内其它文档一律引用本文件，不复制副本。
+
 Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 token），设置由内置 `settings` 扩展管理。左侧树共八个分区：外观 / 通用 / 语言 / 快捷键 / 更新 / 网络 / 通知 / 扩展（`src/renderer/src/extensions/settings/SettingsView.vue:229-268`，`TreeKey` 定义见 `:21-29`）。
 
 ## 主题系统

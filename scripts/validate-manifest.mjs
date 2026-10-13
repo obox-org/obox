@@ -3,11 +3,14 @@
  * validate-manifest — 校验 Obox 扩展 manifest（内置扩展与用户扩展同一套规则）。
  *
  * 用法：
- *   node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json ...>
- *   node skills/obox-ext-dev/scripts/validate-manifest.mjs --all [--root <dir>]
- *   node skills/obox-ext-dev/scripts/validate-manifest.mjs --json [...]          # 机器可读
+ *   node scripts/validate-manifest.mjs <manifest.json ...>
+ *   node scripts/validate-manifest.mjs --all [--root <dir>]
+ *   node scripts/validate-manifest.mjs --json [...]          # 机器可读
  *
  * 退出码：0 = 无 error（warning 允许）｜1 = 存在 error｜2 = 用法错误
+ *
+ * 位置无关：脚本默认把**自己所在目录的上一级**当仓库根（本仓库 = `scripts/` → 仓库根）。
+ * 复制到用户扩展仓库时放在 `<扩展仓库>/scripts/` 即可直接跑；放在别处则用 `--root <dir>` 指定。
  *
  * 为什么是"自包含副本"而不是 import 宿主规则：Node 原生跑 .mjs/.mts 解析不了 src/ 内部
  * 的无扩展名 import（同 scripts/make-tray-icon.mts 头部记录的坑），而宿主 core/manifest.ts
@@ -29,8 +32,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
-/** 默认仓库根：skills/obox-ext-dev/scripts → 上三级 */
-const DEFAULT_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
+/** 默认仓库根：scripts/ → 上一级（本仓库根；扩展仓库同样放 <仓库>/scripts/） */
+const DEFAULT_ROOT = resolve(SCRIPT_DIR, '..')
 
 /** 与 core/manifest.ts:11 一致（**不带 i**：大写 id 非法，issue #77） */
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/
@@ -41,14 +44,14 @@ const IPC_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 const HELP = [
   '用法:',
-  '  node skills/obox-ext-dev/scripts/validate-manifest.mjs <manifest.json ...>',
-  '  node skills/obox-ext-dev/scripts/validate-manifest.mjs --all [--root <dir>]',
-  '  node skills/obox-ext-dev/scripts/validate-manifest.mjs --json [...]',
+  '  node scripts/validate-manifest.mjs <manifest.json ...>',
+  '  node scripts/validate-manifest.mjs --all [--root <dir>]',
+  '  node scripts/validate-manifest.mjs --json [...]',
   '',
   '选项:',
   '  --all          扫描 <root>/src/renderer/src/extensions/*/manifest.json',
   '                 与 <root>/extensions/*/manifest.json',
-  '  --root <dir>   指定仓库根（默认：脚本位置上三级）',
+  '  --root <dir>   指定仓库根（默认：脚本所在目录的上一级）',
   '  --json         以 JSON 输出（stdout 只有 JSON）',
   '  -h, --help     显示本帮助',
   '',
