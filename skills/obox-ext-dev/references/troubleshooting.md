@@ -443,3 +443,41 @@ export function uninstall(ctx) {
 **排查手法（不用挂载组件）**：预置一份 `localStorage['obox:state:v1']`，用 `npm run dev` 冷启动，打开设置页逐分区读控件值（DevTools 里 `document.querySelector('.settings-content select').value`）。`test/settings-first-paint.test.ts` 把这条路径钉成了单测（快照里每个值都故意与代码默认值不同）。
 
 **覆盖边界**：仓库 vitest 是 `node` 环境、没有 jsdom / `@vue/test-utils`，所以**不能挂载 `.vue`**；组件接线由 `test/settings-view-wiring.test.ts`（读源文件）覆盖，取数路径由 `test/settings-first-paint.test.ts` 覆盖。
+
+## 32. 扩展要选文件夹，弹出的却是选文件框
+
+**症状**：
+
+- 扩展里写 `api.dialog.showOpenDialog({ properties: ['openDirectory'] })`，用户看到的却是**文件**选择框（Windows 上还能看到"文件类型"下拉、能被 filters 过滤）；
+- 更隐蔽的一种：框**看起来**正常，用户也确实选了一个目录并确认，但 `filePaths[0]` 最终拿到的是一个**文件**路径（选了文件夹进不去、或选到某个 `xx.exe`）；
+- `properties: ['openDirectory','multiSelections']` 的多选/目录语义完全无效。
+
+**原因（两个，按顺序排查）**：
+
+1. **obox 版本旧**：宿主旧实现把 `properties` **硬编码**成 `['openFile']`（旧 `src/main/ext.ts:22-31`），IPC 入参类型里根本没有 `properties` 字段 ⇒ 你传的 `properties` 经 **Electron IPC 结构化克隆原样到达主进程**，但主进程**不读它**，永远按"选文件"构造对话框。这就是"弹错框"的全部原因——**不是**你的调用写错了。
+2. **调用写错**（少数）：`openDirectory` 与 `openFile` **互斥**。同时传两个时宿主按**目录模式**归一（只保留 `openDirectory` + 可选 `multiSelections`）；但若你只写了 `openFile` 却指望目录效果，那永远不会弹目录框。另：目录模式下 `filters` **被宿主丢弃**（Electron 不对目录应用过滤器）——别用 filters 来"约束目录"。
+
+**确定性的自查方式（不要猜，看返回值）**：
+
+```ts
+const r = await api.dialog.showOpenDialog({ title: '选目录', properties: ['openDirectory'] })
+// 老宿主：r.ok === true、r.canceled === false、r.filePaths[0] 是一个**文件**路径
+// 新宿主：r.ok === true、r.filePaths[0] 是一个**目录**路径
+```
+
+判定只有一条凭据：**`filePaths[0]` 到底是不是目录**。扩展入口没有 `node:fs`，`api.fs` 又只覆盖扩展自己的 data 目录（外部路径读不了）⇒ 把路径交给**你自己的助手侧**（JS 助手 / Python 进程）做 `isDirectory` 判定。
+
+**修法（两选一，建议都做）**：
+
+1. **升级 obox** 到含该能力的版本（宿主侧是纯加法，`properties: ['openDirectory']` 会真的传到 Electron 的 `showOpenDialog`；不传 `properties` 的调用行为**逐字不变**）。
+2. **在扩展里做能力探测 + 降级**（推荐，老宿主上也不报错、不崩）：
+   - 调 `showOpenDialog({ properties: ['openDirectory'] })` 后按上面"自查方式"判定；
+   - 拿到的是**目录** ⇒ 该宿主支持，直接用；
+   - 拿到的是**文件** ⇒ 该宿主**忽略**了 `properties`，记本次会话 `supported = false`（**只探测一次、缓存进内存**，不落库、不写设置），把候选值降级为"该文件的**父目录**"，并在界面上**明说**："当前 obox 版本不支持「选择目录」；请在下方粘贴目录路径，或升级 obox 后重试"；
+   - 返回 `{ ok: false }` ⇒ 同样降级为"手填路径"并显示宿主给的 `error`；
+   - `canceled: true`（或 `filePaths` 为空但 `canceled !== true`）⇒ 什么都不改，**不要**当成"不支持"。
+   - 结论：**降级必须说出来**，不能静默把父目录当作用户选的目录。
+
+**别用版本号判断能力**（重要）：`await api.env.getOboxVersion()` 拿到的是字符串，无法判定"这个版本有没有 `properties` 透传"（补丁版可能只改了这一点、预发布/自编译版本号更不可靠），而且会把"能力探测"变成"版本对比表"长期维护。**唯一可信的判定就是"调用后的实际返回"**——即"选到的到底是不是目录"。
+
+**回归防线（宿主侧）**：`test/ext-dialog.test.ts`——`normalizeDialogProperties` 的表驱动单测（不传 ⇒ `['openFile']`、`['openFile','openDirectory']` ⇒ 只 `openDirectory`、`['openDirectory','multiSelections']` ⇒ 两者都在、未知值忽略、`multiSelect` 旧字段兼容）+ 源码门禁（`src/main/ext.ts` 里**不得**再出现硬编码 `properties: ['openFile'`，且 `win`/无 `win` 两分支共用同一归一结果、目录模式丢弃 `filters`）。

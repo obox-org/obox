@@ -454,6 +454,30 @@ await api.clipboard.writeText('hello')
 const text = await api.clipboard.readText()
 ```
 
+### dialog.openDirectory（选**目录**：`showOpenDialog` 的 `properties`）
+
+`showOpenDialog` 的 `opts` 多了一个可选 `properties`（`DialogProperty[]`）——**不传 ⇒ `['openFile']`，即既有行为逐字不变**。要弹**文件夹**选择框：
+
+```ts
+const r = await api.dialog.showOpenDialog({ title: '选择目录', properties: ['openDirectory'] })
+if (r.ok && !r.canceled && r.filePaths?.[0]) {
+  const picked = r.filePaths[0] // 目录模式下这里是**一个目录**（不是文件）
+}
+```
+
+| 规则 | 说明 |
+| --- | --- |
+| 取值 | `properties?: Array<'openFile' \| 'openDirectory' \| 'multiSelections'>`；**未知值被宿主忽略，不抛错** |
+| 互斥 | `openDirectory` 与 `openFile` **互斥**；同时传时按**目录模式**归一（只保留 `openDirectory` + 可选 `multiSelections`） |
+| `filters` | **目录模式下被丢弃**（Electron 不对目录应用过滤器）；只对文件模式生效 |
+| 多选 | `properties: ['openDirectory','multiSelections']`，或旧字段 `multiSelect: true`（**继续兼容**，与目录模式可叠加） |
+| 返回值 | **形状完全不变**：仍是 `{ ok, filePaths?, canceled?, error? }`——目录选择与文件选择**共用 `filePaths`**，没有新增字段（老扩展零感知） |
+| 取消 | `canceled: true`；`filePaths` 为空但 `canceled !== true` 也按取消处理 |
+| 边界 | 宿主**只负责弹对框**，不做任何路径合法性校验；根的合法性与安全边界**永远在扩展/助手侧** |
+| `api.fs` | 选到的是**外部路径** ⇒ **不能**用 `api.fs` 读写（它只覆盖扩展自己的 data 目录，见下节） |
+
+> ⚠️ **老宿主会忽略 `properties`**（旧版本把 `properties` 硬编码成 `['openFile']`）⇒ 你仍然只拿到 `filePaths`，但里面是**文件**。扩展**必须自证"选到的确实是目录"**，不能假定新字段生效：把路径交给自己的 JS 助手/Python 侧判定 `isDirectory`（`fs.stat` 之类），是文件就取其父目录并给出诚实提示。**不要**用 obox 版本号字符串判断能力；判定凭据只有"返回值/它到底是不是目录"。详见 [troubleshooting.md 第 32 节](troubleshooting.md#32-扩展要选文件夹弹出的却是选文件框)。
+
 ### env（运行环境）
 
 ```ts
@@ -836,5 +860,6 @@ export function uninstall(ctx) {
 ## 类型文件位置
 
 - `src/api/`（聚合出口 `src/api/index.ts`）：`src/api/types.ts` = `ExtensionActivationApi` / `SqliteDb` / `OutputChannel` / `TreeItem`；`src/api/contributions.ts` = 贡献点类型；`src/api/manifest.ts` = `ExtensionManifest`；`src/api/registration.ts` = `AppRegistration`；`src/api/shared.ts` = `Memento` / `UpdateEvent` / `ProxyConfig` / `IpcChannelDeclaration`；`src/api/runtime.ts` = `ExtensionInfo` / `Disposable` / `ExtensionModule` 等
+- 对话框类型（`DialogProperty` / `DialogOpenOptions` / `DialogOpenResult` / `DialogFilter`）**定义在 `src/shared/types.ts`**（主进程 / preload 类型 / 扩展 API **三处共用同一份**，避免签名漂移），由 `src/api/types.ts` 再导出 ⇒ 扩展照旧 `import type { DialogOpenOptions } from '<...>/api'` 即可（`src/api/types.ts` 的 `dialog` 段）
 - `src/renderer/src/core/types.ts` 是历史兼容入口（再导出 `src/api`，旧 import 零改动）；**新代码直接 import `src/api`**
 - 扩展经相对路径导入类型，如内置扩展入口 `import type { ExtensionActivationApi } from '../../../../api'`

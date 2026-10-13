@@ -7,6 +7,16 @@ import type { SettingsPage } from './contributions'
 import type { AppRegistration } from './registration'
 import type { Disposable } from './runtime'
 import type { IpcChannelDeclaration, Memento, ProxyConfig, UpdateEvent } from './shared'
+// 对话框类型是**主进程/preload/扩展 API 三处共用**的同一份定义（spec §9.11 H-2/H-3），
+// 落在 src/shared/types.ts，这里只再导出给扩展作者（`import type { DialogOpenOptions } from '<ext>/api'`）。
+import type {
+  DialogFilter,
+  DialogOpenOptions,
+  DialogOpenResult,
+  DialogProperty
+} from '../shared/types'
+
+export type { DialogFilter, DialogOpenOptions, DialogOpenResult, DialogProperty }
 
 /** 数据库行（对象，键=列名） */
 export type SqliteRow = Record<string, unknown>
@@ -269,12 +279,13 @@ export interface ExtensionActivationApi {
   }
   /** 文件对话框（主进程 dialog） */
   dialog: {
-    /** 文件选择对话框 → 选中路径数组 */
-    showOpenDialog(opts?: {
-      title?: string
-      filters?: DialogFilter[]
-      multiSelect?: boolean
-    }): Promise<{ ok: boolean; filePaths?: string[]; canceled?: boolean; error?: string }>
+    /**
+     * 打开对话框 → 选中路径数组（**目录选择与文件选择共用 `filePaths`**）。
+     * `opts.properties`: 不传 ⇒ `['openFile']`（默认行为不变）；传 `['openDirectory']` ⇒ 弹**目录**框
+     * （与 `openFile` 互斥，目录模式下 `filters` 不生效）。**老宿主会忽略 `properties`** ⇒ 拿到路径后
+     * 请自证它是不是目录（见 `skills/obox-ext-dev/references/troubleshooting.md` 第 32 节）。
+     */
+    showOpenDialog(opts?: DialogOpenOptions): Promise<DialogOpenResult>
     /** 保存对话框 → 保存路径 */
     showSaveDialog(opts?: {
       title?: string
@@ -567,10 +578,4 @@ export interface ExtensionActivationApi {
   views: {
     registerTreeProvider(viewId: string, provider: TreeViewProvider): Disposable
   }
-}
-
-/** 文件对话框过滤器 */
-export interface DialogFilter {
-  name: string
-  extensions: string[]
 }
