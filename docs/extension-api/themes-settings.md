@@ -150,9 +150,28 @@ for (const ms of [0, 300, 1000]) {
 ### 扩展设置页（双通道）
 
 1. **运行时**：`api.settings.register({ id, title, fields })`，返回的 `Disposable` 只注销自己那一页（`src/renderer/src/core/host.ts:432-437`）
-2. **manifest 声明**：`contributes.settings`，形状是**单个** `{ id, title, fields }`（与 `api.settings.register` 的参数同型，不是数组；`src/api/contributions.ts:144-145`），由 `host.ts:179` 注册
+2. **manifest 声明**：`contributes.settings`，形状是**单个** `{ id, title, fields }`（与 `api.settings.register` 的参数同型，不是数组；`src/api/contributions.ts:165-166`），由 `host.ts:179` 注册
 
-字段类型 `SettingField`（`src/api/contributions.ts:76-89`）：`key` / `label` / `type`（`text` / `number` / `boolean` / `select`）/ `default?` / `options?`（select 的 `{ value, label }[]`）/ `description?`（设置页在字段下方渲染为说明文字，`SettingsView.vue:570`）。设置值存统一设置存储（`stateStore.settings`），`api.settings.set` 立即持久化并通知（`host.ts:438-446`）；落盘是渲染进程 localStorage 的 `obox:state:v1`（Electron 下位于 userData，`src/renderer/src/core/state.ts:1-15`），**不是**可直接编辑的 JSON 文件。凡注册了设置页的扩展都列在"扩展"节点下，代码未按内置/用户过滤（`src/renderer/src/core/extensionSettings.ts:47-49`）。
+字段类型 `SettingField`（`src/api/contributions.ts:97-110`）：`key` / `label` / `type`（`text` / `number` / `boolean` / `select` / `directory` / `status`）/ `default?` / `options?`（select 的 `{ value, label }[]`）/ `description?`（设置页在字段下方渲染为说明文字，`SettingsView.vue:813`）。设置值存统一设置存储（`stateStore.settings`），`api.settings.set` 立即持久化并通知（`host.ts:438-446`）；落盘是渲染进程 localStorage 的 `obox:state:v1`（Electron 下位于 userData，`src/renderer/src/core/state.ts:1-15`），**不是**可直接编辑的 JSON 文件。凡注册了设置页的扩展都列在"扩展"节点下，代码未按内置/用户过滤（`src/renderer/src/core/extensionSettings.ts:47-49`）。
+
+#### `directory` 字段（目录选择）
+
+- **渲染**：**只读**文本框 + 「浏览…」按钮（`SettingsView.vue:769-784`）。**点输入框或按钮都弹**系统目录选择器：`window.api.dialogOpen({ title, properties: ['openDirectory'] })` → `dialog:open` IPC → `dialog.showOpenDialog`（`src/main/ext.ts:31-49` 归一、`:53-66` 调用；目录模式下 `filters` 被丢弃）。选中的**绝对路径**经 text 同一条保存通路写入（`browseDirectory`，`SettingsView.vue:325-349` → `onFieldChange` → `stateStore.setSetting`）。
+- **交互取舍（用户裁定）**：输入框是 `readonly` **且带 `@click`** —— **选目录是该字段的主要输入方式**，点输入框即弹框，路径**不能**手工输入/粘贴（`browseDirectory` 是该字段唯一的写值入口）。「浏览…」按钮保留：一是键盘可达（Tab 到按钮回车即可），二是冗余的显式入口（`:766-768`）。
+- **值的语义**：**绝对路径字符串**；空串 / `undefined` = 未选择，**默认目录由扩展自行决定**。
+- **取消与失败**：`canceled: true` **不改动**该设置项（早退在写值之前，`:339`）；`ok: false`（含老宿主不支持该能力、后端异常）在字段下方显示可见错误并 `console.error`，**不静默**（`:332-337`、`:785-790`）。
+- **宿主只负责选目录，不负责校验**：不校验目录是否存在 / 是否可写 / 是否受扩展管理，扩展侧读取该值时须自行校验。
+- **老宿主（≤ v1.0.8）**：v1.0.8 的字段渲染链到 `select` 即止且**没有兜底分支**（无 `v-else`），因此 `directory` 字段**不渲染任何控件**（label 仍在、内容为空），既不会退化成文本框也不报错。需要兼容老宿主时，扩展应自行降级为 `text`。本仓库新版宿主对**未知类型**统一按 `text` 兜底渲染并 `console.warn`（`SettingsView.vue:803-812`、`unknownTypeValue` `:384`），所以这种情况只出现在老宿主上。
+
+#### `status` 字段（只读状态展示）
+
+- **只读**：宿主**不提供任何编辑控件**——渲染链里该分支没有 `input` / `button` / `select`，也不接 `onFieldChange`（`SettingsView.vue:791-802`）。用户在设置页**无法**改动这个值，只能由扩展写。
+- **值从哪来**：只读文本就是该字段 `key` 在**统一设置存储**里的值，由扩展自己调 `api.settings.set(key, value)` 写入（`host.ts:440`）；设置里没有该键时回退 `field.default`。非字符串值按 `String(value)` 展示（写数字进度也可以）。宿主**不**为它另建存储。
+- **多行语义**：值里含 `\n`（CRLF 归一为 LF）时**按行渲染成列表**（`<ul class="status-lines">` + 每行一个 `<li>`，`SettingsView.vue:798-801`）；去首尾空行、保留中间空行；单行时渲染一行文本。
+- **空值**：值空 / 全空白（含只有换行）时渲染占位文案「（无）」（`settings.extensionsSection.noValue`，`zh.ts:149` / `en.ts:149`），字段下方不留空白。
+- **扩展写键后设置页会立即刷新**（无需重进设置页）：`api.settings.set` 与设置页读值是**同一个渲染进程里的同一个 `stateStore`**——扩展侧 `api.settings.set` = `stateStore.setSetting`（`host.ts:440`），设置页侧 `fieldValue` 读 `stateStore.getSetting`（`SettingsView.vue:298-301`）且 `onMounted` 订阅 `stateStore.onSettingsChanged` 把 `settingsRevision++` 触发重渲染（`SettingsView.vue:397-402`）；`setSetting` 在 `save()` 之后**同步**遍历订阅者（`state.ts:143-148`）。回归门禁见 `test/settings-first-paint.test.ts`。**前提（源码级）**：扩展宿主与设置页在**同一个渲染进程（主窗口）**里——宿主 `api` 由 `src/renderer/src/core/host.ts` 构建；设置页视图由内置 settings 扩展注册（`src/renderer/src/extensions/settings/index.ts`），只由主窗口的 `App.vue` 渲染。App 子窗口（`?obox-window=app`）只渲染标题栏 + 内容 iframe（`AppWindow.vue`，`src/renderer/src/main.ts:14-17`）且**不激活扩展**（`:27` 的 `activateExtensions: !isAppWindow`），因此不存在"扩展在另一个窗口写设置、设置页收不到"的路径。`storage` 事件 → `stateStore.applyExternal` 那条**整份快照替换**的通路只用于窗口间主题同步（`state.ts:159-177,207-213`）。
+- **老宿主（≤ v1.0.8）**：与 `directory` 同样断在"渲染链到 `select` 即止、无兜底分支" ⇒ `status` 字段**不渲染任何控件**（label 仍在、内容为空），既不显示状态也不报错（`type: 'status'` 从未被老宿主认识）。
+- **认识 `directory` 但尚未实现 `status` 的中间版本宿主**：这类宿主**有**未知类型兜底 ⇒ `status` 会按 `text` 渲染成一个**可编辑文本框**。值仍取自同一设置存储（首屏显示扩展写的状态是正常的），但用户可以在框里改并保存，把扩展写的状态覆盖掉。若该类宿主仍需兼容，扩展应在初始化时检测宿主是否支持或改用不带编辑控件的自绘视图。注：`directory` 与未知类型兜底都是**本仓库尚未发布的改动**，已发布的 v1.0.8 及更早两者都没有（属上一条）；也就是说 `status` 一旦随本次改动发布，就不存在"已发布但只会兜底成文本框"的宿主版本。
 
 ### 快捷键
 

@@ -30,7 +30,9 @@ const PERSISTED = {
     theme: 'theme-light.light',
     'keybinding.app.showCommands': 'Ctrl+Alt+K',
     'network.proxy': { enabled: true, host: 'my-proxy.local', port: 8080, noProxy: ['a.com'] },
-    'ext-probe.demo.mode': 'advanced'
+    'ext-probe.demo.mode': 'advanced',
+    'ext-probe.demo.dir': 'D:\\obox-data',
+    'ext-probe.demo.progress': '步骤 1\n步骤 2'
   }
 }
 
@@ -105,6 +107,36 @@ describe('设置页首屏取值 · 冷启动读持久化配置（issue #85 缺�
 
   it('扩展设置：字段读到持久化值（不是 field.default）', () => {
     expect(state.stateStore.getSetting('ext-probe.demo.mode', 'basic')).toBe('advanced')
+  })
+
+  it('扩展设置：directory 字段同样存统一设置存储（绝对路径，首屏读到持久化值）', () => {
+    // directory 的"值"就是一条绝对路径字符串，与 text 共用同一个设置存储 →
+    // 首屏取值、持久化、api.settings.get/set 全部与 text 同语义（不另造存储）
+    expect(state.stateStore.getSetting('ext-probe.demo.dir', 'C:\\obox-data')).toBe('D:\\obox-data')
+  })
+
+  it('扩展设置：status 字段的值同样存统一设置存储（含 \\n 的多行状态原样保留）', () => {
+    // status 的"值"就是扩展经 api.settings.set 写进统一设置存储的一条状态字符串；
+    // 宿主只渲染、不提供编辑控件，因此首屏取值与 text/directory 完全同语义（不另造状态存储）
+    expect(state.stateStore.getSetting('ext-probe.demo.progress')).toBe('步骤 1\n步骤 2')
+  })
+
+  it('status 的响应式来源：api.settings.set 与设置页读值落在同一个 stateStore（写后同步通知）', () => {
+    const seen: Array<string | undefined> = []
+    const off = state.stateStore.onSettingsChanged((key) => seen.push(key))
+    try {
+      // 扩展侧：api.settings.set = stateStore.setSetting（core/host.ts:440）
+      state.stateStore.setSetting('ext-probe.demo.progress', '迁移 42%\n已完成 3/8')
+    } finally {
+      off()
+    }
+    // 设置页侧：fieldValue / statusLines 读 getSetting，onMounted 订阅 onSettingsChanged 后
+    // 把 settingsRevision++ 触发重渲染（SettingsView.vue:298-301、:397-402）⇒
+    // 扩展写键的那一刻订阅者就被同步通知，即"设置页无需重进即刷新"
+    expect(seen).toEqual(['ext-probe.demo.progress'])
+    expect(state.stateStore.getSetting('ext-probe.demo.progress')).toBe('迁移 42%\n已完成 3/8')
+    // 落盘也在同一份持久层（渲染进程 localStorage 的 obox:state:v1），不是另一处主进程存储
+    expect(store[STORAGE_KEY]).toContain('迁移 42%\\n已完成 3/8')
   })
 
   it('更新：生效提供者读到持久化选择', async () => {

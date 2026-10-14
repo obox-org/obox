@@ -144,7 +144,9 @@ export default {
     extensionsSection: {
       title: '扩展',
       empty: '暂无扩展设置项',
-      select: '从左侧选择扩展以查看其设置'
+      select: '从左侧选择扩展以查看其设置',
+      browse: '浏览…',
+      noValue: '（无）'
     },
     update: {
       title: '更新',

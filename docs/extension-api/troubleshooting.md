@@ -459,6 +459,8 @@ export function uninstall(ctx) {
 1. **obox 版本旧**：宿主旧实现把 `properties` **硬编码**成 `['openFile']`（旧 `src/main/ext.ts:22-31`），IPC 入参类型里根本没有 `properties` 字段 ⇒ 你传的 `properties` 经 **Electron IPC 结构化克隆原样到达主进程**，但主进程**不读它**，永远按"选文件"构造对话框。这就是"弹错框"的全部原因——**不是**你的调用写错了。
 2. **调用写错**（少数）：`openDirectory` 与 `openFile` **互斥**。同时传两个时宿主按**目录模式**归一（只保留 `openDirectory` + 可选 `multiSelections`）；但若你只写了 `openFile` 却指望目录效果，那永远不会弹目录框。另：目录模式下 `filters` **被宿主丢弃**（Electron 不对目录应用过滤器）——别用 filters 来"约束目录"。
 
+> **`type: 'directory'` 设置字段的额外坑（老宿主上比上面更早一步就断）**：若扩展走 manifest `contributes.settings` / `api.settings.register` 的 `type: 'directory'` 字段（而不是自己调 `api.dialog.showOpenDialog`），老宿主（≤ v1.0.8）的设置页字段渲染链到 `select` 即止且**没有兜底分支** ⇒ 该字段**连控件都不渲染**（label 仍在、下方空白），用户既没机会点输入框、也没机会点「浏览…」（新宿主上这两个入口都会弹目录选择器），更拿不到任何错误提示。需要兼容老宿主时，扩展应自行降级为 `type: 'text'`（详见 `themes-settings.md` 的"`directory` 字段"）。本仓库新版宿主对未知类型统一按 `text` 兜底渲染并 `console.warn`，不会再出现"设置项凭空消失"。
+
 **确定性的自查方式（不要猜，看返回值）**：
 
 ```ts
@@ -483,3 +485,45 @@ const r = await api.dialog.showOpenDialog({ title: '选目录', properties: ['op
 **别用版本号判断能力**（重要）：`await api.env.getOboxVersion()` 拿到的是字符串，无法判定"这个版本有没有 `properties` 透传"（补丁版可能只改了这一点、预发布/自编译版本号更不可靠），而且会把"能力探测"变成"版本对比表"长期维护。**唯一可信的判定就是"调用后的实际返回"**——即"选到的到底是不是目录"。
 
 **回归防线（宿主侧）**：`test/ext-dialog.test.ts`——`normalizeDialogProperties` 的表驱动单测（不传 ⇒ `['openFile']`、`['openFile','openDirectory']` ⇒ 只 `openDirectory`、`['openDirectory','multiSelections']` ⇒ 两者都在、未知值忽略、`multiSelect` 旧字段兼容）+ 源码门禁（`src/main/ext.ts` 里**不得**再出现硬编码 `properties: ['openFile'`，且 `win`/无 `win` 两分支共用同一归一结果、目录模式丢弃 `filters`）。
+
+## 33. `type: 'status'` 的只读状态项不显示 / 显示成了可编辑文本框
+
+**症状**（两种，取决于宿主版本）：
+
+- 设置页该字段**只有一个 label，下面一片空白**：没有文本、没有报错、也没有任何控件——用户以为扩展"没做这个状态"，扩展侧也不报错；
+- 或者该字段**显示成一个可编辑文本框**：扩展写进去的状态值确实显示出来了（首屏正常），但用户可以直接改它并保存，把扩展写的状态覆盖掉——而 `status` 本该是**只读**的。
+
+**原因（都是宿主版本差异，不是扩展写错了）**：
+
+1. **obox ≤ v1.0.8**：字段渲染链到 `select` 即止、**链尾没有兜底分支**（没有 `v-else`）⇒ `type: 'status'` 属于"未知类型"，`v-if / v-else-if` 全部落空，**什么都不渲染**（label 仍在）。同一条也适用于 `type: 'directory'`（见上一条的引用块）。
+2. **认识未知类型、但还没实现 `status` 的中间版本宿主**：这类宿主**有**兜底 `v-else` ⇒ `status` 被按 `text` 语义渲染成**可编辑文本框**（可编辑、可保存，值仍取自同一设置存储）。**注意：这个中间版本从未发布**——`directory` 与新兜底分支都是本仓库尚未发布的改动；已发布的最新的 v1.0.8 及更早属第 1 种。也就是说 `status` 一旦随下一次宿主发布上线，就不存在"已发布、却只会把它兜底成文本框"的版本。
+
+**自查（不要猜，直接读宿主源码）**：字段渲染链是纯模板逻辑，用 tag 就能看清：
+
+```powershell
+# 把 v1.0.8 换成你要排查的宿主 tag / commit（例如某个自编译版本）
+git show v1.0.8:src/renderer/src/extensions/settings/SettingsView.vue |
+  Select-String 'field\.type|v-else'
+
+# 只看"独立成行"的兜底 v-else（行内的 v-else class=… 不算，别被它们误导）
+git show v1.0.8:src/renderer/src/extensions/settings/SettingsView.vue |
+  Select-String -Pattern '^\s*v-else\s*$'
+```
+
+在 v1.0.8 上，第一条命令输出里那一堆 `v-else` **全是行内形式**（`<div v-else class="config-block">`、`<kbd v-else …>` 等，属于分区链与快捷键表格，不是字段链），第二条命令**没有任何输出** ⇒ 字段链确实没有兜底。
+
+两问即可定性：
+
+1. 有没有 `field.type === 'status'` 的 `v-else-if`？有 ⇒ 只读渲染，正常。
+2. 没有的话，字段链**末尾**有没有独立的 `v-else`（不是 `v-else-if`、也不是行内 `v-else class=`）？**没有** ⇒ 整段什么都不渲染（第 1 种症状）；**有** ⇒ 会按 `text` 兜底成可编辑文本框（第 2 种症状）。
+
+**修法（两选一，建议都做）**：
+
+1. **升级 obox** 到含 `status` 的版本（宿主侧是纯加法：新类型的 `v-else-if` 分支插在 `directory` 之后、链尾兜底之前，既有类型的渲染与保存通路逐字不变）。
+2. **扩展自行降级声明**（老宿主上也不报错、不崩）：
+   - 需要兼容 ≤ v1.0.8 时，别把关键状态只放在 `status` 字段里（老宿主上它连控件都不渲染）——可以同时在扩展自己的设置页/卡片里展示同一份状态，或声明成 `type: 'text'` 并接受"用户可编辑"（`text` 在每个宿主版本上都有控件）；
+   - 状态值本身仍写**同一把 key**（`api.settings.set`），换字段类型不需要改扩展的写入侧。
+
+**正面结论：扩展写状态键后，设置页当帧刷新——不需要轮询、不需要重进设置页。** 因为写与读落在**同一个渲染进程里的同一个 `stateStore`**：`api.settings.set` = `stateStore.setSetting`（`src/renderer/src/core/host.ts:440`）→ `save()` 之后**同步**遍历变更订阅者（`src/renderer/src/core/state.ts:143-148`）→ 设置页订阅里 `settingsRevision++` 触发重渲染、渲染期经 `fieldValue` 重新读值（`SettingsView.vue:397-402`）。所以"状态不刷新"的排查方向是**宿主版本/渲染链**，不是"要不要加个定时器"（`status` 字段值本身没有轮询机制，也不需要）。
+
+**回归防线（宿主侧）**：`test/settings-view-wiring.test.ts` 钉住 `status` 分支**只读**（无 `input`/`button`/`select`/`@change`/`onFieldChange`、位于 `directory` 之后且兜底 `v-else` 之前）与**多行按行渲染**；`test/settings-first-paint.test.ts` 钉住值与 `text` 同源（同一份设置存储）以及"扩展写键 → 订阅者同步收到"的当帧刷新路径。
