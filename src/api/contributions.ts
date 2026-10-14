@@ -69,8 +69,29 @@ export interface ThemeContribution {
   tokens: Record<string, string>
 }
 
-/** 设置字段类型（扩展设置页字段） */
-export type SettingFieldType = 'text' | 'number' | 'boolean' | 'select'
+/**
+ * 设置字段类型（扩展设置页字段）。
+ *
+ * - `text` / `number` / `boolean` / `select`：基础控件（`select` 需要 `options`）。
+ * - `directory`：目录选择控件 = **只读文本框（`readonly`）+ 「浏览…」按钮**（**点输入框或按钮都弹**系统目录选择器，按钮保留作键盘可达）；路径不支持手工输入/粘贴，选目录是主要输入方式。
+ *   值的语义是**绝对路径字符串**；空串 `/ undefined` = 未选择，**由扩展自行决定默认目录**。
+ *   宿主只负责"弹出选择器 + 把选中的绝对路径写回设置"，**不校验**该目录是否存在、是否可写、
+ *   是否受扩展管理——这些约束由扩展侧在读取值时自行校验（老宿主见下）。
+ * - `status`：**只读**状态展示——宿主**不提供任何编辑控件**（无输入框、无按钮）。
+ *   展示的值就是该字段 `key` 在当前设置里的值（统一设置存储 `stateStore.settings`，
+ *   非字符串值按 `String(value)` 展示），**由扩展用 `api.settings.set(key, value)` 写入**，
+ *   宿主只负责渲染。值里含 `\n` 时按行渲染为列表（多行进度/明细）；空值渲染占位文案。
+ *   `default` 仅在设置里没有该键时作为回退展示值。
+ * - **未知类型**：宿主按 `text` 兜底渲染（可编辑、可保存）并 `console.warn`，
+ *   避免宿主类型演进时设置项"凭空消失"。
+ *
+ * 兼容性：`directory` / `status` 是本仓库**新增**类型；不认识它们的老宿主（≤ v1.0.8）在字段渲染链
+ * 末尾**没有兜底分支**（`v-if / v-else-if` 到 `select` 即止），因此该字段**不渲染任何控件**
+ * （label 仍在，控件为空）。扩展若要在老宿主上也有可用输入，需自行降级为 `text`；
+ * 对 `status`，认识它但未实现该分支的**前一版新版宿主**会走兜底 `text`（可编辑框，
+ * 值仍取自同一设置存储，用户误编辑会覆盖扩展写的状态）——见 `docs/extension-api/themes-settings.md`。
+ */
+export type SettingFieldType = 'text' | 'number' | 'boolean' | 'select' | 'directory' | 'status'
 
 /** 设置字段定义（api.settings.register 或 manifest 声明） */
 export interface SettingField {

@@ -15,6 +15,7 @@ import { extensionSettingsStore } from '../../core/extensionSettings'
 import { host } from '../../core/host'
 import { LOCALES, setLocale, type LocaleCode } from '../../i18n'
 import type { RegisteredSettingsPage } from '../../core/extensionSettings'
+import type { SettingField } from '../../../../api/contributions'
 
 const { t } = useI18n()
 
@@ -301,6 +302,94 @@ function fieldValue(_page: RegisteredSettingsPage, key: string): unknown {
 
 function onFieldChange(_page: RegisteredSettingsPage, key: string, value: unknown): void {
   stateStore.setSetting(key, value)
+}
+
+/** 字段的稳定标识（页 id + 字段 key）：directory 的错误提示与未知类型警告都按它去重/记账 */
+function fieldSlot(page: RegisteredSettingsPage, key: string): string {
+  return `${page.id}::${key}`
+}
+
+// ---- directory 字段：目录选择 ----
+
+/** 目录选择失败信息（按 fieldSlot 记账，渲染在该字段下方；失败必须可见，不能静默） */
+const directoryErrors = ref<Record<string, string>>({})
+
+/**
+ * 点输入框或「浏览…」：弹系统**目录**选择器，选中后把**绝对路径**写回设置；取消不改动。
+ *
+ * 走宿主已具备的能力：`window.api.dialogOpen`（preload）→ `dialog:open` IPC →
+ * `dialog.showOpenDialog({ properties: ['openDirectory'] })`（`src/main/ext.ts:31-49` 归一、
+ * `:53-66` 调用；目录模式下 filters 被丢弃）。**不是**另造保存通路——写值仍走 text 的
+ * `onFieldChange` → `stateStore.setSetting`（输入框 `readonly`，这里是唯一写值入口）。
+ */
+async function browseDirectory(page: RegisteredSettingsPage, field: SettingField): Promise<void> {
+  const slot = fieldSlot(page, field.key)
+  try {
+    const result = await window.api.dialogOpen({
+      title: field.label,
+      properties: ['openDirectory']
+    })
+    if (!result.ok) {
+      const message = result.error ?? '打开目录选择器失败'
+      directoryErrors.value = { ...directoryErrors.value, [slot]: message }
+      console.error('[settings] 打开目录选择器失败：', message)
+      return
+    }
+    // 取消：不得改动设置项（尤其不能写空串）
+    if (result.canceled) return
+    const picked = result.filePaths?.[0]
+    if (!picked) return
+    directoryErrors.value = { ...directoryErrors.value, [slot]: '' }
+    onFieldChange(page, field.key, picked)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    directoryErrors.value = { ...directoryErrors.value, [slot]: message }
+    console.error('[settings] 打开目录选择器异常：', err)
+  }
+}
+
+// ---- status 字段：只读状态展示 ----
+
+/**
+ * `status` 字段的只读文本行。值 = 该字段 `key` 在**统一设置存储**里的值，由扩展经
+ * `api.settings.set(key, value)` 写入（`host.ts:440`），宿主只渲染、**不提供任何编辑控件**。
+ *
+ * - 非字符串值按 `String(value)` 展示（扩展写数字进度也算状态）；
+ * - 设置里没有该键时回退 `field.default`；
+ * - 值含 `\n`（CRLF 归一为 LF）时切成多行，供模板按行渲染成列表；
+ * - 值空 / 全空白（含只有换行）时回落成占位文案——字段下方不能一片空白看不出状态。
+ *
+ * 取值仍走 `fieldValue`，因此与 text/number 等字段**同一条响应式路径**
+ * （见下方 `onMounted` 的 `stateStore.onSettingsChanged` 订阅）。
+ */
+function statusLines(page: RegisteredSettingsPage, field: SettingField): string[] {
+  const raw = fieldValue(page, field.key) ?? field.default
+  const text = typeof raw === 'string' ? raw : raw === undefined || raw === null ? '' : String(raw)
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
+  // 去掉首尾空行（多行文本常见的尾随换行），保留中间空行
+  while (lines.length > 0 && !lines[0].trim()) lines.shift()
+  while (lines.length > 0 && !lines[lines.length - 1].trim()) lines.pop()
+  return lines.length > 0 ? lines : [t('settings.extensionsSection.noValue')]
+}
+
+// ---- 未知字段类型：回落成文本框 ----
+
+/** 已警告过的字段（按 fieldSlot 去重；渲染期调用，不能每次渲染都刷屏） */
+const warnedUnknownFieldTypes = new Set<string>()
+
+/**
+ * 未知字段类型的兜底取值：**按 text 语义渲染**（可编辑、经同一条 `onFieldChange` 保存），
+ * 并 `console.warn` 一条说明，避免宿主类型演进时该设置项"凭空消失"且无迹可循。
+ */
+function unknownTypeValue(page: RegisteredSettingsPage, field: SettingField): string {
+  const slot = fieldSlot(page, field.key)
+  if (!warnedUnknownFieldTypes.has(slot)) {
+    warnedUnknownFieldTypes.add(slot)
+    console.warn(
+      `[settings] 未知设置字段类型 "${String(field.type)}"（${slot}）已回落为文本框渲染；请升级宿主或修正扩展声明`
+    )
+  }
+  return (fieldValue(page, field.key) as string) ?? (field.default as string) ?? ''
 }
 
 let offSettingsChanged: (() => void) | undefined
@@ -674,6 +763,53 @@ onUnmounted(() => {
                   {{ opt.label }}
                 </option>
               </select>
+              <!--
+                directory：**点输入框或按钮都弹框**（用户裁定：选目录是主要输入方式）——输入框 `readonly` + `@click`，值只能由选择器写入；「浏览…」按钮保留（键盘可达、冗余）。代价：路径不能手工输入/粘贴。
+              -->
+              <div v-else-if="field.type === 'directory'" class="directory-input">
+                <input
+                  class="text-input"
+                  readonly
+                  :value="
+                    (fieldValue(page, field.key) as string) ?? (field.default as string) ?? ''
+                  "
+                  @click="browseDirectory(page, field)"
+                  @change="
+                    onFieldChange(page, field.key, ($event.target as HTMLInputElement).value)
+                  "
+                />
+                <button class="btn" type="button" @click="browseDirectory(page, field)">
+                  {{ t('settings.extensionsSection.browse') }}
+                </button>
+              </div>
+              <p
+                v-if="field.type === 'directory' && directoryErrors[fieldSlot(page, field.key)]"
+                class="config-error"
+              >
+                {{ directoryErrors[fieldSlot(page, field.key)] }}
+              </p>
+              <!--
+                status：**只读**状态展示 —— 无输入框、无按钮、无 @change，宿主不接受用户输入。
+                值 = 该字段 key 在统一设置存储里的值（由扩展经 api.settings.set 写入，host.ts:440），
+                经 fieldValue → stateStore.getSetting 取值（与其它字段同一条响应式路径）。
+                含 \n 的值按行渲染成列表（多行进度/明细）；空值渲染占位文案（statusLines）。
+              -->
+              <div v-else-if="field.type === 'status'" class="config-value status-value">
+                <ul v-if="statusLines(page, field).length > 1" class="status-lines">
+                  <li v-for="(line, idx) in statusLines(page, field)" :key="idx">{{ line }}</li>
+                </ul>
+                <span v-else>{{ statusLines(page, field)[0] }}</span>
+              </div>
+              <!--
+                兜底：未知类型回落为文本框（可编辑、可保存，经同一条 onFieldChange 落库），
+                并由 unknownTypeValue 打一条 console.warn —— 宿主新增类型时不至于"设置项凭空消失"。
+              -->
+              <input
+                v-else
+                class="text-input"
+                :value="unknownTypeValue(page, field)"
+                @change="onFieldChange(page, field.key, ($event.target as HTMLInputElement).value)"
+              />
               <p v-if="field.description" class="config-desc">{{ field.description }}</p>
             </div>
           </div>
@@ -756,6 +892,22 @@ onUnmounted(() => {
 .config-row input[type='checkbox'] {
   accent-color: var(--accent, #007acc);
 }
+/* directory 字段：文本框占满剩余宽度，「浏览…」按钮跟在右侧 */
+.config-row .directory-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.config-row .directory-input .text-input {
+  flex: 1;
+  min-width: 0;
+  /* 只读输入框 = 点击弹框的触发器，给出手型光标提示可点 */
+  cursor: pointer;
+}
+.config-row .directory-input .btn {
+  margin-right: 0;
+  flex-shrink: 0;
+}
 .config-desc {
   font-size: 12px;
   color: var(--fg-dim, #6e6e6e);
@@ -779,6 +931,15 @@ onUnmounted(() => {
 .config-value {
   color: var(--fg-bright, #e8e8e8);
   font-family: ui-monospace, monospace;
+}
+/* status 字段：只读状态展示（无输入框/按钮），沿用 .config-value 的配色，不自造色值 */
+.config-row .status-value {
+  white-space: pre-wrap;
+}
+/* 多行状态按行渲染成列表（每行一条进度/明细），行间距紧凑以免撑高设置页 */
+.config-row .status-lines {
+  margin: 0;
+  padding-left: 18px;
 }
 .actions-row {
   display: flex;

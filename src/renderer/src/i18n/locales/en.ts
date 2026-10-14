@@ -144,7 +144,9 @@ export default {
     extensionsSection: {
       title: 'Extensions',
       empty: 'No extension settings',
-      select: 'Select an extension from the tree to view its settings'
+      select: 'Select an extension from the tree to view its settings',
+      browse: 'Browse…',
+      noValue: '(none)'
     },
     update: {
       title: 'Update',

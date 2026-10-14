@@ -264,16 +264,48 @@ const page = api.settings.register({
       type: 'select',
       options: [{ value: 'a', label: 'A' }],
       default: 'a'
+    },
+    {
+      key: 'my-ext.dataDir',
+      label: '数据根目录',
+      // directory：值是**绝对路径**；点输入框或「浏览…」都弹系统目录选择器（输入框只读）
+      // 空串 = 未选择（默认目录由扩展自行决定）
+      type: 'directory',
+      default: ''
+    },
+    {
+      key: 'my-ext.migrationStatus',
+      label: '浏览器数据迁移进度',
+      // status：**只读**状态展示（无输入框/按钮），值由扩展经 api.settings.set 写入；
+      // 值里含 \n 时按行渲染成列表，空值显示占位「（无）」
+      type: 'status',
+      default: ''
     }
   ]
 })
 // 读写设置值（统一设置存储，key 建议含扩展前缀；set 立即持久化并通知）
 const v = api.settings.get('my-ext.interval', 30)
 api.settings.set('my-ext.interval', 60)
+// status 字段的值就是扩展写进来的这条设置：宿主只渲染，不提供编辑控件
+api.settings.set('my-ext.migrationStatus', '正在迁移：书签 3/8\n已完成：历史记录')
 page.dispose() // 注销设置页
 ```
 
-设置字段类型：`text` / `number` / `boolean` / `select`；可选 `default` / `options` / `description`（`src/api/contributions.ts:76-89`）。
+设置字段类型：`text` / `number` / `boolean` / `select` / `directory` / `status`；可选 `default` / `options` / `description`（`src/api/contributions.ts:97-110`）。扩展可用 `api.settings.set` 写状态键，供设置页 `status` 字段**只读**展示（宿主不弹任何编辑控件）。
+
+`directory`（目录选择）的契约：
+
+- **值的语义**：**绝对路径字符串**；空串 / 未设置 = 未选择，**默认目录由扩展自行决定**（宿主不填默认值）。
+- **交互**：设置页渲染为**只读文本框 + 「浏览…」按钮**，**点输入框或按钮都弹**系统目录选择器（`properties: ['openDirectory']`），选中后把绝对路径写回该设置项；**取消不改动**；打开失败（`ok: false`）会在字段下方显示错误。输入框是 `readonly`：**选目录是主要输入方式，路径不能手工输入/粘贴**（「浏览…」按钮保留，用于键盘可达 + 显式入口）。
+- **宿主只负责"选目录"**：不校验该目录是否存在 / 是否可写 / 是否受扩展管理，扩展侧读取该值时须**自行校验**。
+- **老宿主（≤ v1.0.8）**：这些版本的设置字段渲染链没有兜底分支（`v-if / v-else-if` 到 `select` 即止），`directory` 字段**不会渲染出任何控件**（label 仍在、内容为空）。需要老宿主上也可用，扩展应自行降级为 `text`。
+
+`status`（只读状态展示）的契约：
+
+- **只读**：宿主渲染成纯文本（无 `input` / `button` / `select`，也不接保存通路），用户**不能**在设置页改动它；值由扩展用 `api.settings.set(key, value)` 写入统一设置存储（`host.ts:440`），宿主只负责显示。
+- **多行**：值里含 `\n` 时按行渲染为列表（首尾空行忽略、中间空行保留）；空值 / 全空白显示占位「（无）」。非字符串值按 `String(value)` 展示。
+- **写后设置页立即刷新**：扩展写键与设置页读值落在**同一渲染进程的同一个 `stateStore`**（`api.settings.set` = `stateStore.setSetting`），`setSetting` 同步通知订阅者，设置页据此重渲染（`SettingsView.vue:298-301,397-402`、`core/state.ts:143-148`）——**不需要重进设置页**。
+- **老宿主（≤ v1.0.8）**：与 `directory` 相同，渲染链无兜底分支 ⇒ `status` 字段不渲染任何控件（label 仍在、内容为空）。**认识 `directory` 但没有 `status` 分支的中间版本宿主**会把它按未知类型兜底成**可编辑文本框**（值仍取自同一设置存储，但用户误编辑会覆盖扩展写的状态）；需要兼容这类宿主时请自行降级或自绘视图。
 
 变更监听（≈VS Code `onDidChangeConfiguration`）：
 
