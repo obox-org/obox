@@ -379,14 +379,20 @@ api.update.onEvent((e) => {
 ```ts
 // 读取当前代理配置（设置-网络页；obox 与内置扩展自动使用）
 const p = api.proxy.get()
-// { enabled, host, port?, username?, password?, ignoreSSL?, noProxy? }
+// { enabled, url, ignoreSSL?, noProxy? }   ← 1.0.12 起：**单一代理 URL**
+// 例：'http://127.0.0.1:7890' / 'https://proxy:8443' / 'socks5://127.0.0.1:1080' /
+//     'http://user:pass@host:1080'；空串 = 直连
 ```
 
 obox 主进程的网络请求（更新下载等）自动使用该代理；内置扩展经 `api.proxy.get()` 读取并应用；非内置扩展可选使用。
 
-> **代理如何生效**（`src/main/proxy.ts:44-78`）：主进程在**发请求的 session** 上调用 `setProxy`（`proxyRules` + `noProxy` → `proxyBypassRules`；未启用/无 host → `mode:'direct'`）与 `setCertificateVerifyProc`（`ignoreSSL` → 放行全部证书），同一份配置同时应用到扩展联网 session（`obox-net`）与 electron-updater session；配置指纹未变则不重复调用。因此代理与 `ignoreSSL` **真实作用于请求**，且不会互相覆盖。
+> **形态迁移（1.0.12 起，用户裁定"单一 URL"）**：设置里存的是一个 URL（`http://127.0.0.1:7890`、`socks5://…`、可含 `user:pass@`），不再是 host/port/username/password 四栏。**旧值自动迁移**：读到 1.0.11 及更早的 `{enabled,host,port,username,password,...}` 时会拼成 `http://[user:pass@]host[:port]`，设置不丢。迁移实现在 `src/shared/proxyConfig.ts`；URL 解析与规则串派生在 `src/main/proxy.ts:68,128`。
 >
-> **不要**试图用环境变量配代理：写 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` / `NODE_TLS_REJECT_UNAUTHORIZED` **对两条链路都无效**——Node 的 `fetch`（undici）与 Electron `net.request`（Chromium）都不读这些变量（早期实现正是如此，实测把 `HTTP_PROXY` 指向不可达代理仍直连成功，`src/main/proxy.ts:1-7`）。
+> **代理如何生效**（`src/main/proxy.ts:194-227`）：主进程在**发请求的 session** 上调用 `setProxy`（URL → `proxyRules`，`noProxy` → `proxyBypassRules`；未启用/空 URL → `mode:'direct'`）与 `setCertificateVerifyProc`（`ignoreSSL` → 放行全部证书），同一份配置同时应用到扩展联网 session（`obox-net`）与 electron-updater session；配置指纹未变则不重复调用。因此代理与 `ignoreSSL` **真实作用于请求**，且不会互相覆盖。
+>
+> **账号密码进不了规则串**（Chromium 的 `proxyRules` 语法没有 userinfo 位）：认证凭据只从 URL 的 `user:pass@` 解析出来，走 session 的 **login 事件**回填——更新下载经 `autoUpdater.on('login')`（`src/main/updater.ts:121-130`）生效；`api.net.fetch` **不支持逐请求凭据**（见 `docs/update-and-release-verification.md` 第 2 节）。
+>
+> **不要**试图用环境变量配代理：写 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` / `NODE_TLS_REJECT_UNAUTHORIZED` **对两条链路都无效**——Node 的 `fetch`（undici）与 Electron `net.request`（Chromium）都不读这些变量（早期实现正是如此，实测把 `HTTP_PROXY` 指向不可达代理仍直连成功，`src/main/proxy.ts:1-23`）。
 
 ### timer（全局定时器，主进程精确计时）
 

@@ -5,6 +5,9 @@
  * 实测症状（复核 obox-updater 时发现）：设置 → 更新 → 点「检查更新」后按钮**永久停在「检查中…」**，
  * 主进程日志只有一行 `Uncaught (in promise) Error: An object could not be cloned.`；
  * 同一个 IPC 用**字面量纯对象**调用则正常返回 `{ok:true}`。
+ *
+ * 形态（1.0.12 起）：单一代理 URL `{ enabled, url, ignoreSSL?, noProxy? }`；旧形态
+ * （host/port/username/password）由 `normalizeProxyConfig` 迁移（矩阵见 `proxy-url.test.ts`）。
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -15,10 +18,7 @@ import { emptyProxyConfig, plainProxyConfig } from '../src/renderer/src/core/pla
 test('plainProxyConfig：响应式 Proxy 输入可被结构化克隆（本 bug 的回归判据）', () => {
   const store = reactive({
     enabled: true,
-    host: '127.0.0.1',
-    port: 8080,
-    username: 'u',
-    password: 'p',
+    url: 'http://u:p@127.0.0.1:8080',
     ignoreSSL: true,
     noProxy: ['localhost', '127.0.0.1']
   })
@@ -28,27 +28,44 @@ test('plainProxyConfig：响应式 Proxy 输入可被结构化克隆（本 bug �
   assert.doesNotThrow(() => structuredClone(plain))
   assert.deepEqual(structuredClone(plain), {
     enabled: true,
-    host: '127.0.0.1',
-    port: 8080,
-    username: 'u',
-    password: 'p',
+    url: 'http://u:p@127.0.0.1:8080',
     ignoreSSL: true,
     noProxy: ['localhost', '127.0.0.1']
   })
 })
 
 test('plainProxyConfig：字段收敛为原始类型，noProxy 是新数组（不与设置共享引用）', () => {
-  const src = reactive({ enabled: 1, host: 5, port: 'x', noProxy: [1, 2] })
+  const src = reactive({ enabled: 1, url: 5, noProxy: [1, 2] })
   const plain = plainProxyConfig(src)
   assert.equal(plain.enabled, false, '非 true 一律 false')
-  assert.equal(plain.host, '', '非字符串一律空串')
-  assert.equal(plain.port, undefined, '非有限数字不写入 port')
+  assert.equal(plain.url, '', '非字符串的 url 一律空串（也不会把垃圾当成旧形态去迁移）')
   assert.deepEqual(plain.noProxy, ['1', '2'], '元素转字符串')
   assert.notEqual(plain.noProxy, src.noProxy, 'noProxy 必须是新数组')
 
   const empty = plainProxyConfig(undefined)
-  assert.deepEqual(empty, { enabled: false, host: '', noProxy: [] })
+  assert.deepEqual(empty, { enabled: false, url: '', noProxy: [] })
   assert.notEqual(emptyProxyConfig(), emptyProxyConfig(), '默认值每次返回新对象')
+  assert.deepEqual(emptyProxyConfig(), { enabled: false, url: '', noProxy: [] })
+})
+
+test('plainProxyConfig：设置里还是旧形态（≤1.0.11）时迁移成 URL，设置不丢', () => {
+  const legacy = reactive({
+    enabled: true,
+    host: 'my-proxy.local',
+    port: 8080,
+    username: 'u',
+    password: 'p',
+    ignoreSSL: true,
+    noProxy: ['a.com']
+  })
+  const plain = plainProxyConfig(legacy)
+  assert.doesNotThrow(() => structuredClone(plain))
+  assert.deepEqual(plain, {
+    enabled: true,
+    url: 'http://u:p@my-proxy.local:8080',
+    ignoreSSL: true,
+    noProxy: ['a.com']
+  })
 })
 
 test('源码门禁：把代理设置送入 IPC / 跨扩展边界的地方必须过 plainProxyConfig', () => {

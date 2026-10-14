@@ -152,21 +152,48 @@ export type InstallOixErrorCode =
 export type InstallOixOutcome =
   { ok: true; result: InstallOixResult } | { ok: false; code: InstallOixErrorCode; error: string }
 
-/** 代理配置（设置-网络页，VS Code 风格） */
+/**
+ * 代理配置（设置-网络页）。
+ *
+ * **形态（1.0.12 起，用户裁定 A 方案）**：主输入是**一个代理 URL**
+ * —— `http://127.0.0.1:7890`、`https://proxy:8443`、`socks5://127.0.0.1:1080`、
+ * `http://user:pass@host:1080`；空串 = 直连。两个附加项保留：`noProxy`（排除列表）与
+ * `ignoreSSL`（忽略证书校验）。解析与 Chromium 规则串派生的**唯一实现**在 `src/main/proxy.ts`。
+ */
 export interface ProxyConfig {
   /** 是否启用代理 */
   enabled: boolean
-  /** 代理 host（如 127.0.0.1） */
-  host: string
-  /** 代理端口 */
-  port?: number
-  /** 用户名（可选） */
-  username?: string
-  /** 密码（可选） */
-  password?: string
+  /** 代理 URL（含协议，可含 `user:pass@`；空串 = 直连） */
+  url: string
   /** 是否忽略 SSL 证书校验 */
   ignoreSSL?: boolean
   /** noProxy 排除列表（host 或域名，逗号分隔的数组） */
+  noProxy?: string[]
+}
+
+/**
+ * **旧形态**代理配置（1.0.11 及更早的持久化值），**只用于迁移读取**。
+ *
+ * 迁移语义：`{enabled,host,port?,username?,password?,ignoreSSL?,noProxy?}`
+ * → `http://[user:pass@]host[:port]`（协议默认 `http`；用户名/密码做百分号编码；
+ * 只有密码没有用户名时不迁移凭据——Chromium 的 login 事件必须有用户名）。
+ * 唯一的迁移实现是 `legacyProxyToUrl()`（`src/shared/proxyConfig.ts`）：设置页首屏读值时调用，
+ * 主进程 `applyProxyToSession()` 也用它容忍旧值从别处流入。**新代码不要构造、也不要持久化它。**
+ */
+export interface LegacyProxyConfig {
+  /** 是否启用代理 */
+  enabled: boolean
+  /** 代理 host（旧值没有协议前缀，如 127.0.0.1） */
+  host: string
+  /** 代理端口（缺省时不写进 URL，由协议缺省端口决定） */
+  port?: number
+  /** 用户名（旧值，迁移进 URL 的 userinfo） */
+  username?: string
+  /** 密码（旧值，迁移进 URL 的 userinfo） */
+  password?: string
+  /** 是否忽略 SSL 证书校验（迁移后语义不变） */
+  ignoreSSL?: boolean
+  /** noProxy 排除列表（迁移后语义不变） */
   noProxy?: string[]
 }
 

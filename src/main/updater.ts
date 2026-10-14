@@ -2,7 +2,7 @@
  * 主进程更新服务：基于 electron-updater（nsis），经 IPC 暴露给渲染进程。
  * - 更新源由"更新提供者扩展"决定（设置-更新选择），宿主不内置默认源
  * - 代理 / 忽略 SSL 在 **session 层**应用（见 proxy.ts，对 electron-updater 的 net.request 真正生效）；
- *   代理认证经 autoUpdater 的 `login` 事件回填设置-网络里的账号密码
+ *   代理认证经 autoUpdater 的 `login` 事件回填设置-网络里**代理 URL 的 `user:pass@`**
  * - 事件（检查结果/下载进度/下载完成）经 IPC 转发渲染进程
  */
 import { app, ipcMain, shell } from 'electron'
@@ -14,7 +14,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { join } from 'node:path'
 import type { ProxyConfig } from '../shared/types'
-import { applyProxyToSession, currentProxy, updaterSession } from './proxy'
+import { applyProxyToSession, currentProxyCredentials, updaterSession } from './proxy'
 import { buildAssetUrl, parseUpdateFeed, pickArtifact } from './updateFeed'
 
 /** 更新事件（主进程 → 渲染进程） */
@@ -119,12 +119,13 @@ function ensureInit(): void {
   autoUpdater.autoInstallOnAppQuit = true
 
   // 代理认证：electron-updater 把代理/服务器的 401 作为 'login' 事件抛出，
-  // 用设置-网络里的账号密码回填（否则认证代理下的检查/下载会失败）
+  // 用设置-网络里**代理 URL 的 `user:pass@`** 回填（否则认证代理下的检查/下载会失败）。
+  // 凭据不能进 Chromium 规则串，只能在这里给；见 proxy.ts 文件头。
   autoUpdater.on('login', (_authInfo, callback) => {
-    const p = currentProxy()
+    const cred = currentProxyCredentials()
     // 类型上 callback 要求两个参数；Electron 语义是"不带参数调用 = 取消认证"（无凭据时不重试）
     const respond = callback as (username?: string, password?: string) => void
-    if (p?.username) respond(p.username, p.password ?? '')
+    if (cred) respond(cred.username, cred.password)
     else respond()
   })
 

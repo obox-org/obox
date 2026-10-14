@@ -14,5 +14,7 @@
 - **更新源解析语义收紧**：`resolveFeed(repo)` 不再"按创建时间取最新 release"，改为取**第一个「非 draft、非预发布、且资产含 `latest.yml`」**的正式 release（避免 latest 标记/创建顺序指向未完成编译或预发布的 release）；无可用项时返回 `ok:false`，由扩展回落 `releases/latest/download/`。
 - **CI 产物**：Windows 下更新元数据只有单一 `latest.yml`（electron-builder 不生成 `latest-arm64.yml`，arm64 安装包并入同一 files），另上传 `*.blockmap` 供差分更新。
 - **强制重装/降级走独立通道**（S3）：electron-updater 在 `allowDowngrade = false` 且远端版本与本地**相等**时按 semver 判"无更新"，因此**同版本重装与降级无法经它完成**。宿主新增 `api.update.install({ force: true, feedUrl })`：直接读更新源的 `latest.yml` → 按本机架构挑安装包 → 流式下载 → 校验 sha512 → 启动安装向导（应用不退出，用户完成安装）。该通道与 electron-updater 的检查/下载链路并行存在；元数据不可读、HTTP 失败、sha512 不匹配等错误一律**不启动安装器**（不匹配的下载文件会被删除）。
+- **代理配置改为单一 URL**（1.0.12，用户裁定 A 方案）：设置-网络的主输入由 `host/port/username/password` 四栏改为**一个代理 URL**（`http://` / `https://` / `socks4://` / `socks5://`，可含 `user:pass@`，空串 = 直连），保留 `noProxy` 排除列表与 `ignoreSSL`。解析与 Chromium 规则串派生（http(s) → `http=h:p;https=h:p`；socks → `socks=` / `socks5=`）的唯一实现在 `src/main/proxy.ts`；**旧形态一次性迁移**由 `src/shared/proxyConfig.ts` 的 `legacyProxyToUrl()` 提供（主进程与渲染层共用，不复制解析逻辑，主进程也容忍旧值流入）。凭据仍**不能**进规则串（Chromium 的 `proxyRules` 语法没有 userinfo 位），继续经 login 事件回填。
+- **换代理后关闭既有连接**（1.0.12，实测发现的缺陷）：Chromium 会复用连接池里已建立的连接，导致"刚开启代理"期间已被池化的直连继续被使用。实测：同一进程内把代理切到打不通的 `http://127.0.0.1:9`，更新源解析**照样成功**；而**重启进程后**同一配置立刻返回 `net::ERR_PROXY_CONNECTION_FAILED`（这同时反向证明**代理确实作用于更新链路**：`UPDATER_PARTITION='electron-updater'` 与 electron-updater 内部 `NET_SESSION_NAME` 同名）。现于 `setProxy` 之后调用 `closeAllConnections()`，使代理立即生效并避免流量泄漏到直连。
 
 Status: accepted

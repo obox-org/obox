@@ -1,5 +1,5 @@
 /**
- * 把「网络代理」设置转成**结构化克隆安全**的纯对象。
+ * 把「网络代理」设置转成**结构化克隆安全**的纯对象（并顺带完成旧值 → URL 的迁移）。
  *
  * 为什么必须有它：`stateStore` 的 state 是 `reactive(...)`，于是
  * `stateStore.getSetting('network.proxy')` 返回的是 **Proxy**，且其嵌套的 `noProxy` 数组**也是**
@@ -14,31 +14,24 @@
  * 同类路径一并受影响：`api.net.fetch`（把该设置直接当第二个参数传给 IPC）与
  * `api.update.check/download/install`（`buildUpdateApi` 的 `proxy()`）。
  *
- * 因此这里**显式构造**新对象：只取已知字段、`noProxy` 复制成新数组、其余字段各自收敛为原始类型
- * （同时挡掉扩展/界面把奇怪类型写进设置的情况）。任何「把代理设置送进 IPC 或跨扩展边界」的地方
- * 都必须先过这个函数。
+ * 归一化与旧形态迁移的**唯一实现**在 `src/shared/proxyConfig.ts`（这里不复制一份解析/迁移逻辑）：
+ * `normalizeProxyConfig()` 每次返回新对象 + 新数组、字段各自收敛为原始类型，并把旧形态
+ * （`{enabled,host,port,username,password,...}`，≤1.0.11 的持久化值）拼成 `http://[user:pass@]host[:port]`。
+ * 任何「把代理设置送进 IPC 或跨扩展边界」的地方都必须先过这个函数。
  */
 import type { ProxyConfig } from '../../../shared/types'
+import { normalizeProxyConfig, type ProxyConfigInput } from '../../../shared/proxyConfig'
 
 /** 空的默认代理配置（每次返回新对象，避免调用方共享同一份可变引用） */
 export function emptyProxyConfig(): ProxyConfig {
-  return { enabled: false, host: '', noProxy: [] }
+  return { enabled: false, url: '', noProxy: [] }
 }
 
 /**
- * 归一化为纯对象。接受 `undefined` / `null` / 响应式 Proxy / 部分字段的对象。
+ * 归一化为纯对象。接受 `undefined` / `null` / 响应式 Proxy / 部分字段 / **旧形态**的对象
+ * （旧形态会被迁移成 URL，见 `src/shared/proxyConfig.ts`）。
  * 返回对象的**所有字段值都是原始类型或新数组**，可安全结构化克隆。
  */
-export function plainProxyConfig(value?: Partial<ProxyConfig> | null): ProxyConfig {
-  const p: Partial<ProxyConfig> = value ?? {}
-  const out: ProxyConfig = {
-    enabled: p.enabled === true,
-    host: typeof p.host === 'string' ? p.host : '',
-    noProxy: Array.isArray(p.noProxy) ? p.noProxy.map((x) => String(x)) : []
-  }
-  if (typeof p.port === 'number' && Number.isFinite(p.port)) out.port = p.port
-  if (typeof p.username === 'string' && p.username) out.username = p.username
-  if (typeof p.password === 'string' && p.password) out.password = p.password
-  if (typeof p.ignoreSSL === 'boolean') out.ignoreSSL = p.ignoreSSL
-  return out
+export function plainProxyConfig(value?: ProxyConfigInput): ProxyConfig {
+  return normalizeProxyConfig(value)
 }

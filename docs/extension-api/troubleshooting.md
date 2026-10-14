@@ -202,14 +202,16 @@ export function uninstall(ctx) {
 
 **症状**：设置-网络里填了代理并启用，但 `api.net.fetch` 与更新检查/下载看起来仍**直连**（代理服务器上没有请求日志；或内外网混合环境下请求照旧成功/照旧失败）。
 
+**先看地址写法**（1.0.12 起设置-网络只有一个**代理地址 URL** 输入框，见下）：需要带协议的完整地址（`http://127.0.0.1:7890`、`https://proxy:8443`、`socks5://127.0.0.1:1080`，可含 `user:pass@`），空串 = 直连。地址非法（缺协议、协议不支持、带路径、端口越界）时宿主**回退直连**并在主进程日志写一行 `[proxy] 代理地址无法解析：…`——查日志即可确认。旧配置（≤1.0.11 的 host/port/用户名/密码）会在读取时自动迁移成 URL，不需要重填。
+
 **原因**（宿主早期实现缺陷，已修复）：代理原先靠**环境变量**（`HTTP_PROXY`/`HTTPS_PROXY`/`NODE_TLS_REJECT_UNAUTHORIZED`）应用，但 Node 的全局 `fetch`（undici）与 Electron `net.request`（Chromium）**都不读这些变量**——实测把 `HTTP_PROXY` 指向不可达代理，`fetch` 仍直连成功。`ignoreSSL` 同理无效，且 `NODE_TLS_REJECT_UNAUTHORIZED=0` 会**全局**关闭证书校验（含更新下载），风险面过大。
 
-**修复后机制**：宿主在请求真正经过的 session 上应用配置——
+**修复后机制**：宿主在请求真正经过的 session 上应用配置（`src/main/proxy.ts`）——
 
 - 扩展联网：专用 session `obox-net` + `setProxy` / `setCertificateVerifyProc`
-- 更新下载：electron-updater 自己的 session（`electron-updater`）+ 同一套应用逻辑；代理认证经 `autoUpdater.on('login')` 回填设置里的账号密码
+- 更新下载：electron-updater 自己的 session（`electron-updater`）+ 同一套应用逻辑；代理认证经 `autoUpdater.on('login')` 回填**代理 URL 里 `user:pass@` 的账号密码**（Chromium 的规则串不能携带凭据）
 
-**扩展侧注意事项**：不要自己读写代理环境变量——用 `api.proxy.get()` 读取配置，联网统一走 `api.net.fetch`（宿主自动应用）；`ignoreSSL` 现只作用于上述 session，不再是进程级全局开关。
+**扩展侧注意事项**：不要自己读写代理环境变量——用 `api.proxy.get()` 读取配置（`{ enabled, url, ignoreSSL?, noProxy? }`），联网统一走 `api.net.fetch`（宿主自动应用）；`ignoreSSL` 现只作用于上述 session，不再是进程级全局开关。
 
 ## 21. 安装 .oix 失败：怎么判断是包的问题还是路径的问题
 

@@ -172,10 +172,10 @@ export default {
       proxyDesc:
         'obox and builtin extensions use this proxy; non-builtin extensions may opt in (api.proxy).',
       enabled: 'Enable proxy',
-      host: 'Host',
-      port: 'Port',
-      username: 'Username',
-      password: 'Password',
+      url: 'Proxy URL',
+      urlPlaceholder: 'http://127.0.0.1:7890',
+      urlHint:
+        'Supports http / https / socks4 / socks5; credentials may be embedded in the URL (http://user:pass@host:8080); leave empty for a direct connection.',
       ignoreSSL: 'Ignore SSL certificate validation',
       noProxy: 'No-proxy list (one per line, e.g. localhost, 127.0.0.1)'
     },

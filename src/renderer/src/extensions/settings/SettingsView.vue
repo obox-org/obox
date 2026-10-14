@@ -203,12 +203,28 @@ onUnmounted(() => offUpdate?.())
 
 // ---- 网络（代理） ----
 import type { ProxyConfig } from '../../core/types'
-import type { AutoStartState, CloseBehavior } from '../../../../shared/types'
-const DEFAULT_PROXY: ProxyConfig = { enabled: false, host: '', noProxy: [] }
+import type { AutoStartState, CloseBehavior, LegacyProxyConfig } from '../../../../shared/types'
+import { normalizeProxyConfig } from '../../../../shared/proxyConfig'
+/** 表单默认值（新形态：单一代理 URL） */
+const DEFAULT_PROXY: ProxyConfig = { enabled: false, url: '', noProxy: [] }
 
-/** `localStorage['obox:state:v1'].settings['network.proxy']` 的快照或空配置 */
+/**
+ * `localStorage['obox:state:v1'].settings['network.proxy']` 的快照或空配置。
+ *
+ * **旧值迁移就在这里**：1.0.11 及更早持久化的是 `{enabled,host,port,username,password,...}`，
+ * `normalizeProxyConfig()` 会把它拼成 `http://[user:pass@]host[:port]`（唯一实现在
+ * `src/shared/proxyConfig.ts`），所以升级后设置不丢、首屏直接显示成 URL。
+ * 返回值是**纯对象**（新对象 + 新数组），可直接进 IPC（见 `core/plainProxy.ts`）。
+ *
+ * `void settingsRevision.value`：`stateStore` 的 state 是普通对象（`core/state.ts:85`），读设置
+ * **不被追踪**；集中在这里读一下版本号，任何把它放进 computed/effect 的调用方都能正确重算
+ * （本文件其它读 stateStore 的 computed 同一约定）。
+ */
 function readProxyConfig(): ProxyConfig {
-  return stateStore.getSetting<ProxyConfig>('network.proxy') ?? { ...DEFAULT_PROXY }
+  void settingsRevision.value
+  // 泛型带上 LegacyProxyConfig：持久化里可能还是 ≤1.0.11 的旧形态（由 normalizeProxyConfig 迁移）
+  const stored = stateStore.getSetting<ProxyConfig | LegacyProxyConfig>('network.proxy')
+  return normalizeProxyConfig(stored ?? DEFAULT_PROXY)
 }
 
 /**
@@ -232,11 +248,8 @@ let savingProxy = false
 function syncProxyFromStore(): void {
   if (savingProxy) return
   const next = readProxyConfig()
-  proxyConfig.enabled = next.enabled ?? false
-  proxyConfig.host = next.host ?? ''
-  proxyConfig.port = next.port
-  proxyConfig.username = next.username
-  proxyConfig.password = next.password
+  proxyConfig.enabled = next.enabled
+  proxyConfig.url = next.url
   proxyConfig.ignoreSSL = next.ignoreSSL
   proxyConfig.noProxy = [...(next.noProxy ?? [])]
 }
@@ -244,10 +257,8 @@ function syncProxyFromStore(): void {
 function saveProxy(): void {
   savingProxy = true
   try {
-    stateStore.setSetting('network.proxy', {
-      ...proxyConfig,
-      noProxy: [...(proxyConfig.noProxy ?? [])]
-    })
+    // 归一化后再写盘：存进设置的**永远是纯对象**的新形态（不会被 reactive Proxy 污染）
+    stateStore.setSetting('network.proxy', normalizeProxyConfig(proxyConfig))
   } finally {
     savingProxy = false
   }
@@ -731,31 +742,15 @@ onUnmounted(() => {
           </label>
         </div>
         <div class="config-row">
-          <label>{{ t('settings.network.host') }}</label>
-          <input v-model="proxyConfig.host" class="text-input" @change="saveProxy" />
-        </div>
-        <div class="config-row">
-          <label>{{ t('settings.network.port') }}</label>
+          <label>{{ t('settings.network.url') }}</label>
           <input
-            v-model.number="proxyConfig.port"
+            v-model="proxyConfig.url"
             class="text-input"
-            type="number"
+            :placeholder="t('settings.network.urlPlaceholder')"
             @change="saveProxy"
           />
         </div>
-        <div class="config-row">
-          <label>{{ t('settings.network.username') }}</label>
-          <input v-model="proxyConfig.username" class="text-input" @change="saveProxy" />
-        </div>
-        <div class="config-row">
-          <label>{{ t('settings.network.password') }}</label>
-          <input
-            v-model="proxyConfig.password"
-            class="text-input"
-            type="password"
-            @change="saveProxy"
-          />
-        </div>
+        <p class="config-desc">{{ t('settings.network.urlHint') }}</p>
         <div class="config-row">
           <label>
             <input v-model="proxyConfig.ignoreSSL" type="checkbox" @change="saveProxy" />
