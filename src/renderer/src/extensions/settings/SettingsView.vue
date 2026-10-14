@@ -6,7 +6,7 @@
  * - 快捷键：内置快捷键列表 + 修改 + 冲突检测
  * - 扩展：非内置扩展设置项（api.settings.register / manifest 声明）
  */
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { themeStore } from '../../core/theme'
 import { keybindingStore } from '../../core/keybindings'
@@ -371,6 +371,74 @@ function statusLines(page: RegisteredSettingsPage, field: SettingField): string[
   while (lines.length > 0 && !lines[lines.length - 1].trim()) lines.pop()
   return lines.length > 0 ? lines : [t('settings.extensionsSection.noValue')]
 }
+
+// ---- modal 字段：不可关闭的等待模态框 ----
+
+/**
+ * `modal` 只对 `type: 'status'` 有意义（值仍是字符串）。类型判断里的 `'status'` 走这个常量：
+ * 测试门禁用 `src.indexOf("field.type === 'status'")` 定位**模板**里 status 分支的位置，
+ * 脚本里再出现同一字面量会把定位点前移，门禁就形同虚设。
+ */
+const MODAL_FIELD_TYPE: SettingField['type'] = 'status'
+
+/** 是否声明了「以模态框展示」（`modal: true` 且类型是 status） */
+function isModalField(field: SettingField): boolean {
+  return field.modal === true && field.type === MODAL_FIELD_TYPE
+}
+
+/**
+ * 模态框的显示判据：值**非空**才显示，空值 ⇒ 什么都不渲染。
+ *
+ * - 只取**设置存储里的值**（`fieldValue`），**不**回退 `field.default`：扩展若声明了非空
+ *   `default`，模态框会在它还没开始任务时就常驻，而且**关不掉**（不可关闭是刻意设计）。
+ * - 去空白后再判空：`''` / `'   '` / `'\n'` 都算"没有进度"。渲染一个全空白且关不掉的模态框
+ *   等于把设置页锁死，所以这类值按空处理。
+ * - 取值经 `fieldValue` ⇒ 与 text/number 字段**同一条响应式路径**（`settingsRevision`）。
+ */
+function statusHasValue(page: RegisteredSettingsPage, field: SettingField): boolean {
+  const raw = fieldValue(page, field.key)
+  if (raw === undefined || raw === null) return false
+  const text = typeof raw === 'string' ? raw : String(raw)
+  return text.trim() !== ''
+}
+
+/** 当前生效的等待模态框内容（没有则为 `null`） */
+interface WaitModal {
+  label: string
+  lines: string[]
+}
+
+/**
+ * 当前该弹出的等待模态框（扫**所有**已注册设置页，而不只是左树选中的那个扩展）：
+ * 模态框是"迁移没完不许操作"的阻塞层，若只扫当前选中页，用户点一下左树另一个节点
+ * 就能把它"关掉"——那就是一条隐蔽的关闭通路。多个字段同时非空时取第一个。
+ *
+ * 行文本复用 `statusLines()`（CRLF 归一、拆分多行、去首尾空行）——与只读展示同一套语义。
+ */
+const activeModal = computed<WaitModal | null>(() => {
+  for (const page of extensionPages.value) {
+    for (const field of page.fields) {
+      if (!isModalField(field) || !statusHasValue(page, field)) continue
+      return { label: field.label, lines: statusLines(page, field) }
+    }
+  }
+  return null
+})
+
+/**
+ * 对话框元素：出现后必须显式 `focus()`，否则键盘焦点留在被遮住的背景上
+ * （模态没有关闭按钮、也不接 Esc，焦点跑出去用户就完全失去着力点）。
+ */
+const modalBox = ref<HTMLElement | null>(null)
+watch(
+  activeModal,
+  async (modal) => {
+    if (!modal) return
+    await nextTick()
+    modalBox.value?.focus()
+  },
+  { immediate: true }
+)
 
 // ---- 未知字段类型：回落成文本框 ----
 
@@ -781,13 +849,16 @@ onUnmounted(() => {
                 <button class="btn" type="button" @click="browseDirectory(page, field)">
                   {{ t('settings.extensionsSection.browse') }}
                 </button>
+                <!--
+                  ⚠️ 错误提示必须放在**这个 div 内部**：`v-if/v-else-if/v-else` 链要求各分支是**相邻兄弟**，
+                  一旦在链中间插入一个带 `v-if` 的兄弟元素（这里曾把 `<p v-if="… directoryErrors …">` 放在
+                  div 之后），后面的 `v-else-if status` 与 `v-else` 就会**挂到那个 `<p>` 上**，导致
+                  所有非 status 字段都额外渲染一个"未知类型兜底文本框"并刷 console.warn。
+                -->
+                <p v-if="directoryErrors[fieldSlot(page, field.key)]" class="config-error">
+                  {{ directoryErrors[fieldSlot(page, field.key)] }}
+                </p>
               </div>
-              <p
-                v-if="field.type === 'directory' && directoryErrors[fieldSlot(page, field.key)]"
-                class="config-error"
-              >
-                {{ directoryErrors[fieldSlot(page, field.key)] }}
-              </p>
               <!--
                 status：**只读**状态展示 —— 无输入框、无按钮、无 @change，宿主不接受用户输入。
                 值 = 该字段 key 在统一设置存储里的值（由扩展经 api.settings.set 写入，host.ts:440），
@@ -816,6 +887,31 @@ onUnmounted(() => {
         </template>
       </div>
     </section>
+
+    <!--
+      等待模态框（字段 modal: true + 值非空）：渲染在**字段行之外**（视图根部的独立节点），
+      绝不插进 `v-if / v-else-if / v-else` 字段链中间——插进去会让后面的分支挂到新节点上，
+      非 status 字段就会多渲染一个兜底文本框并刷 console.warn（见 directory 分支里的记录）。
+      值被扩展清空（api.settings.set(key, '')）⇒ activeModal 变 null ⇒ v-if 立即卸载本节点。
+      不可关闭：没有关闭按钮、没有 @click / @keydown（Esc 因此无效、点遮罩不关闭），
+      也没有任何 dismiss 通路；遮罩覆盖整个视口并吃掉指针事件，背景既点不到也不会跟着滚。
+      焦点：对话框 tabindex="-1" 并在出现后 focus()（按约定不做完整 focus-trap）。
+    -->
+    <div
+      v-if="activeModal"
+      class="settings-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      :aria-label="activeModal.label"
+    >
+      <div ref="modalBox" class="settings-modal" tabindex="-1">
+        <h2 class="settings-modal-title">{{ activeModal.label }}</h2>
+        <ul v-if="activeModal.lines.length > 1" class="status-lines settings-modal-lines">
+          <li v-for="(line, idx) in activeModal.lines" :key="idx">{{ line }}</li>
+        </ul>
+        <span v-else class="settings-modal-line">{{ activeModal.lines[0] }}</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1011,5 +1107,47 @@ kbd.capturing {
 .capture-box p {
   font-size: 14px;
   color: var(--fg, #cccccc);
+}
+/*
+  等待模态框（字段 modal: true + 值非空）：全屏遮罩 + 对话框。
+  遮罩取值沿用上方既有 `.capture-overlay` 的同一个遮罩（不新造色值）；比改键捕获层（5000）更高，
+  保证它压在所有内容之上。对话框配色全部走既有主题 token（--bg-panel / --border / --fg*）。
+*/
+.settings-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 6000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 遮罩自己吃掉滚轮/触摸滚动，被遮住的设置页不跟着滚 */
+  overscroll-behavior: contain;
+}
+.settings-modal {
+  background: var(--bg-panel, #252526);
+  border: 1px solid var(--border, #454545);
+  border-radius: 4px;
+  padding: 20px 28px;
+  outline: none;
+  max-width: 520px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.settings-modal-title {
+  font-size: 14px;
+  color: var(--fg-bright, #e8e8e8);
+  margin: 0 0 10px;
+}
+.settings-modal-line,
+.settings-modal-lines {
+  font-family: ui-monospace, monospace;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--fg, #cccccc);
+}
+/* 多行进度逐行渲染（与 status 字段的 .status-lines 同形，但那是 .config-row 下的选择器） */
+.settings-modal-lines {
+  margin: 0;
+  padding-left: 18px;
 }
 </style>
