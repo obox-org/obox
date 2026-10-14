@@ -174,8 +174,10 @@ export default {
       enabled: 'Enable proxy',
       url: 'Proxy URL',
       urlPlaceholder: 'http://127.0.0.1:7890',
+      // ⚠️ `@` must be escaped as {'@'}: vue-i18n reads a bare `@` as linked-message syntax (@:key),
+      // which throws "Message compilation error: Invalid linked format" and blanks the whole page.
       urlHint:
-        'Supports http / https / socks4 / socks5; credentials may be embedded in the URL (http://user:pass@host:8080); leave empty for a direct connection.',
+        "Supports http / https / socks4 / socks5; credentials may be embedded in the URL (http://user:pass{'@'}host:8080); leave empty for a direct connection.",
       ignoreSSL: 'Ignore SSL certificate validation',
       noProxy: 'No-proxy list (one per line, e.g. localhost, 127.0.0.1)'
     },
