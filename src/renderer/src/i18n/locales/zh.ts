@@ -170,10 +170,10 @@ export default {
       proxy: '代理',
       proxyDesc: 'obox 与内置扩展使用此代理；非内置扩展可选使用（api.proxy）。',
       enabled: '启用代理',
-      host: '主机',
-      port: '端口',
-      username: '用户名',
-      password: '密码',
+      url: '代理地址（URL）',
+      urlPlaceholder: 'http://127.0.0.1:7890',
+      urlHint:
+        '支持 http / https / socks4 / socks5；账号密码可直接写在地址里（http://user:pass@host:8080）；留空表示直连。',
       ignoreSSL: '忽略 SSL 证书校验',
       noProxy: '排除列表（每行一个，如 localhost, 127.0.0.1）'
     },

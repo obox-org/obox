@@ -143,7 +143,7 @@ for (const ms of [0, 300, 1000]) {
 - **语言**：语言下拉，选项显示各语言自己的本地化名称
 - **快捷键**：内置快捷键修改 + 冲突检测
 - **更新**：选择"更新提供者扩展"（manifest `contributes.updater`，只能一个生效，`src/renderer/src/core/updaterStore.ts:54-62`）+ 显示当前版本 + 检查 / 下载 / 安装（`SettingsView.vue:388-444`）；未选择提供者时不检查更新
-- **网络**：代理设置（启用 / 主机 / 端口 / 用户名 / 密码 / 忽略 SSL 校验 / 排除列表），存设置存储 `network.proxy`（`SettingsView.vue:159-170`），由宿主 session 级生效（`api.proxy`，见 `api-reference.md`）
+- **网络**：代理设置（启用 / **代理地址 URL** / 忽略 SSL 校验 / 排除列表），存设置存储 `network.proxy`（`SettingsView.vue:204-265` 读值-迁移-保存，`:735-763` 表单），由宿主 session 级生效（`api.proxy`，见 `api-reference.md`）。1.0.12 起主输入是**单一 URL**（http/https/socks4/socks5，可含 `user:pass@`）；旧形态（host/port/username/password）在读取时自动迁移，实现在 `src/shared/proxyConfig.ts`
 - **通知**：逐扩展的系统通知开关（`SettingsView.vue:172-181`）；被关闭的扩展其 `api.notification.show` 直接返回 `{ ok: true }` 不弹出（`src/renderer/src/core/host.ts:701-703`）
 - **扩展**：注册了设置页的扩展（按扩展名展开）。点该节点回到扩展分区**列表态**（`@click="selectExtensions()"` 置 `active = 'extension'` 并清 `activeExt`，`SettingsView.vue:272-278`、`:34-38`）；再点子项才在右侧显示该扩展的设置页（`:280-290`）。此前该节点漏了 `@click` 导致整个分区不可达（issue #80，已修复，回归门禁见 `test/settings-view-wiring.test.ts`）
 

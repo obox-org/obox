@@ -47,9 +47,10 @@
 ## 2. 代理与证书
 
 - `api.net.fetch`（扩展联网）与更新下载（electron-updater）的代理均在 **Chromium session 层**应用 `setProxy` + `setCertificateVerifyProc`（见 [ADR-0007 修订](adr/0007-update-provider-and-proxy.md) 与 `src/main/proxy.ts`）。
+- 设置-网络里的代理是**单个 URL**（1.0.12 起）：`http://127.0.0.1:7890`、`https://proxy:8443`、`socks5://127.0.0.1:1080`、`http://user:pass@host:1080`（空串 = 直连）；旧形态（host/port/username/password）读取时自动迁移（`src/shared/proxyConfig.ts`）。地址非法时回退直连并在主进程日志写一行 `[proxy] …`。
 - **认证代理（需要账号密码）**：
-  - 更新下载**支持**——electron-updater 的 `ElectronHttpExecutor` 把 401 作为 `login` 事件抛出，宿主用设置-网络里的账号密码回填（`autoUpdater.on('login')`）。**【源码核验】**
-  - `api.net.fetch` **不支持逐请求凭据**（Chromium 的 `session.fetch` 没有 per-request login 回调路径）：命中需要认证的代理时请求会失败（通常 407）。**【源码核验】【运行期未验证】**
+  - 更新下载**支持**——凭据取设置-网络里**代理 URL 的 `user:pass@`**：electron-updater 的 `ElectronHttpExecutor` 把 401 作为 `login` 事件抛出，宿主回填（`autoUpdater.on('login')` → `currentProxyCredentials()`，`src/main/proxy.ts:160-173`）。**【源码核验】**
+  - `api.net.fetch` **不支持逐请求凭据**（Chromium 的 `session.fetch` 没有 per-request login 回调路径；`proxyRules` 也带不了 userinfo）：命中需要认证的代理时请求会失败（通常 407）。**【源码核验】【运行期未验证】**
     → 扩展若必须在认证代理后联网，请把该限制作为已知失败路径处理（提示用户改走更新链路或改用直连/免认证代理），不要反复重试。
 - `ignoreSSL` 只作用于上述 session（不再是进程级全局开关）。**【运行期未验证】**
 

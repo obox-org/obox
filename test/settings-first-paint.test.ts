@@ -29,7 +29,8 @@ const PERSISTED = {
   settings: {
     theme: 'theme-light.light',
     'keybinding.app.showCommands': 'Ctrl+Alt+K',
-    'network.proxy': { enabled: true, host: 'my-proxy.local', port: 8080, noProxy: ['a.com'] },
+    // 代理是新形态（单一 URL）；旧形态（host/port/username/password）的迁移矩阵见 test/proxy-url.test.ts
+    'network.proxy': { enabled: true, url: 'http://my-proxy.local:8080', noProxy: ['a.com'] },
     'ext-probe.demo.mode': 'advanced',
     'ext-probe.demo.dir': 'D:\\obox-data',
     'ext-probe.demo.progress': '步骤 1\n步骤 2',
@@ -101,7 +102,7 @@ describe('设置页首屏取值 · 冷启动读持久化配置（issue #85 缺�
     expect(row?.currentKey).toBe('Ctrl+Alt+K')
   })
 
-  it('网络：代理表单读到持久化配置（不是默认的 disabled/空 host）', () => {
+  it('网络：代理表单读到持久化配置（不是默认的 disabled/空 URL）', () => {
     expect(state.stateStore.getSetting('network.proxy')).toEqual(
       PERSISTED.settings['network.proxy']
     )

@@ -17,16 +17,12 @@ export type UpdateEvent =
   | { type: 'update-downloaded'; version: string }
   | { type: 'error'; message: string }
 
-/** 代理配置 */
-export interface ProxyConfig {
-  enabled: boolean
-  host: string
-  port?: number
-  username?: string
-  password?: string
-  ignoreSSL?: boolean
-  noProxy?: string[]
-}
+/**
+ * 代理配置是**主进程 / preload / 扩展 API 三处共用**的同一份定义（同 `DialogOpenOptions` 的做法），
+ * 落在 `src/shared/types.ts`；这里只再导出给扩展作者。
+ * 形态（1.0.12 起）：单一代理 URL `{ enabled, url, ignoreSSL?, noProxy? }`。
+ */
+export type { ProxyConfig } from '../shared/types'
 
 /** Memento：JSON 值键值存储 */
 export interface Memento {

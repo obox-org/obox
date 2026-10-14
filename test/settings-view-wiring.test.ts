@@ -186,6 +186,35 @@ describe('SettingsView.vue · 改键捕获接线（issue #85）', () => {
     expect(src).toContain('reactive<ProxyConfig>(readProxyConfig())')
   })
 
+  it('网络分区是"单一代理 URL"（用户裁定 A 方案）：只剩 URL 输入框 + 排除列表 + 忽略证书', () => {
+    const src = source()
+    // 一个文本框绑到 url（不再是 host/port/username/password 四栏）
+    expect(src).toContain('v-model="proxyConfig.url"')
+    for (const gone of [
+      'proxyConfig.host',
+      'proxyConfig.port',
+      'proxyConfig.username',
+      'proxyConfig.password',
+      "t('settings.network.host')",
+      "t('settings.network.port')",
+      "t('settings.network.username')",
+      "t('settings.network.password')"
+    ]) {
+      expect(src).not.toContain(gone)
+    }
+    // 两个附加项保留
+    expect(src).toContain("t('settings.network.ignoreSSL')")
+    expect(src).toContain("t('settings.network.noProxy')")
+    // 旧值（≤1.0.11 的 host/port/username/password）在读取时迁移成 URL
+    expect(src).toContain('normalizeProxyConfig')
+    const read = /function readProxyConfig\(\)[\s\S]*?\n}/.exec(src)?.[0] ?? ''
+    expect(read).toContain('normalizeProxyConfig(')
+    expect(read).toContain('void settingsRevision.value')
+    // 保存也走归一化（写盘的一定是纯对象的新形态）
+    const save = /function saveProxy\(\)[\s\S]*?\n}/.exec(src)?.[0] ?? ''
+    expect(save).toContain('normalizeProxyConfig(proxyConfig)')
+  })
+
   it('快捷键表格依赖设置变更计数（改完键立刻显示新按键，不会停在旧值）', () => {
     const src = source()
     const body = /const keybindings = computed\(\(\) => \{[\s\S]*?\}\)/.exec(src)?.[0] ?? ''
