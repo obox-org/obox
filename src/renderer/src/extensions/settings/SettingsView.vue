@@ -749,8 +749,9 @@ onUnmounted(() => {
             :placeholder="t('settings.network.urlPlaceholder')"
             @change="saveProxy"
           />
+          <!-- 字段说明放在本行内：贴近输入框；与下一个选项的距离由本行 margin-bottom 提供 -->
+          <p class="config-desc">{{ t('settings.network.urlHint') }}</p>
         </div>
-        <p class="config-desc">{{ t('settings.network.urlHint') }}</p>
         <div class="config-row">
           <label>
             <input v-model="proxyConfig.ignoreSSL" type="checkbox" @change="saveProxy" />
@@ -994,12 +995,22 @@ onUnmounted(() => {
   min-width: 220px;
 }
 /*
- * 网络分区（代理地址 / 排除列表）的输入框加宽一倍：
- * 代理 URL 与「主机:端口/账号密码」形态相比更长，220px 连 `http://127.0.0.1:7890` 都显示不全
- * （用户反馈"输入框太短，需要增加一倍"）。只作用于本分区，不动其它设置项的既有宽度。
+ * 网络分区（代理地址 / 排除列表）的输入框：**按内容区比例缩放**，不再是固定窄条。
+ * 之前 `.config-row .text-input` 只有 `min-width: 220px`（连 `http://127.0.0.1:7890` 都显示不全），
+ * 后来加宽到固定 440px 在宽窗口下又显得空。现在占满本行可用宽度 ⇒ 随内容区（窗口）等比缩放。
  */
 .network-block .config-row .text-input {
-  min-width: 440px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+/*
+ * 字段级说明（如代理地址下方的 urlHint）：**紧贴它描述的那个控件**，与下一个选项拉开距离。
+ * 做法是结构上把说明放进同一个 `.config-row`（见模板），于是上间距由这里给 6px，
+ * 下间距由 `.config-row` 自己的 16px margin-bottom 提供 —— 正好是"贴近控件、远离下一项"。
+ */
+.config-row .config-desc {
+  margin-top: 6px;
 }
 .config-row input[type='checkbox'] {
   accent-color: var(--accent, #007acc);
