@@ -279,6 +279,9 @@ const page = api.settings.register({
       // status：**只读**状态展示（无输入框/按钮），值由扩展经 api.settings.set 写入；
       // 值里含 \n 时按行渲染成列表，空值显示占位「（无）」
       type: 'status',
+      // modal: true ⇒ 值**非空**时渲染成**不可关闭的等待模态框**（迁移没完不许操作设置页）；
+      // 值空 ⇒ 什么都不渲染。default 必须为空串：模态框只看设置值，不看 default。
+      modal: true,
       default: ''
     }
   ]
@@ -286,12 +289,14 @@ const page = api.settings.register({
 // 读写设置值（统一设置存储，key 建议含扩展前缀；set 立即持久化并通知）
 const v = api.settings.get('my-ext.interval', 30)
 api.settings.set('my-ext.interval', 60)
-// status 字段的值就是扩展写进来的这条设置：宿主只渲染，不提供编辑控件
+// status/modal 字段的值就是扩展写进来的这条设置：宿主只渲染，不提供编辑控件
 api.settings.set('my-ext.migrationStatus', '正在迁移：书签 3/8\n已完成：历史记录')
+// 迁移结束：必须清空同一个键（写 ''）——这是等待模态框唯一的消失通路，忘了写用户就被永久挡住
+api.settings.set('my-ext.migrationStatus', '')
 page.dispose() // 注销设置页
 ```
 
-设置字段类型：`text` / `number` / `boolean` / `select` / `directory` / `status`；可选 `default` / `options` / `description`（`src/api/contributions.ts:97-110`）。扩展可用 `api.settings.set` 写状态键，供设置页 `status` 字段**只读**展示（宿主不弹任何编辑控件）。
+设置字段类型：`text` / `number` / `boolean` / `select` / `directory` / `status`；可选 `default` / `options` / `description` / `modal`（`src/api/contributions.ts:97-127`）。扩展可用 `api.settings.set` 写状态键，供设置页 `status` 字段**只读**展示（宿主不弹任何编辑控件）；`status` + `modal: true` 时值非空即弹**不可关闭的等待模态框**，扩展清空该键后模态框消失。
 
 `directory`（目录选择）的契约：
 
@@ -304,8 +309,16 @@ page.dispose() // 注销设置页
 
 - **只读**：宿主渲染成纯文本（无 `input` / `button` / `select`，也不接保存通路），用户**不能**在设置页改动它；值由扩展用 `api.settings.set(key, value)` 写入统一设置存储（`host.ts:440`），宿主只负责显示。
 - **多行**：值里含 `\n` 时按行渲染为列表（首尾空行忽略、中间空行保留）；空值 / 全空白显示占位「（无）」。非字符串值按 `String(value)` 展示。
-- **写后设置页立即刷新**：扩展写键与设置页读值落在**同一渲染进程的同一个 `stateStore`**（`api.settings.set` = `stateStore.setSetting`），`setSetting` 同步通知订阅者，设置页据此重渲染（`SettingsView.vue:298-301,397-402`、`core/state.ts:143-148`）——**不需要重进设置页**。
+- **写后设置页立即刷新**：扩展写键与设置页读值落在**同一渲染进程的同一个 `stateStore`**（`api.settings.set` = `stateStore.setSetting`），`setSetting` 同步通知订阅者，设置页据此重渲染（`SettingsView.vue:298-301,465-470`、`core/state.ts:143-148`）——**不需要重进设置页**。
 - **老宿主（≤ v1.0.8）**：与 `directory` 相同，渲染链无兜底分支 ⇒ `status` 字段不渲染任何控件（label 仍在、内容为空）。**认识 `directory` 但没有 `status` 分支的中间版本宿主**会把它按未知类型兜底成**可编辑文本框**（值仍取自同一设置存储，但用户误编辑会覆盖扩展写的状态）；需要兼容这类宿主时请自行降级或自绘视图。
+
+`status` + `modal: true`（**不可关闭的等待模态框**）的契约：
+
+- **何时显示**：值**非空**（去空白后有内容）⇒ 设置页渲染全屏遮罩 + 对话框（`role="dialog"` + `aria-modal="true"`），框内显示字段 `label` 与按行拆分的值；值**空**（未设置 / `''` / 全空白）⇒ **什么都不渲染**。判据只取**设置值**、**不**回退 `default`（`default` 请写 `''`）。
+- **写入 / 清空**：扩展在任务开始时 `api.settings.set(key, '步骤 1\n步骤 2…')`（可反复覆盖刷新进度），任务结束时**必须** `api.settings.set(key, '')` —— 这是模态框**唯一**的消失通路（写 `undefined` 删键等效于空值）。
+- **不可关闭**：没有关闭按钮、`Esc` 无效、点遮罩不关闭；遮罩覆盖整个视口并挡住背景的滚动与交互。宿主只做"初始聚焦"（对话框 `tabindex="-1"`），**不**提供完整 focus-trap。
+- **扫全部设置页**：只要有任一 `modal` 字段的值非空就弹（切左树分区不会关掉它）；多个字段同时非空时取第一个。
+- **老宿主（≤ v1.0.8）忽略 `modal`**：它是新增的**可选**属性，老宿主不认识也不会读——照旧按 `status` 渲染（≤ v1.0.8 连 `status` 都不认识 ⇒ 不渲染任何控件），既不报错也不崩，只是**不弹模态框**。需要老宿主上也有反馈时自行降级。详见 `themes-settings.md` 的「`modal` 属性（等待模态框）」。
 
 变更监听（≈VS Code `onDidChangeConfiguration`）：
 

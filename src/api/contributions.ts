@@ -82,6 +82,8 @@ export interface ThemeContribution {
  *   非字符串值按 `String(value)` 展示），**由扩展用 `api.settings.set(key, value)` 写入**，
  *   宿主只负责渲染。值里含 `\n` 时按行渲染为列表（多行进度/明细）；空值渲染占位文案。
  *   `default` 仅在设置里没有该键时作为回退展示值。
+ *   `status` 字段再带上 `modal: true`（见 `SettingField.modal`）时，值非空即在设置页渲染成
+ *   一个**不可关闭的等待模态框**（迁移进度这类"没完之前不许操作"的场景），值被清空即消失。
  * - **未知类型**：宿主按 `text` 兜底渲染（可编辑、可保存）并 `console.warn`，
  *   避免宿主类型演进时设置项"凭空消失"。
  *
@@ -107,6 +109,21 @@ export interface SettingField {
   options?: Array<{ value: string; label: string }>
   /** 字段描述（可选） */
   description?: string
+  /**
+   * 「等待模态框」开关（**可选**，只对 `type: 'status'` 有意义；值仍是字符串）。
+   *
+   * - `true` ⇒ 值**非空**时在设置页渲染一个**全屏遮罩 + 对话框**，把值按行显示（如迁移进度文本）；
+   *   值**空**（未设置 / 空串 / 全空白）⇒ **不渲染任何东西**（模态框消失）。
+   * - **不可关闭**：没有关闭按钮、`Esc` 无效、点击遮罩不关闭；遮罩同时挡住背景的滚动与交互
+   *   （`role="dialog"` + `aria-modal="true"` + 初始聚焦对话框）。扩展**必须**在任务结束时用
+   *   `api.settings.set(key, '')` 清空该值，模态框才会消失。
+   * - 显示判据只取**设置存储里的值**，**不**回退 `default`：`default` 非空会让模态框在扩展
+   *   还没开始任务时就常驻且无法关闭。该字段建议写 `default: ''`。
+   * - **老宿主忽略它**：`modal` 是新增的**可选**属性，老宿主的字段链不认识、也不会读它——
+   *   老宿主只按 `type: 'status'` 渲染（≤ v1.0.8 连 `status` 都不认识 ⇒ 该字段不渲染任何控件），
+   *   因此**不会崩溃、不会报错**，只是**不弹模态框**（降级 = 只读状态文本 / 空内容）。
+   */
+  modal?: boolean
 }
 
 /** 设置页贡献（api.settings.register） */

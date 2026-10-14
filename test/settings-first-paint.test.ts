@@ -32,7 +32,9 @@ const PERSISTED = {
     'network.proxy': { enabled: true, host: 'my-proxy.local', port: 8080, noProxy: ['a.com'] },
     'ext-probe.demo.mode': 'advanced',
     'ext-probe.demo.dir': 'D:\\obox-data',
-    'ext-probe.demo.progress': '步骤 1\n步骤 2'
+    'ext-probe.demo.progress': '步骤 1\n步骤 2',
+    // modal 字段（等待模态框）的进度值：值非空 ⇒ 弹模态框，扩展写空串 ⇒ 模态框消失
+    'ext-probe.demo.migration': '迁移 42%\n已完成 3/8'
   }
 }
 
@@ -137,6 +139,36 @@ describe('设置页首屏取值 · 冷启动读持久化配置（issue #85 缺�
     expect(state.stateStore.getSetting('ext-probe.demo.progress')).toBe('迁移 42%\n已完成 3/8')
     // 落盘也在同一份持久层（渲染进程 localStorage 的 obox:state:v1），不是另一处主进程存储
     expect(store[STORAGE_KEY]).toContain('迁移 42%\\n已完成 3/8')
+  })
+
+  it('扩展设置：modal 字段的进度值同样存统一设置存储（宿主只显示，值由扩展写入）', () => {
+    // modal 只是 status 的展示方式（等待模态框），值的存储与取值语义完全不变
+    expect(state.stateStore.getSetting('ext-probe.demo.migration')).toBe('迁移 42%\n已完成 3/8')
+  })
+
+  it('modal 值清空 ⇒ 模态框消失：set("") 与设置页读值同源且同步通知（无需重进设置页）', () => {
+    // 界面侧的门（SettingsView.statusHasValue）：只取设置值（不回退 default）+ 去空白后非空
+    const hasValue = (v: unknown): boolean =>
+      v !== undefined && v !== null && String(v).trim() !== ''
+    expect(hasValue(state.stateStore.getSetting('ext-probe.demo.migration'))).toBe(true)
+    expect(hasValue('')).toBe(false)
+    expect(hasValue('   \n')).toBe(false)
+
+    const seen: Array<string | undefined> = []
+    const off = state.stateStore.onSettingsChanged((key) => seen.push(key))
+    try {
+      // 迁移结束：扩展用 api.settings.set(key, '') 清空（host.ts:440 = stateStore.setSetting）
+      state.stateStore.setSetting('ext-probe.demo.migration', '')
+    } finally {
+      off()
+    }
+    // 同步通知 ⇒ SettingsView 的 settingsRevision++ ⇒ activeModal 重算为 null ⇒ v-if 立即卸载模态
+    expect(seen).toEqual(['ext-probe.demo.migration'])
+    expect(hasValue(state.stateStore.getSetting('ext-probe.demo.migration'))).toBe(false)
+    // 键仍在（写空串 ≠ 删除），只是值为空：空值 = "没有进度" = 不渲染模态
+    expect(state.stateStore.getSetting('ext-probe.demo.migration')).toBe('')
+    // 复位，避免影响同文件后续用例
+    state.stateStore.setSetting('ext-probe.demo.migration', '迁移 42%\n已完成 3/8')
   })
 
   it('更新：生效提供者读到持久化选择', async () => {

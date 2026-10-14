@@ -149,7 +149,7 @@
 
 ### settings（扩展设置 schema，manifest 声明）
 
-对齐 VS Code contributes.configuration 简化版（`api/contributions.ts:96-120`）；与运行时 `api.settings.register` 等价（`core/host.ts:179`）：
+对齐 VS Code contributes.configuration 简化版（`api/contributions.ts:96-137`）；与运行时 `api.settings.register` 等价（`core/host.ts:179`）：
 
 ```json
 {
@@ -157,13 +157,22 @@
     "settings": {
       "id": "my-ext.settings",
       "title": "我的扩展设置",
-      "fields": [{ "key": "my-ext.interval", "label": "刷新间隔", "type": "number", "default": 30 }]
+      "fields": [
+        { "key": "my-ext.interval", "label": "刷新间隔", "type": "number", "default": 30 },
+        {
+          "key": "my-ext.migrationStatus",
+          "label": "迁移进度",
+          "type": "status",
+          "modal": true,
+          "default": ""
+        }
+      ]
     }
   }
 }
 ```
 
-字段类型：`text` / `number` / `boolean` / `select` / `directory` / `status`（`api/contributions.ts:94`）。`directory` 渲染为**只读**文本框 + 「浏览…」按钮（**点输入框或按钮都弹**系统目录选择器，路径不支持手工粘贴），选中后把**绝对路径**写回该设置项（取消不改动）；宿主只负责选目录，**不校验**目录是否合法/可写/受管，扩展侧须自行校验。`status` 是**只读状态展示**：无输入框、无按钮，值由扩展经 `api.settings.set` 写入同一设置存储，含 `\n` 时按行渲染成列表、空值显示「（无）」。**老宿主（≤ v1.0.8）没有未知类型兜底分支**，`directory` / `status` 字段都不会渲染出控件，需要兼容时请自行降级为 `text`；**认识 `directory` 但未实现 `status` 的中间版本宿主**会把 `status` 兜底成可编辑文本框（值取自同一设置存储，但可被用户误编辑），详见 `themes-settings.md` 的"`directory` 字段"与"`status` 字段"。设置"扩展"节点按扩展名展示其设置页。
+字段类型：`text` / `number` / `boolean` / `select` / `directory` / `status`（`api/contributions.ts:94`），另有可选属性 `modal?: boolean`（`api/contributions.ts:112-126`，**只对 `status` 有意义**）。`directory` 渲染为**只读**文本框 + 「浏览…」按钮（**点输入框或按钮都弹**系统目录选择器，路径不支持手工粘贴），选中后把**绝对路径**写回该设置项（取消不改动）；宿主只负责选目录，**不校验**目录是否合法/可写/受管，扩展侧须自行校验。`status` 是**只读状态展示**：无输入框、无按钮，值由扩展经 `api.settings.set` 写入同一设置存储，含 `\n` 时按行渲染成列表、空值显示「（无）」。`status` 再带 `modal: true` 时值**非空**即以**不可关闭的等待模态框**展示（没有关闭按钮、`Esc` 无效、点遮罩不关闭；`default` 请写 `''`），扩展在任务结束时写 `''` 清空该键、模态框才消失。**老宿主（≤ v1.0.8）没有未知类型兜底分支**，`directory` / `status` 字段都不会渲染出控件，需要兼容时请自行降级为 `text`；`modal` 更是老宿主**不认识的可选属性**，老宿主忽略它且**不报错、不崩**（只是不弹模态框）。**认识 `directory` 但未实现 `status` 的中间版本宿主**会把 `status` 兜底成可编辑文本框（值取自同一设置存储，但可被用户误编辑），详见 `themes-settings.md` 的"`directory` 字段"、"`status` 字段"与"`modal` 属性"。设置"扩展"节点按扩展名展示其设置页。
 
 ### updater（更新提供者，manifest 声明）
 
