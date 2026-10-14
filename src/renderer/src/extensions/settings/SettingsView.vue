@@ -732,7 +732,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 网络（代理） -->
-      <div v-else-if="active === 'network'" class="config-block">
+      <div v-else-if="active === 'network'" class="config-block network-block">
         <h2>{{ t('settings.network.title') }}</h2>
         <p class="config-desc">{{ t('settings.network.proxyDesc') }}</p>
         <div class="config-row">
@@ -992,6 +992,14 @@ onUnmounted(() => {
   padding: 5px 8px;
   font-size: 13px;
   min-width: 220px;
+}
+/*
+ * 网络分区（代理地址 / 排除列表）的输入框加宽一倍：
+ * 代理 URL 与「主机:端口/账号密码」形态相比更长，220px 连 `http://127.0.0.1:7890` 都显示不全
+ * （用户反馈"输入框太短，需要增加一倍"）。只作用于本分区，不动其它设置项的既有宽度。
+ */
+.network-block .config-row .text-input {
+  min-width: 440px;
 }
 .config-row input[type='checkbox'] {
   accent-color: var(--accent, #007acc);
