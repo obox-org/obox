@@ -130,3 +130,52 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 - **未验证**：打包版下 `setLoginItemSettings` 真的写入 `HKCU\...\Run`（值名 `com.obox.app`、值含 `--autostart`）、
   开机后确实静默启动、NSIS 卸载确实删除注册表项。开发版按设计不注册，因此这些只能装一次包来验。
 - **退场条件**：一次打包安装 → 开开关 → 查注册表 + 重启验证静默启动 → 卸载后确认键值已删。
+
+## 9. v1.0.10 发布数据 + 「更新功能」专项复核（2026-10-14）
+
+### 9.1 v1.0.10 资产（7 个，与历次同形）
+
+| 资产 | 大小 |
+| --- | --- |
+| `obox-1.0.10-setup.exe` | 237,016,662 B（226.0 MB）|
+| `obox-1.0.10-setup.exe.blockmap` | 247,021 B |
+| `obox-1.0.10-x64-setup.exe` | 121,715,411 B（116.1 MB）|
+| `obox-1.0.10-x64-setup.exe.blockmap` | 129,349 B |
+| `obox-1.0.10-arm64-setup.exe` | 116,139,117 B（110.8 MB）|
+| `obox-1.0.10-arm64-setup.exe.blockmap` | 121,311 B |
+| `latest.yml` | 654 B |
+
+### 9.2 「无架构后缀的臃肿包」**不影响自动更新**（源码级定论，第 8 次复发）
+
+`latest.yml` 的 `files[0]` 与顶层 `path` 依旧指向臃肿的 `obox-1.0.10-setup.exe`（226 MB），
+但自动更新**不会**下它：
+
+- `electron-updater@6.8.9` 的 `out/NsisUpdater.js:33` 走 `findFile(provider.resolveFiles(info), "exe")`；
+- `out/providers/Provider.js:79-80` 的选择顺序是
+  `files.filter(以 .exe 结尾).find(路径含 process.arch) ?? filteredFiles.shift()`。
+
+本机 `process.arch = x64`，而 `latest.yml` 的 `files[1].url = obox-1.0.10-x64-setup.exe`（含 `x64`）⇒
+**自动更新下的是 116 MB 的 x64 包**。该臃肿包只影响**手动下载**的用户（以及读顶层 `path` 的老客户端）；
+本仓库自己的「强制重装」通道用 `pickArtifact`（优先 `-<arch>-setup`）同样选对。
+
+⇒ 结论：这是发布页的观感/带宽问题，**不是更新故障**；如需彻底消除，应在 electron-builder 侧让无后缀产物不再生成（另行处理）。
+
+### 9.3 「设置 → 更新」手动更新路径的三个缺陷（已在 1.0.11 修复）
+
+复核方式：安装**打包版 1.0.10**（NSIS 静默装到 `%LOCALAPPDATA%\Programs\obox`）+ CDP 驱动真实界面。
+
+| # | 缺陷 | 证据 | 修复 |
+| --- | --- | --- | --- |
+| 1 | **更新提供者扩展装不上**：`obox-updater` 是**非内置**扩展（`electron-builder.yml` 的 `!extensions/*` 不打包它），而它的 `.oix` 打包脚本在 Windows 上产出的是 **tar**（`tar -a` 按扩展名定格式，`.oix` 非已知后缀）⇒ 宿主报 `invalid-package` | 坏包头部 `6D 61 6E 69`；对照 `tar -a -cf x.zip` → `50 4B 03 04` ✓ / `x.oix` → tar ✗ | obox-updater **1.1.0**：改手写 stored zip + 回读自检 + 4 条打包门禁（30/30），并发布首个 release（含 `.oix`） |
+| 2 | 点「检查更新」抛 **`An object could not be cloned.`**，按钮永久停在「检查中…」 | `SettingsView.vue` 把 `reactive` 的代理设置浅拷贝后塞进 IPC（内层 `noProxy` 仍是 Proxy）；用**纯对象**调同一 IPC 返回 `{ok:true}` | 新增 `core/plainProxy.ts`，4 处（设置页 / `api.net.fetch` / `api.update.*` / `api.proxy.get`）统一归一化为纯对象；3 条回归测试 |
+| 3 | 选中更新提供者后 **「检查更新」按钮不出现**（只能重启应用），DOM 上是空占位注释 | `core/state.ts:85` 的 `state` 是**普通对象**（非 reactive）⇒ `computed(() => updaterStore.activeId)` 缓存首次 `undefined`；设置页在 `KeepAlive` 内，切走再回来也不重算 | `activeUpdater` 显式 `void settingsRevision.value`；3 条行为/源码门禁 |
+
+**打包版已核实为正常的部分**：`resolveUpdateFeed('obox-org/obox')` → `v1.0.10`；
+`checkUpdate(feedUrl)` → `{ok:true, available:"1.0.10"}` + 事件 `update-not-available`（本机已是 1.0.10）
+⇒ HTTPS 读 `latest.yml`、版本比较、事件回传这条链路在**打包版**里是通的。
+
+**仍未验证（如实登记）**：打包版上「发现新版本 → 下载 → 安装」的完整链路。原因是 electron-updater 在
+**未打包**时直接跳过检查（`Skip checkForUpdates because application is not packed and dev update config is not forced`），
+而打包版本机与最新版同号时只能得到 `update-not-available`。
+退场条件：保留上一版打包版（如 1.0.10），等下一版发布后点「检查更新」验证发现新版、下载与安装向导。
+

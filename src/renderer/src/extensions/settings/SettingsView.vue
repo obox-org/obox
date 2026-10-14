@@ -115,8 +115,21 @@ function onCaptureKeydown(e: KeyboardEvent): void {
 
 // ---- 更新 ----
 import { updaterStore } from '../../core/updaterStore'
+import { plainProxyConfig } from '../../core/plainProxy'
 const updaterProviders = computed(() => updaterStore.providers)
-const activeUpdater = computed(() => updaterStore.activeId)
+/**
+ * 当前生效的更新提供者 id。
+ *
+ * ⚠️ 必须显式依赖 `settingsRevision`：`stateStore` 的 state 是**普通对象**（`core/state.ts:85`
+ * 直接 `load()`，不是 reactive），读设置**不被追踪**，于是这个 computed 会把首次结果（通常是
+ * `undefined`）永久缓存；而设置页在 `KeepAlive` 里，切走再回来也不会重算。
+ * 实测（打包版 1.0.10）：在「更新」页选中提供者后，`v-if="activeUpdater"` 的
+ * **「检查更新」按钮始终不出现**，只有重启应用才行。同一约定见本文件快捷键区的 computed。
+ */
+const activeUpdater = computed(() => {
+  void settingsRevision.value
+  return updaterStore.activeId
+})
 const oboxVersion = ref('')
 const updateStatus = ref<string>('') // 'checking' | 'available' | 'uptodate' | 'downloading' | 'downloaded' | 'error'
 const isStatus = (s: string): boolean => updateStatus.value === s
@@ -141,7 +154,7 @@ async function checkUpdate(): Promise<void> {
   updateStatus.value = 'checking'
   const result = await window.api.checkUpdate({
     feedUrl: active.feedUrl,
-    proxy: { ...proxyConfig }
+    proxy: plainProxyConfig(proxyConfig)
   })
   if (result.ok) {
     if (result.available && result.available !== oboxVersion.value) {
