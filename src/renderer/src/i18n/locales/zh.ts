@@ -172,8 +172,10 @@ export default {
       enabled: '启用代理',
       url: '代理地址（URL）',
       urlPlaceholder: 'http://127.0.0.1:7890',
+      // ⚠️ `@` 必须写成 {'@'}：vue-i18n 把裸 `@` 当"链接消息"语法（@:key），会导致
+      // "Message compilation error: Invalid linked format" ⇒ 整个「网络」页渲染抛错白屏（1.0.12 实际踩过）。
       urlHint:
-        '支持 http / https / socks4 / socks5；账号密码可直接写在地址里（http://user:pass@host:8080）；留空表示直连。',
+        "支持 http / https / socks4 / socks5；账号密码可直接写在地址里（http://user:pass{'@'}host:8080）；留空表示直连。",
       ignoreSSL: '忽略 SSL 证书校验',
       noProxy: '排除列表（每行一个，如 localhost, 127.0.0.1）'
     },
