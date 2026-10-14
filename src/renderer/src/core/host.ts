@@ -31,6 +31,7 @@ import {
 } from './extensionI18n'
 import { keybindingStore, normalizeKey } from './keybindings'
 import { updaterStore } from './updaterStore'
+import { plainProxyConfig } from './plainProxy'
 import { uiStore } from './uiStore'
 import { outputStore } from './outputStore'
 import { treeStore } from './treeStore'
@@ -449,16 +450,8 @@ class ExtensionHost {
       ipc: this.buildIpcApi(ext, disposables),
       python: this.buildPythonApi(ext),
       proxy: {
-        get: (): ProxyConfig => {
-          const p = stateStore.getSetting<ProxyConfig>('network.proxy')
-          return (
-            p ?? {
-              enabled: false,
-              host: '',
-              noProxy: []
-            }
-          )
-        }
+        get: (): ProxyConfig =>
+          plainProxyConfig(stateStore.getSetting<ProxyConfig>('network.proxy'))
       },
       timer: this.buildTimerApi(ext, disposables),
       sqlite: {
@@ -477,7 +470,9 @@ class ExtensionHost {
               body: opts?.body,
               json: opts?.json
             },
-            stateStore.getSetting<ProxyConfig>('network.proxy')
+            // ⚠️ 必须过 plainProxyConfig：设置里的代理是 reactive Proxy，直接进 IPC 会
+            // 抛 `An object could not be cloned.`（见 plainProxy.ts 的说明）
+            plainProxyConfig(stateStore.getSetting<ProxyConfig>('network.proxy'))
           )
       },
       dialog: {
@@ -727,10 +722,10 @@ class ExtensionHost {
         throw new Error('当前扩展不是生效的更新提供者（需在设置-更新中选择）')
       }
     }
-    const proxy = (): ProxyConfig => {
-      const p = stateStore.getSetting<ProxyConfig>('network.proxy')
-      return p ?? { enabled: false, host: '', noProxy: [] }
-    }
+    const proxy = (): ProxyConfig =>
+      // ⚠️ 必须过 plainProxyConfig：`getSetting` 返回的是 reactive Proxy，直接进 IPC 会
+      // 抛 `An object could not be cloned.`（设置页那条路径曾因此卡在"检查中…"）
+      plainProxyConfig(stateStore.getSetting<ProxyConfig>('network.proxy'))
     return {
       getVersion: () => window.api.getOboxVersion(),
       resolveFeed: (repo) => {
