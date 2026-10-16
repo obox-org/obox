@@ -217,13 +217,101 @@ function collectWarnings(m, messages) {
   }
 }
 
+// ---------------------------------------------------------------- settings 字段（contributes.settings）
+
+/**
+ * 设置字段类型白名单：与宿主 `SettingFieldType`（src/api/contributions.ts）**逐字一致**。
+ * 差分门禁（test/manifest-script-parity.test.ts）解析两边源码逐项比对——增删/改名类型必须两侧同步。
+ */
+const SETTING_FIELD_TYPES = [
+  'text',
+  'number',
+  'boolean',
+  'select',
+  'directory',
+  'status',
+  'progress'
+]
+
+/** 字段定位名：有 key 用 `"key"`，没有（key 本身非法）用「第 N 项」，保证报错可执行 */
+function settingFieldName(field, index) {
+  return typeof field.key === 'string' && field.key.trim() ? `"${field.key}"` : `第 ${index + 1} 项`
+}
+
+/** 校验单个设置字段，返回 error 列表（规则依据见 checkSettings 的文档注释） */
+function checkSettingsField(field, index) {
+  if (!isRecord(field)) {
+    return [{ level: 'error', message: `设置字段第 ${index + 1} 项必须是对象` }]
+  }
+  const messages = []
+  const name = settingFieldName(field, index)
+  if (typeof field.key !== 'string' || !field.key.trim()) {
+    messages.push({ level: 'error', message: `设置字段 ${name} 缺少 key（必须为非空字符串）` })
+  }
+  if (typeof field.label !== 'string' || !field.label.trim()) {
+    messages.push({ level: 'error', message: `设置字段 ${name} 缺少 label（必须为非空字符串）` })
+  }
+  if (typeof field.type !== 'string' || !SETTING_FIELD_TYPES.includes(field.type)) {
+    messages.push({
+      level: 'error',
+      message: `设置字段 ${name} 的 type ${JSON.stringify(field.type)} 非法（允许：${SETTING_FIELD_TYPES.join(' / ')}）`
+    })
+  }
+  // max 是可选键（progress 的值域上限，老宿主忽略它）：一旦出现就必须是**大于 0 的有限数字**。
+  // 0/负数会让条宽除零或反向，'100' 这类字符串与 NaN/Infinity 都不是可渲染的上限。
+  if (
+    field.max !== undefined &&
+    !(typeof field.max === 'number' && Number.isFinite(field.max) && field.max > 0)
+  ) {
+    messages.push({ level: 'error', message: `设置字段 ${name} 的 max 必须为大于 0 的数字` })
+  }
+  // progress 的 default 一旦出现必须是数字（它就是首屏回退展示的进度值）。
+  // **越界不报错**：与 design 口径一致——宿主渲染时钳制到 [0, max]（default 150 等效于满格），
+  // 不构成清单错误，报错反而会把"合法但会被钳制"的声明拦死。
+  if (
+    field.type === 'progress' &&
+    field.default !== undefined &&
+    !(typeof field.default === 'number' && Number.isFinite(field.default))
+  ) {
+    messages.push({
+      level: 'error',
+      message: `设置字段 ${name} 的 default 必须是数字（progress 越界不报错，宿主渲染时钳制到 0..max）`
+    })
+  }
+  return messages
+}
+
+/**
+ * 校验 contributes.settings（形状 = 单个 `{ id, title, fields }`，与 api.settings.register 同型）。
+ *
+ * ⚠️ 这一段是**脚本独有的静态收紧**——宿主 core/manifest.ts 的 validateManifest 不校验 settings：
+ * 宿主对未知字段类型的策略是"渲染期兜底成可编辑 text + console.warn"（清单不报错）。
+ * 但把 type 写错（如 'gauge'）的 manifest 一旦发布，用户装上后只读字段（status/progress）
+ * 就变成**可编辑文本框**，误编辑即覆盖扩展写的状态——静态校验是发布前唯一的拦截点，
+ * 所以脚本比宿主严。差分门禁不受影响：现有 parity fixtures 不含非法 settings
+ * （ok-full.json 的 settings 声明合法，两侧都 0 error），白名单与宿主 SettingFieldType 的
+ * 一致性另有专门的源码解析断言（见 test/manifest-script-parity.test.ts）。
+ */
+function checkSettings(settings) {
+  if (!isRecord(settings)) {
+    return [{ level: 'error', message: 'contributes.settings 必须是 {id, title, fields} 对象' }]
+  }
+  if (!Array.isArray(settings.fields)) {
+    return [{ level: 'error', message: 'contributes.settings.fields 必须是数组' }]
+  }
+  return settings.fields.flatMap(checkSettingsField)
+}
+
 // ---------------------------------------------------------------- 规则本体
 
 /**
  * 校验 manifest，返回 [{ level: 'error'|'warning', message }]。
- * 文案与宿主 core/manifest.ts 逐字一致（差分门禁会比对）。
+ * 文案与宿主 core/manifest.ts 逐字一致（差分门禁会比对）；
+ * 唯一例外是 contributes.settings 段（checkSettings）——那是**脚本独有的静态收紧**，
+ * 宿主运行期对未知字段类型走"兜底渲染 + warn"而不是清单 error（理由见 checkSettings 注释）。
+ * 导出供测试直喂 JSON 写不出的夹具对象（如 max: Infinity / NaN）；CLI 只在直接执行时跑（见文件尾）。
  */
-function validateManifest(raw, oboxApiVersion) {
+export function validateManifest(raw, oboxApiVersion) {
   const messages = []
   if (!raw || typeof raw !== 'object') {
     return [{ level: 'error', message: 'manifest 必须是 JSON 对象' }]
@@ -321,6 +409,9 @@ function validateManifest(raw, oboxApiVersion) {
       messages.push({ level: 'error', message: 'themes 必须是 [{id, label, tokens}] 数组' })
     }
   }
+  if (contributes && typeof contributes === 'object' && contributes.settings !== undefined) {
+    messages.push(...checkSettings(contributes.settings))
+  }
   if (m.extensionDependencies !== undefined) {
     const deps = m.extensionDependencies
     if (!Array.isArray(deps) || deps.some((d) => typeof d !== 'string')) {
@@ -395,114 +486,141 @@ async function listManifests(parentDir) {
 
 // ---------------------------------------------------------------- CLI
 
-const argv = process.argv.slice(2)
-const files = []
-let rootArg
-let all = false
-let jsonMode = false
-
-for (let i = 0; i < argv.length; i++) {
-  const arg = argv[i]
-  if (arg === '--all') all = true
-  else if (arg === '--json') jsonMode = true
-  else if (arg === '-h' || arg === '--help') {
-    console.log(HELP)
-    process.exit(0)
-  } else if (arg === '--root') {
-    if (i + 1 >= argv.length || argv[i + 1].startsWith('--')) fail('--root 需要一个目录参数')
-    rootArg = argv[++i]
-  } else if (arg.startsWith('--root=')) {
-    rootArg = arg.slice('--root='.length)
-  } else if (arg.startsWith('-') && arg !== '-') {
-    fail(`未知选项: ${arg}`)
-  } else {
-    files.push(arg)
+/**
+ * 本模块是否被**直接执行**（`node scripts/validate-manifest.mjs …`）。
+ *
+ * 为什么要这个守卫：validateManifest 现在是具名导出，测试（test/settings-progress-field.test.ts）
+ * 会以模块方式载入本文件、直喂 JSON 里**写不出**的夹具对象（如 `max: Infinity` / `NaN`）。
+ * 被载入时绝不能跑 CLI：不消费 argv（测试进程的 argv 是 vitest 的）、不打印、不 process.exit
+ * （否则会把测试工作进程整个杀掉）。直接执行与差分门禁（execFileSync）路径的行为完全不变。
+ */
+function isMainModule() {
+  const entry = process.argv[1]
+  if (typeof entry !== 'string') return false
+  try {
+    const self = fileURLToPath(import.meta.url)
+    const resolved = resolve(entry)
+    // Windows 下 argv[1] 与 import.meta.url 的路径大小写可能不一致，归一化后再比
+    return process.platform === 'win32'
+      ? resolved.toLowerCase() === self.toLowerCase()
+      : resolved === self
+  } catch {
+    return false
   }
 }
 
-const root = resolve(rootArg ? rootArg : DEFAULT_ROOT)
-const { apiVersion: oboxApiVersion, note } = await readOboxApiVersion(root)
-if (note) console.error(`[validate-manifest] 提示: ${note}`)
+async function main() {
+  const argv = process.argv.slice(2)
+  const files = []
+  let rootArg
+  let all = false
+  let jsonMode = false
 
-if (!all && files.length === 0) fail('没有指定任何 manifest.json（用 --all 或给出文件路径）')
-if (all && files.length > 0) fail('--all 不能与具体文件路径同时使用')
-
-let targets = []
-if (all) {
-  const builtinDir = join(root, 'src', 'renderer', 'src', 'extensions')
-  const userDir = join(root, 'extensions')
-  const builtin = await listManifests(builtinDir)
-  const user = await listManifests(userDir)
-  if (builtin.missingDir && user.missingDir) {
-    fail(
-      `--all 没找到任何扩展目录：${builtinDir} 与 ${userDir} 都不存在。` +
-        '请用 --root 指向 obox 仓库根，或直接给出 manifest.json 路径'
-    )
-  }
-  targets = [...builtin.found, ...user.found]
-  if (targets.length === 0) {
-    fail(
-      `${builtinDir} 与 ${userDir} 下都没有扩展的 manifest.json。` +
-        '请用 --root 指向 obox 仓库根，或直接给出 manifest.json 路径'
-    )
-  }
-} else {
-  targets = files.map((f) => resolve(f))
-  for (const target of targets) {
-    try {
-      const info = await stat(target)
-      if (info.isDirectory()) fail(`这是一个目录，请给出 manifest.json 文件路径: ${target}`)
-    } catch {
-      fail(`文件不存在: ${target}`)
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--all') all = true
+    else if (arg === '--json') jsonMode = true
+    else if (arg === '-h' || arg === '--help') {
+      console.log(HELP)
+      process.exit(0)
+    } else if (arg === '--root') {
+      if (i + 1 >= argv.length || argv[i + 1].startsWith('--')) fail('--root 需要一个目录参数')
+      rootArg = argv[++i]
+    } else if (arg.startsWith('--root=')) {
+      rootArg = arg.slice('--root='.length)
+    } else if (arg.startsWith('-') && arg !== '-') {
+      fail(`未知选项: ${arg}`)
+    } else {
+      files.push(arg)
     }
   }
-}
 
-const report = { root, files: [], errorCount: 0, warningCount: 0 }
+  const root = resolve(rootArg ? rootArg : DEFAULT_ROOT)
+  const { apiVersion: oboxApiVersion, note } = await readOboxApiVersion(root)
+  if (note) console.error(`[validate-manifest] 提示: ${note}`)
 
-for (const target of targets) {
-  const messages = []
-  try {
-    const text = await readFile(target, 'utf8')
-    let raw
+  if (!all && files.length === 0) fail('没有指定任何 manifest.json（用 --all 或给出文件路径）')
+  if (all && files.length > 0) fail('--all 不能与具体文件路径同时使用')
+
+  let targets = []
+  if (all) {
+    const builtinDir = join(root, 'src', 'renderer', 'src', 'extensions')
+    const userDir = join(root, 'extensions')
+    const builtin = await listManifests(builtinDir)
+    const user = await listManifests(userDir)
+    if (builtin.missingDir && user.missingDir) {
+      fail(
+        `--all 没找到任何扩展目录：${builtinDir} 与 ${userDir} 都不存在。` +
+          '请用 --root 指向 obox 仓库根，或直接给出 manifest.json 路径'
+      )
+    }
+    targets = [...builtin.found, ...user.found]
+    if (targets.length === 0) {
+      fail(
+        `${builtinDir} 与 ${userDir} 下都没有扩展的 manifest.json。` +
+          '请用 --root 指向 obox 仓库根，或直接给出 manifest.json 路径'
+      )
+    }
+  } else {
+    targets = files.map((f) => resolve(f))
+    for (const target of targets) {
+      try {
+        const info = await stat(target)
+        if (info.isDirectory()) fail(`这是一个目录，请给出 manifest.json 文件路径: ${target}`)
+      } catch {
+        fail(`文件不存在: ${target}`)
+      }
+    }
+  }
+
+  const report = { root, files: [], errorCount: 0, warningCount: 0 }
+
+  for (const target of targets) {
+    const messages = []
     try {
-      raw = JSON.parse(stripBom(text))
+      const text = await readFile(target, 'utf8')
+      let raw
+      try {
+        raw = JSON.parse(stripBom(text))
+      } catch (err) {
+        messages.push({
+          level: 'error',
+          message: `JSON 解析失败: ${err instanceof Error ? err.message : String(err)}`
+        })
+      }
+      if (raw !== undefined) messages.push(...validateManifest(raw, oboxApiVersion))
     } catch (err) {
       messages.push({
         level: 'error',
-        message: `JSON 解析失败: ${err instanceof Error ? err.message : String(err)}`
+        message: `读取失败: ${err instanceof Error ? err.message : String(err)}`
       })
     }
-    if (raw !== undefined) messages.push(...validateManifest(raw, oboxApiVersion))
-  } catch (err) {
-    messages.push({
-      level: 'error',
-      message: `读取失败: ${err instanceof Error ? err.message : String(err)}`
-    })
-  }
 
-  const errors = messages.filter((x) => x.level === 'error')
-  const warnings = messages.filter((x) => x.level === 'warning')
-  report.errorCount += errors.length
-  report.warningCount += warnings.length
-  report.files.push({ path: target, messages })
+    const errors = messages.filter((x) => x.level === 'error')
+    const warnings = messages.filter((x) => x.level === 'warning')
+    report.errorCount += errors.length
+    report.warningCount += warnings.length
+    report.files.push({ path: target, messages })
 
-  if (!jsonMode) {
-    if (messages.length === 0) {
-      console.log(`[validate-manifest] ✓ ${target}: 通过`)
-    }
-    for (const msg of messages) {
-      const mark = msg.level === 'error' ? '✗' : '⚠'
-      console.log(`[validate-manifest] ${mark} ${target}: [${msg.level}] ${msg.message}`)
+    if (!jsonMode) {
+      if (messages.length === 0) {
+        console.log(`[validate-manifest] ✓ ${target}: 通过`)
+      }
+      for (const msg of messages) {
+        const mark = msg.level === 'error' ? '✗' : '⚠'
+        console.log(`[validate-manifest] ${mark} ${target}: [${msg.level}] ${msg.message}`)
+      }
     }
   }
+
+  if (jsonMode) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+  } else {
+    const summary = `[validate-manifest] 共 ${report.files.length} 个 manifest：${report.errorCount} 个 error、${report.warningCount} 个 warning`
+    console.log(summary)
+  }
+
+  process.exit(report.errorCount > 0 ? 1 : 0)
 }
 
-if (jsonMode) {
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
-} else {
-  const summary = `[validate-manifest] 共 ${report.files.length} 个 manifest：${report.errorCount} 个 error、${report.warningCount} 个 warning`
-  console.log(summary)
-}
-
-process.exit(report.errorCount > 0 ? 1 : 0)
+if (isMainModule()) await main()

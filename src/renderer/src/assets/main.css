@@ -50,6 +50,16 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* overlay 窗体（?obox-window=overlay，桌面宠物类透明窗体）：html/body 背景就地置透明。
+   这是 D-11 五处透明改动的第 5/5 处——上面的 body 背景是全局默认，对每个窗口都生效，
+   漏这处则其余四处（主进程窗体参数 + AppWindow.vue 的三处）全白做。
+   class 由 AppWindow.vue 顶部的模块级副作用在首帧前挂上（为什么必须早于挂载见那里的注释）。
+   只影响带该 class 的 overlay 窗口：主窗口与 App 卡片子窗口没有这个 class，规则不命中（R9 回归约束）。 */
+html.obox-overlay,
+html.obox-overlay body {
+  background: transparent;
+}
+
 /* 滚动条 */
 ::-webkit-scrollbar {
   width: 10px;
