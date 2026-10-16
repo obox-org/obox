@@ -1,6 +1,6 @@
 # 用户扩展开发指南（独立仓库 + `.oix` 分发）
 
-**用户扩展**：源码在**自己的仓库**（与 obox 仓库只有扩展 API 依赖），打成 `.oix`（zip）分发，安装到 `userData/extensions/<name>_<清洗后 author>/`（`main/oixCore.ts:51-54`）——**目录名就是宿主看到的扩展 id**，也是 `app://extensions/<id>/` 的那段 id。
+**用户扩展**：源码在**自己的仓库**（与 obox 仓库只有扩展 API 依赖），打成 `.oix`（zip）分发，安装到 `userData/extensions/<name>_<清洗后 author>/`（`main/oixCore.ts:56-60`）——**目录名就是宿主看到的扩展 id**，也是 `app://extensions/<id>/` 的那段 id。
 若你的扩展要随 obox 打包、改仓库源码 —— 那是内置扩展，读 [guides-builtin.md](guides-builtin.md)。
 
 前置：贡献点字段查 [manifest-reference.md](manifest-reference.md)；运行时 API 查 [api-reference.md](api-reference.md)；踩坑查 [troubleshooting.md](troubleshooting.md)。
@@ -21,7 +21,7 @@ my-hello/
 └── scripts/pack.mjs       # 打包 .oix（脚手架生成的零依赖脚本）
 ```
 
-`package.json`（`"type": "module"` + 你自己的 `test` / `pack` 脚本）只为**你的工具链**存在，宿主不读它；宿主只认 `manifest.json`（`core/loader.ts:52-59`、`main/oixCore.ts:56-67`）。
+`package.json`（`"type": "module"` + 你自己的 `test` / `pack` 脚本）只为**你的工具链**存在，宿主不读它；宿主只认 `manifest.json`（`core/loader.ts:52-59`、`main/oixCore.ts:62-73`）。
 
 ## 2. 入口：纯 ESM JavaScript
 
@@ -46,7 +46,7 @@ export default function myHello(api) {
 
 - **不许 `import 'vue'` 或任何裸模块**：`app://` 下没有模块解析器，运行时只有注入的 `api`、标准 JS 与 `fetch` 等。
 - 生命周期钩子（可选具名导出 `install` / `uninstall`）见 [api-reference.md](api-reference.md) 的「生命周期钩子」。
-- **界面怎么来**：`navItems[].view` 需要 Vue 组件对象（宿主按入口具名导出取组件，`core/host.ts:243-249`），而你的入口没有 Vue —— 用户扩展的界面用 **App 卡片静态页**（下一节）或 **`contributes.views` 树**（宿主内置树视图渲染，数据源 `api.views.registerTreeProvider(viewId, provider)`，`api/types.ts:449-451`）；纯命令 / 状态栏 / 通知类扩展不需要界面。
+- **界面怎么来**：`navItems[].view` 需要 Vue 组件对象（宿主按入口具名导出取组件，`core/host.ts:271-275`），而你的入口没有 Vue —— 用户扩展的界面用 **App 卡片静态页**（下一节）或 **`contributes.views` 树**（宿主内置树视图渲染，数据源 `api.views.registerTreeProvider(viewId, provider)`，`api/types.ts:639-641`）；纯命令 / 状态栏 / 通知类扩展不需要界面。
 - 贡献点声明与内置扩展同构（`contributes` 里写 `commands` / `statusBarItems` / `views` / `keybindings` / `menus` / `settings` / `themes` / `ipcChannels` / `i18n` / `updater` 等），但 **`titleKey` 对你无效**——它由宿主语言包解析（`components/NavBar.vue:14`、`components/TreeView.vue:65`），而用户扩展改不了 `src/renderer/src/i18n/locales/`，写了只会显示原始 key；要双语用 `api.i18n` 自己的命名空间。**命令必须先声明**：未声明的 `registerCommand` 会被 `registry.setCommandHandler` 抛错（`core/registry.ts:203`），扩展标红 `activationError`。
 
 ## 3. 两种形态
@@ -83,7 +83,7 @@ const base = new URL('.', import.meta.url).href // 安装态 app://extensions/<�
 const pageUrl = new URL('./page.html', base).href
 ```
 
-- **不要硬编码 `app://extensions/<manifest.name>/`**：安装目录名是 `<name>_<清洗后 author>`（`main/oixCore.ts:51-54`），带作者时与 `manifest.name` 不同。
+- **不要硬编码 `app://extensions/<manifest.name>/`**：安装目录名是 `<name>_<清洗后 author>`（`main/oixCore.ts:56-60`），带作者时与 `manifest.name` 不同。
 - `app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（`main/protocol.ts:12-16,46`）；同一份代码在 `--debug-extension` 下自动指向调试目录。
 
 ## 5. App 卡片与子窗口
@@ -118,39 +118,40 @@ export default function myHello(api) {
 }
 ```
 
-卡片字段见 `src/api/registration.ts`（`icon` 是卡片图标 SVG 字符串；`multiOpen: false` 时重复点击聚焦已有窗口，`main/appWindow.ts:52-59`）。
+卡片字段见 `src/api/registration.ts`（`icon` 是卡片图标 SVG 字符串；`multiOpen: false` 时重复点击聚焦已有窗口，`main/appWindow.ts:53-60`）。
 
 - **内容一律用 `url`，不要用 `html` 内联 `<script>`**：`html` 走 iframe `srcdoc`，而 srcdoc 继承主文档 CSP `script-src 'self' app:`（`src/renderer/index.html:9-10`），内联脚本**必被拦**（按钮点了没反应）。静态页里写**外部脚本** `<script src="./page.js"></script>`：`app://` 文档由协议直出、没有 CSP 头（`main/protocol.ts:33-82`），脚本正常执行。
-- `iconUrl`（可选）：**只接受 `app://extensions/…`**，主进程据此转磁盘路径设任务栏图标（`main/appWindow.ts:33-43,82-85`）；其它协议/主机名（含调试态的 `app://debug/…`）会被忽略，回退应用默认图标。
-- iframe sandbox 为 `allow-scripts allow-same-origin allow-forms allow-popups`（`AppWindow.vue:150-157`）：**没有 `allow-modals` → 页内 `alert` / `confirm` / `prompt` 全部无效**，交互一律自绘 UI。
+- `iconUrl`（可选）：**只接受 `app://extensions/…`**，主进程据此转磁盘路径设任务栏图标（`main/appWindow.ts:34-44,83-86`）；其它协议/主机名（含调试态的 `app://debug/…`）会被忽略，回退应用默认图标。
+- iframe sandbox 为 `allow-scripts allow-same-origin allow-forms allow-popups`（`AppWindow.vue:291-300`）：**没有 `allow-modals` → 页内 `alert` / `confirm` / `prompt` 全部无效**，交互一律自绘 UI。
 - 主题：`srcdoc` 由宿主**自动注入**；**`url` 静态页由宿主经 `obox-theme` 消息下发**（跨源注入不了 CSS，协议与最小接收代码见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)）。仍**建议保留一份兜底**（老宿主 / 推送未达时不空白），但兜底值应集中在**一处**常量而不是散在 CSS 里。另：`url` 型卡片切主题**不重渲染**（变量更新，页内表单内容不丢），`html`/`srcdoc` 型**仍重渲染**。
 - 数据持久化用该页面自己的 `localStorage`（按 `app://` 源隔离，跨窗口/重启保留）。
-- 子窗口**不跑扩展代码**（`core/host.ts:929` 只注册贡献点不激活）：页面里没有 `api`，一切能力都靠下面这座消息桥。
-- 子窗口日志转发到主进程终端，前缀 `[child-renderer:<level>]`（`main/appWindow.ts:107-112`）。
+- 子窗口**不跑扩展代码**（`core/host.ts:1006-1012` 只注册贡献点不激活）：页面里没有 `api`，一切能力都靠下面这座消息桥。
+- 子窗口日志转发到主进程终端，前缀 `[child-renderer:<level>]`（`main/appWindow.ts:108-113`）。
 
 ### 子窗口 ↔ 扩展消息桥
 
 | 方向        | 消息                                                                                   | 说明                                                                        |
 | ----------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| 页面 → 宿主 | `{ source: 'obox-app', action: 'close' \| 'minimize' \| 'maximize' }`                  | 窗口控制（`AppWindow.vue:57-66`）                                           |
-| 页面 → 扩展 | `{ source: 'obox-app', action: 'obox-extension', appId, channel, payload, requestId }` | 转给注册该卡片的扩展的 `api.app.onMessage` handler（`AppWindow.vue:67-97`） |
+| 页面 → 宿主 | `{ source: 'obox-app', action: 'close' \| 'minimize' \| 'maximize' }`                  | 窗口控制（`AppWindow.vue:183-193`）                                           |
+| 页面 → 扩展 | `{ source: 'obox-app', action: 'obox-extension', appId, channel, payload, requestId }` | 转给注册该卡片的扩展的 `api.app.onMessage` handler（`AppWindow.vue:204-237`） |
 | 扩展 → 页面 | `{ source: 'obox-app', action: 'obox-extension-reply', requestId, result }`            | `result` = `{ ok: true, data }` 或 `{ ok: false, error }`                   |
 
-> 关联链路：子窗口 iframe → `AppWindow` → 主进程 → 主窗口宿主 → 卡片所属扩展的 handler → 回传（`main/appWindow.ts:131-188`、`core/host.ts:787-803`）。
+> 关联链路：子窗口 iframe → `AppWindow` → 主进程 → 主窗口宿主 → 卡片所属扩展的 handler → 回传（`main/appWindow.ts:132-214`、`core/host.ts:619-643`）。
 
-- `appId` 必须是**卡片 id**：宿主按它找卡片、再找所属扩展的 handler（`core/host.ts:788-794`）；没注册 handler 时 reply 为 `{ ok: false, error: '扩展未注册消息处理器' }`。
-- `requestId` 由**页面自己生成**并在 reply 里比对（`AppWindow.vue:77,89` 原样回传）；主进程另有一层内部 requestId 做关联，别混用。
-- 单次请求 **60s 超时**（`main/appWindow.ts:162-168`，给模态框留时间），超时 reply `{ ok: false, error: '扩展未响应（超时）' }`。
-- 主窗口关闭时子窗口全部关闭（`main/appWindow.ts:191-199`）。
+- `appId` 必须是**卡片 id**：宿主按它找卡片、再找所属扩展的 handler（`core/host.ts:625-633`）；没注册 handler 时 reply 为 `{ ok: false, error: '扩展未注册消息处理器' }`。
+- `requestId` 由**页面自己生成**并在 reply 里比对（`AppWindow.vue:217,230` 原样回传）；主进程另有一层内部 requestId 做关联，别混用。
+- 单次请求 **60s 超时**（`main/appWindow.ts:185-193`，给模态框留时间），超时 reply `{ ok: false, error: '扩展未响应（超时）' }`。
+- 主窗口关闭时子窗口全部关闭（`main/appWindow.ts:217-232`）。
 - 卡片注册是持久化的：宿主写入 localStorage、扩展停用时清理、同 id 重复注册只更新（`core/appStore.ts:5-6,61-74,92-102`）。
+- 后台扩展的**透明 overlay 窗体**是另一类窗体（无卡片、不进启动器），完整契约见 [api-reference.md](api-reference.md) 的 `### overlay` 小节，本节不复制；本节的卡片/消息桥约定对 overlay 的差异：**不进 `appStore`**、不渲染 TitleBar/PromptHost、主题推送不触达。
 
 ## 6. 打包 `.oix`
 
 `.oix` 就是 zip（扁平布局，`main/oix.ts:6`），四条硬性要求：
 
-1. **`manifest.json` 必须是 zip 根条目**（不能套一层目录、不能带 `./` 前缀，否则 `invalid-manifest`；`main/oixCore.ts:56-67,206-208`）。
-2. zip 内路径用正斜杠：含反斜杠、绝对路径、`..`、空段的条目整体拒绝（zip-slip 防护，`main/oixCore.ts:73-86`）。
-3. `manifest.main` 指向的入口必须在包内（`./index.js` 与 `index.js` 等价，`main/oixCore.ts:219-222`）。
+1. **`manifest.json` 必须是 zip 根条目**（不能套一层目录、不能带 `./` 前缀，否则 `invalid-manifest`；`main/oixCore.ts:62-73,222-225`）。
+2. zip 内路径用正斜杠：含反斜杠、绝对路径、`..`、空段的条目整体拒绝（zip-slip 防护，`main/oixCore.ts:75-92`）。
+3. `manifest.main` 指向的入口必须在包内（`./index.js` 与 `index.js` 等价，`main/oixCore.ts:236-239`）。
 4. **`data/` 不得进包**：`data/` 是宿主分配的**运行时数据目录**（`userData/extensions/<id>/data`：`api.fs` / `api.sqlite` / `api.python` 都写这里），也是**覆盖安装时宿主保留**的那份数据。包内出现 `data/**` 时安装器直接拒收（错误码 `forbidden-entry`，不落盘、不产生残留）；即便放行，也只会用包里的旧文件覆盖用户现场数据。所以打包时**显式排除 `data/`**，顺带排除 `out/`、`node_modules/`、`.git/`。
 
 排除写法（脚手架生成的 `scripts/pack.mjs` 已按此实现）：**白名单收集**最稳——只列要进包的条目（`manifest.json`、入口、静态资源、构建产物目录），递归时按目录名跳过：
@@ -171,14 +172,14 @@ for (const entry of readdirSync(dir, { withFileTypes: true })) {
 node scripts/pack.mjs   # 产出 out/<name>-<version>.oix
 ```
 
-限额：条目数 ≤ 10000、解压总量 ≤ 512MB（`main/oixCore.ts:249-252` 的默认值）—— 别把中间产物打进去。安装失败的错误码与成因查 [troubleshooting.md](troubleshooting.md)。
+限额：条目数 ≤ 10000、解压总量 ≤ 512MB（`main/oixCore.ts:28-29` 的默认值）—— 别把中间产物打进去。安装失败的错误码与成因查 [troubleshooting.md](troubleshooting.md)。
 
 ## 7. 安装与热生效
 
 - 扩展管理器工具栏「安装扩展」选 `.oix`，或把 `.oix` **拖进**扩展管理器视图（`extensions/ext-manager/ExtensionManagerView.vue:166-212,250-256`）。
-- 安装（含同名覆盖升级）成功后**立即热生效**：宿主清理旧实例 → 注册贡献点 → 激活，列表即时出现、导航 / 状态栏 / 命令立即可用，**无需重启**（`core/host.ts:956-994`、`ExtensionManagerView.vue:114-164`）。manifest 无效或激活失败 → 扩展在列表里标红，详情页给 `activationError`。
-- **禁用 / 卸载**才可能要求重启：未激活的扩展可立即热移除，**已激活的扩展禁用或卸载会标记需重启**并在 UI 出现「立即重启」（`core/host.ts:1079-1120`）。所以"升级 = 直接覆盖安装"是热路径，"先卸载再装"要走重启。
-- 内置扩展不可卸载；调试扩展不占安装态（`core/host.ts:1109-1110`）。
+- 安装（含同名覆盖升级）成功后**立即热生效**：宿主清理旧实例 → 注册贡献点 → 激活，列表即时出现、导航 / 状态栏 / 命令立即可用，**无需重启**（`core/host.ts:1038-1085`、`ExtensionManagerView.vue:114-164`）。manifest 无效或激活失败 → 扩展在列表里标红，详情页给 `activationError`。
+- **禁用 / 卸载**才可能要求重启：未激活的扩展可立即热移除，**已激活的扩展禁用或卸载会标记需重启**并在 UI 出现「立即重启」（`core/host.ts:1168-1209`）。所以"升级 = 直接覆盖安装"是热路径，"先卸载再装"要走重启。
+- 内置扩展不可卸载；调试扩展不占安装态（`core/host.ts:1198-1199`）。
 
 ## 8. 在 VS Code 里调试（不安装、不依赖 obox 源码）
 
@@ -193,7 +194,7 @@ npm run dev -- -- --remote-debugging-port=9333 --debug-extension my-hello@<路�
 ```
 
 - `--debug-extension` 可重复传多个；`<id>` 须与 `manifest.name` 一致（id 正则大小写不敏感，`main/debug.ts:12`），路径**可相对**（`main/debug.ts:24-32` 用 `resolve()`）；id 非法或路径不存在会被静默跳过。
-- 调试扩展经 `app://debug/<id>/` 加载（`core/loader.ts:73-97`）：不写 userData、无安装时间戳、管理器显示「调试中」、不可卸载，重启消失。
+- 调试扩展经 `app://debug/<id>/` 加载（`core/loader.ts:73-97`）：**不占安装态**（不写安装时间戳、管理器显示「调试中」、**不可从管理器停用/卸载**），重启消失。**注意两处易误解的事实**（卡 16 实测）：① **调试扩展照样写 userData**——数据目录与安装态一致（`userData/extensions/<id>/data`，见下一条），`state.json` 等运行时文件真实落盘；② 因为管理器对调试扩展隐藏了停用/卸载入口（`extensions/ext-manager/ExtensionManagerView.vue` 对 `source === 'debug'` 不渲染该按钮），它的**生命周期只由 CLI 控制**：改代码后重载窗口、去掉 `--debug-extension` 重启即消失。要在 UI 里演练"停用即回收"，请改用安装态的 `.oix`。
 - **调试扩展可自带运行时 / 二进制**：宿主找"扩展自己的文件"时调试目录优先（`main/paths.ts:22-31`），所以 `<扩展>/python/`、`bin/x.exe` 与安装态行为一致；**数据目录**仍在 `userData/extensions/<id>/data`（`main/fs.ts:12-14`）。
 - 启动日志 `[debug] 调试扩展 N 个: id@路径` 证明参数进来了（`main/debug.ts:47-53`）；没有这行就是没传进 electron。
 - 改代码后重载窗口生效：入口是 `app://` 动态 import，模块缓存不会自动失效。

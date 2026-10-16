@@ -77,6 +77,23 @@ export interface HostOptions {
   activateExtensions?: boolean
 }
 
+/**
+ * 扩展消息（`extension:message`）的归属路由（纯函数；test/overlay-window.test.ts 直接测）。
+ *
+ * 顺序即契约（卡 03）：
+ * 1. `appId` 命中 App 卡片 ⇒ 卡片所属扩展（**既有路径**：App 卡片子窗口的行为逐字不变）；
+ * 2. 未命中再按 `overlayId` 查 overlay 路由表 ⇒ 所属扩展——后台扩展（桌面宠物）没有卡片，
+ *    页面把自己的 overlayId 当 appId 原样发（design D-3/D-11），外壳转发代码因此几乎不用改；
+ * 3. 都未命中 ⇒ undefined，调用方回**既有错误**「扩展未注册消息处理器」。
+ */
+export function resolveMessageExtId(
+  appId: string,
+  findCardExtension: (appId: string) => string | undefined,
+  overlayOwners: ReadonlyMap<string, string>
+): string | undefined {
+  return findCardExtension(appId) ?? overlayOwners.get(appId)
+}
+
 class ExtensionHost {
   private root: Context
   private extensions = new Map<string, ExtensionInfo>()
@@ -95,6 +112,14 @@ class ExtensionHost {
     string,
     (channel: string, payload: unknown) => unknown | Promise<unknown>
   >()
+  /**
+   * overlay 路由表：overlayId → 所属扩展 id（卡 03）。api.overlay.create 成功时登记，
+   * destroy / 扩展移除时删除。用途：消息桥按 appId **先查卡片、查不到再按 overlayId 查本表**
+   * （resolveMessageExtId）——桌面宠物一类**后台扩展**不注册 App 卡片，页面把自己的
+   * overlayId 当 appId 发消息（design D-3/D-11；overlayId 全局唯一由主进程创建时保证，
+   * 见 main/appWindow.ts createOverlayWindow 的重复 id 拒绝）。
+   */
+  private overlayOwners = new Map<string, string>()
 
   /** 宿主就绪：贡献点已注册完毕，UI 可查询 */
   readonly ready: Promise<void>
@@ -407,6 +432,7 @@ class ExtensionHost {
           return { dispose }
         }
       },
+      overlay: this.buildOverlayApi(ext, disposables),
       i18n: {
         t: (key, params) => translateExtension(ext.id, key, params),
         get locale(): string {
@@ -539,6 +565,84 @@ class ExtensionHost {
         }
       }
     }
+  }
+
+  /**
+   * 构造 api.overlay（卡 03；窗体实现全在主进程 main/appWindow.ts，这里只做两件事）：
+   * 1. 维护 overlayId → 扩展 id 路由表（overlayOwners）——消息桥按 appId 查不到卡片时，
+   *    按 overlayId 找所属扩展派发（resolveMessageExtId）；
+   * 2. 把「销毁该 overlay」挂进 disposables——扩展停用/卸载走**既有 cleanup 路径**
+   *    （activateExtension 的 disposeAll / removeExtension 的 cleanup()）自动回收窗体，
+   *    扩展无需手动销毁兜底（api/types.ts overlay 的 JSDoc 契约、pet-window spec
+   *    「停用或卸载即回收窗体」）。
+   * 作用域安全由主进程按 extId 校验（四个方法都只能操作调用方扩展自己创建的 overlay，
+   * 越权返回 ok:false + `[overlay]` 日志）；宿主侧把 ext.id 绑死在闭包里，扩展拿不到别人的绑定。
+   */
+  private buildOverlayApi(
+    ext: ExtensionInfo,
+    disposables: Array<() => void>
+  ): ExtensionActivationApi['overlay'] {
+    return {
+      create: async (options) => {
+        // 清理钩子在 create 发起时就挂（而不是等成功再挂）：create 是异步 IPC，若扩展入口在
+        // 发起创建后立刻抛错，disposeAll 仍能销毁随后创建出来的窗体（IPC 同管道保序：
+        // destroy 必在 create 之后被主进程处理）；destroy 对不存在的 id 幂等，多挂无副作用
+        const overlayId = typeof options?.id === 'string' ? options.id : ''
+        if (overlayId) {
+          disposables.push(() => {
+            if (this.overlayOwners.get(overlayId) === ext.id) this.overlayOwners.delete(overlayId)
+            void window.api.overlayDestroy(ext.id, overlayId)
+          })
+        }
+        const r = await window.api.overlayCreate(ext.id, options)
+        // 路由表只收成功创建的 overlay（失败的 id 没有窗体，也不该参与消息路由）
+        if (r.ok && overlayId) this.overlayOwners.set(overlayId, ext.id)
+        return r
+      },
+      destroy: async (id) => {
+        const r = await window.api.overlayDestroy(ext.id, id)
+        // ok 覆盖「销毁成功」与「幂等：本就不存在」两种情况，都把路由项收掉；
+        // 越权被拒（ok:false，id 属于别的扩展）时不动别人的路由
+        if (r.ok && this.overlayOwners.get(id) === ext.id) this.overlayOwners.delete(id)
+        return r
+      },
+      setMouseThrough: (id, through) => window.api.overlaySetMouseThrough(ext.id, id, through),
+      // 移动窗体（卡 14）：坐标钳位与合法性校验都在主进程（宿主兜底、扩展主钳，design D-13）；
+      // 返回的 position = 钳制后实际坐标，扩展入口用它校正自己记录的位置
+      setPosition: (id, x, y) => window.api.overlaySetPosition(ext.id, id, x, y)
+    }
+  }
+
+  /**
+   * `extension:message` 派发（start() 里注册监听；拆成私有方法便于测试直接调用，
+   * 先例：test/ipc-renderer-close.test.ts 对 buildIpcApi 的用法）。
+   * App 卡片子窗口的行为与卡 03 之前**逐字一致**：只是归属查找换成了 resolveMessageExtId
+   * 纯函数（卡片命中 ⇒ 既有路径；未命中 ⇒ overlay 兜底路由；都未命中 ⇒ 既有错误文案）。
+   */
+  private handleExtensionMessage(e: {
+    requestId: number
+    appId: string
+    channel: string
+    payload: unknown
+  }): void {
+    const extId = resolveMessageExtId(
+      e.appId,
+      (id) => appStore.findById(id)?.extensionId,
+      this.overlayOwners
+    )
+    const handler = extId ? this.appMessageHandlers.get(extId) : undefined
+    if (!handler) {
+      window.api.extensionReply(e.requestId, { ok: false, error: '扩展未注册消息处理器' })
+      return
+    }
+    Promise.resolve(handler(e.channel, e.payload))
+      .then((data) => window.api.extensionReply(e.requestId, { ok: true, data }))
+      .catch((err) =>
+        window.api.extensionReply(e.requestId, {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      )
   }
 
   /** 构造 api.theme（读当前主题 + 监听切换，纯渲染侧） */
@@ -778,24 +882,10 @@ class ExtensionHost {
     })
     // 内置树视图组件（contributes.views 声明的导航项都指向它；数据源由 api.views 提供）
     registry.registerViewComponent('obox.tree', TreeView)
-    // App 子窗口 ↔ 扩展消息桥：按 appId 找到卡片所属扩展，调用其 handler，结果回传
-    window.events.on('extension:message', (e) => {
-      const item = appStore.findById(e.appId)
-      const extId = item?.extensionId
-      const handler = extId ? this.appMessageHandlers.get(extId) : undefined
-      if (!handler) {
-        window.api.extensionReply(e.requestId, { ok: false, error: '扩展未注册消息处理器' })
-        return
-      }
-      Promise.resolve(handler(e.channel, e.payload))
-        .then((data) => window.api.extensionReply(e.requestId, { ok: true, data }))
-        .catch((err) =>
-          window.api.extensionReply(e.requestId, {
-            ok: false,
-            error: err instanceof Error ? err.message : String(err)
-          })
-        )
-    })
+    // App 子窗口 / overlay 窗体 ↔ 扩展消息桥：归属路由在 handleExtensionMessage
+    // （先按卡片 id 查所属扩展 = 既有路径；查不到再按 overlayId 查 overlayOwners = 卡 03 新增，
+    // 后台扩展没有卡片，页面把自己的 overlayId 当 appId 发；design D-3/D-11）
+    window.events.on('extension:message', (e) => this.handleExtensionMessage(e))
     // 生命周期钩子（issue #52）：主进程请宿主执行入口导出的 install / uninstall。
     // 扩展尚未加载到宿主时（刚安装完还没被扫描到）回 deferred —— 主进程据此保留 pendingInstall，
     // 下次启动扫描期补跑，而不是把"没跑"记成"跑过了"。
@@ -1043,7 +1133,8 @@ class ExtensionHost {
   removeExtension(id: string): boolean {
     const ext = this.extensions.get(id)
     if (!ext) return false
-    // 执行扩展注册的清理函数（命令 handler 清空、事件移除、App 卡片移除等）
+    // 执行扩展注册的清理函数（命令 handler 清空、事件移除、App 卡片移除等；
+    // 卡 03 起也含 api.overlay.create 挂上的「销毁 overlay」钩子——停用/卸载即回收窗体）
     const cleanup = this.cleanups.get(id)
     if (cleanup) {
       try {
@@ -1052,6 +1143,12 @@ class ExtensionHost {
         console.warn(`[host] cleanup ${id} error`, err)
       }
       this.cleanups.delete(id)
+    }
+    // overlay 路由表兜底清扫（卡 03）：窗体销毁由上面的 cleanup 触发（create 时挂进 disposables），
+    // 这里清路由项——即便某条 create IPC 还在途、销毁钩子扑空（主进程随后的 destroy/'closed'
+    // 仍会收掉窗体），路由项也不能残留，否则消息会按 overlayId 投给一个已停用的扩展
+    for (const [overlayId, owner] of this.overlayOwners) {
+      if (owner === id) this.overlayOwners.delete(overlayId)
     }
     // 注册表贡献项 + 视图组件 + App 卡片 + 设置页 + 语言包 + 更新提供者
     registry.deactivateExtension(id)

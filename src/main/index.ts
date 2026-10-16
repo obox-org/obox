@@ -16,7 +16,11 @@ import { cleanupAllExtensionResources, cleanupExtensionResources } from './exten
 import { secondaryInstanceNotice } from './singleInstanceCore'
 import { registerCapabilityIpc } from './capabilities'
 import { registerExtensionProtocol } from './protocol'
-import { registerAppWindowIpc, closeAllAppWindowsOnMainClose } from './appWindow'
+import {
+  registerAppWindowIpc,
+  closeAllAppWindowsOnMainClose,
+  registerOverlayIpc
+} from './appWindow'
 import { registerOixIpc } from './oix'
 import { registerUpdateIpc, onUpdateEvent } from './updater'
 import { parseDebugExtensions, registerDebugIpc } from './debug'
@@ -94,6 +98,9 @@ app.whenReady().then(() => {
   registerAutoStartIpc()
   registerCapabilityIpc()
   registerAppWindowIpc()
+  // overlay 窗体四条 IPC（create/destroy/set-mouse-through/set-position，卡 03/14）：桌面宠物类
+  // 后台扩展的常驻桌面小窗；作用域（只能操作自己创建的 overlay）由主进程按扩展 id 校验
+  registerOverlayIpc()
   registerOixIpc()
   registerUpdateIpc()
   registerDebugIpc(debugExtensions)

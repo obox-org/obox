@@ -9,14 +9,27 @@ import type { Disposable } from './runtime'
 import type { IpcChannelDeclaration, Memento, ProxyConfig, UpdateEvent } from './shared'
 // 对话框类型是**主进程/preload/扩展 API 三处共用**的同一份定义（spec §9.11 H-2/H-3），
 // 落在 src/shared/types.ts，这里只再导出给扩展作者（`import type { DialogOpenOptions } from '<ext>/api'`）。
+// overlay 的请求/响应类型沿用同一先例（扩展 API 与主进程窗体实现共用一份契约，防签名漂移），
+// 同样落在 shared、在这里再导出。
 import type {
+  CreateOverlayRequest,
   DialogFilter,
   DialogOpenOptions,
   DialogOpenResult,
-  DialogProperty
+  DialogProperty,
+  OverlayAnchor,
+  OverlayResult
 } from '../shared/types'
 
-export type { DialogFilter, DialogOpenOptions, DialogOpenResult, DialogProperty }
+export type {
+  CreateOverlayRequest,
+  DialogFilter,
+  DialogOpenOptions,
+  DialogOpenResult,
+  DialogProperty,
+  OverlayAnchor,
+  OverlayResult
+}
 
 /** 数据库行（对象，键=列名） */
 export type SqliteRow = Record<string, unknown>
@@ -170,6 +183,72 @@ export interface ExtensionActivationApi {
     onMessage(
       handler: (channel: string, payload: unknown) => unknown | Promise<unknown>
     ): Disposable
+  }
+  /**
+   * Overlay 窗体：无边框、可透明、可置顶、可不占任务栏的**固定小窗**（桌面宠物/悬浮小部件类场景）。
+   *
+   * 与 App 子窗口（`api.app`）的区别：overlay 不注册卡片、不进启动器/导航区，由**扩展自行
+   * 创建与销毁**——适合"后台扩展"（不注册 App 卡片）的常驻桌面 UI。窗体尺寸固定（不可调整
+   * 大小、不可最大化），定位在**主显示器**的工作区（`workArea`，不含任务栏）内按 `anchor` 贴角。
+   *
+   * **作用域（安全约束）**：四个方法都只能操作**调用方扩展自己创建的** overlay——宿主按扩展 id
+   * 校验，越权操作别人的 overlay 一律拒绝（返回 `ok: false` + 原因）。为什么必须严格：扩展与
+   * 宿主同上下文、无沙箱（ADR-0015），不限定作用域等于任一扩展都能销毁或穿透别人的窗体。
+   *
+   * 宿主停用/卸载扩展时会**自动回收**该扩展的全部 overlay（与入口 cleanup 一同生效），
+   * 扩展无需手动销毁兜底。
+   *
+   * 本命名空间为**必填**（卡 03 运行时接线落地后由 `overlay?` 翻成 `overlay`，裁定 R2/R12）：
+   * 宿主 buildApi（core/host.ts 的 buildOverlayApi）构造 api 时必定注入。老宿主没有本命名空间
+   * 的问题由 manifest `apiVersion` 门槛兜底——声明 `apiVersion: 2` 的扩展在老宿主上直接被
+   * 拒绝加载（见 `core/manifest.ts`），因此过门槛成功激活的扩展可直接 `api.overlay.create(...)`，
+   * 不需要可选链。
+   */
+  overlay: {
+    /**
+     * 创建 overlay 窗体。失败**不抛错**，返回 `ok: false` + `error`
+     * （与 `notification.show` / `shell.openExternal` 的返回风格一致）。
+     *
+     * 宿主校验的契约（违反一律拒绝）：`id`/`url` 非空、`width`/`height` 必须 > 0、
+     * `margin` ≥ 0、`anchor` 必须是合法枚举值、`url` 必须指向本扩展内的页面（不得越出
+     * 扩展目录）；同一扩展下同一 `id` 重复创建会被拒绝。创建成功后窗体**默认鼠标穿透**
+     * （等效已调用 `setMouseThrough(id, true)`）——透明 overlay 不应一出现就"吞掉"其
+     * 覆盖区域的桌面点击。
+     *
+     * 成功时返回的 `position` 是窗体在屏幕上的**绝对坐标**（左上角；anchor/margin 解析后的
+     * 真实值，R31）——扩展拿不到 workArea，拖动换位时以它为基准把增量换算成 `setPosition`
+     * 的绝对坐标。失败路径不带 `position`。
+     */
+    create(options: CreateOverlayRequest): Promise<OverlayResult>
+    /**
+     * 销毁指定 overlay：**真正销毁**窗体（不是隐藏）——页面与驱动它的 rAF/定时器动画循环
+     * 随之终止，CPU 占用回落；权威状态应由扩展入口持有，不随窗体销毁丢失。
+     * 幂等：不存在（或已销毁）的 `id` 重复销毁静默成功；越权（`id` 属于别的扩展）会被拒绝。
+     */
+    destroy(id: string): Promise<OverlayResult>
+    /**
+     * 切换鼠标穿透：`through: true` ⇒ 整窗不接收鼠标事件，宿主实现为
+     * `setIgnoreMouseEvents(true, { forward: true })`——悬停移动**仍会转发**给页面，
+     * 页面据此做命中测试（未命中精灵/面板 ⇒ 保持穿透；命中 ⇒ 临时关闭穿透以接收点击）；
+     * `false` ⇒ `setIgnoreMouseEvents(false)` 恢复正常接收。
+     * 注意这是**整窗**切换：Electron 没有逐像素 alpha 穿透（关闭穿透时透明窗体的空白区
+     * 也会一并捕获点击）。越权会被拒绝。
+     */
+    setMouseThrough(id: string, through: boolean): Promise<OverlayResult>
+    /**
+     * 移动 overlay 窗体到屏幕坐标 `(x, y)`（**窗体左上角**，像素；拖宠物换位一类的运行期移动）。
+     * 失败**不抛错**，返回 `ok: false` + `error`；成功时返回的 `position` 是**钳制后的实际坐标**
+     * （与 `create` 回传初始绝对位置同口径），扩展入口应用它校正自己记录的位置。
+     *
+     * **钳位双保险**：扩展侧**主钳**（拖动入口累加增量后先钳到工作区再调本方法，见宠物扩展
+     * design D-13）；宿主侧**兜底**——把 x/y 钳进主显示器工作区（`x ∈ [wa.x, wa.x+wa.width-w]`、
+     * `y ∈ [wa.y, wa.y+wa.height-h]`，w/h 为该 overlay 当前尺寸）。为什么要回传 `position`：
+     * 扩展拿不到 workArea，被宿主钳过之后只有自己算的值是错的。
+     * 非法坐标（NaN/Infinity/非数字）**直接拒绝，不钳不猜**。
+     * 移动只改位置：不触碰 transparent/alwaysOnTop/鼠标穿透态；不存在的 `id` 返回 `ok: false`
+     * （与 `setMouseThrough` 同口径，无幂等语义）；越权（`id` 属于别的扩展）会被拒绝。
+     */
+    setPosition(id: string, x: number, y: number): Promise<OverlayResult>
   }
   /** 扩展多语言能力（扩展语言包与宿主语言包独立命名空间） */
   i18n: {

@@ -14,6 +14,16 @@
  * `registerContributions` 阶段追加的（依赖运行期状态：keybindingStore、入口模块导出表）。
  * 所以这里比对的是 error 面；fixtures 必须保持 **0 warning**（否则会出现"仅脚本一侧"的消息，
  * 那是脚本超出 `validateManifest()` 的部分，不是漂移）。脚本侧的 warning 规则另行在脚本内注释说明。
+ *
+ * 例外段（progress 字段全链，卡 04）：脚本对 `contributes.settings` 做了**独有的静态收紧**
+ * （字段类型白名单 / `max` 必须 >0 的数字 / `progress` 的 `default` 必须是数字），宿主的
+ * `validateManifest()` **不**校验 settings——宿主运行期对未知字段类型的策略是"兜底渲染成
+ * 可编辑 text + console.warn"（SettingsView.vue 链尾 v-else），不是清单 error。收紧的理由：
+ * type 写错（如 'gauge'）的 manifest 一旦发布，只读字段（status/progress）在用户机器上就是
+ * 一个**可编辑文本框**，误编辑即覆盖扩展写的状态——静态校验是发布前唯一拦截点。
+ * 该段不参与 fixture 差分比对（现有 fixtures 不含非法 settings；ok-full.json 的 settings
+ * 声明合法，两侧 0 error）；白名单与宿主 `SettingFieldType` 的一致性由下方专门的
+ * 源码解析断言钉住（TS 类型别名没有运行时痕迹，只能两侧各自解析源码比对）。
  */
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -64,6 +74,30 @@ function hostMessages(fixturePath: string): Message[] {
   }))
 }
 
+/**
+ * 宿主 `SettingFieldType` 白名单：从 src/api/contributions.ts **源码**解析联合类型声明。
+ * TS 类型别名没有运行时痕迹（编译后即消失），无法经 import 取值——解析源码是差分的唯一形态。
+ * 声明形状固定为 `export type SettingFieldType =` 起、到下一个空行止（成员全是单引号字面量）。
+ */
+function hostSettingFieldTypes(): string[] {
+  const src = readFileSync(join(repoRoot, 'src', 'api', 'contributions.ts'), 'utf8')
+  const at = src.indexOf('export type SettingFieldType')
+  expect(at).toBeGreaterThan(-1)
+  const decl = src.slice(at, src.indexOf('\n\n', at))
+  const types = [...decl.matchAll(/'([^']+)'/g)].map((m) => m[1])
+  expect(types.length).toBeGreaterThan(0)
+  return types
+}
+
+/** 脚本侧白名单：从 scripts/validate-manifest.mjs 源码解析 `SETTING_FIELD_TYPES` 数组 */
+function scriptSettingFieldTypes(): string[] {
+  const src = readFileSync(scriptPath, 'utf8')
+  const decl = /const SETTING_FIELD_TYPES = \[([\s\S]*?)\]/.exec(src)?.[1] ?? ''
+  const types = [...decl.matchAll(/'([^']+)'/g)].map((m) => m[1])
+  expect(types.length).toBeGreaterThan(0)
+  return types
+}
+
 const fixtures = readdirSync(fixturesDir)
   .filter((name) => name.endsWith('.json'))
   .sort()
@@ -106,6 +140,18 @@ describe('manifest 校验：宿主规则与仓库脚本的差分门禁', () => {
     expect(specifiers.length).toBeGreaterThan(0)
     // 只允许 node: 内建模块——不得出现 src/**、相对路径或 npm 包
     expect(specifiers.filter((s) => !s.startsWith('node:'))).toEqual([])
+  })
+
+  it('settings 字段类型白名单：脚本与宿主 SettingFieldType 逐字相等（含 API v2 新增的 progress）', () => {
+    const host = hostSettingFieldTypes()
+    const script = scriptSettingFieldTypes()
+    // 逐字相等 = 集合与**顺序**都一致：脚本报错文案「允许：text / number / …」直接列出该顺序，
+    // 顺序不同即文案漂移
+    expect(script).toEqual(host)
+    // progress（设置页进度条字段）必须两侧都在——宿主类型加了而脚本白名单漏了的话，
+    // 合法 progress manifest 会被脚本判 error（"给合法清单亮红灯"方向的漂移，同样是门禁要拦的）
+    expect(host).toContain('progress')
+    expect(host).toEqual(['text', 'number', 'boolean', 'select', 'directory', 'status', 'progress'])
   })
 
   it.each(fixtures)('%s：脚本与宿主的 {level, message} 多重集逐字一致', (name) => {

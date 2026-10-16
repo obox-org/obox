@@ -23,18 +23,18 @@ export default function myExt(api: ExtensionActivationApi): (() => void) | void 
 
 ## 宿主生命周期语义
 
-- **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表（`host.ts:904-940`）
-- **App 子窗口不激活扩展，但仍会 import 入口**：子窗口（`?obox-window=app`）由 `src/renderer/src/main.ts:27` 传 `activateExtensions:false`，**只跳过阶段二**（不调用 `plugin(api)`，`host.ts:924-930`）；**阶段一照常执行**——宿主仍 `await load()` 每个扩展入口模块并 `registerContributions`（`host.ts:905-918`）。也就是说：**入口模块的顶层代码会在每个 App 子窗口重跑**，`default` 插件函数才只在主窗口执行一次。因此**副作用（连 IPC、写盘、起定时器、装监听、注册命令）必须放进插件函数**，写在模块顶层会在每个子窗口重复执行。子窗口渲染所需的数据来自贡献点注册表与（与主窗口同源的）localStorage 里的 App 卡片（`appStore`）；子窗口内的交互请走 `api.app.onMessage` 消息桥
-- **依赖拓扑序**：`extensionDependencies` 先激活依赖；**检测到环不跳过**——环内扩展仍会被激活，只是排到最后（`manifest.ts:197-200` 把环内扩展补进 `ordered`，`host.ts:931` 照常激活）；宿主启动日志末尾会列出环内 id（`host.ts:943-949` 的 `依赖环 …`）。缺失依赖不阻塞，扩展照常激活（`manifest.ts:187`）
+- **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表（`host.ts:986-1004`）
+- **App 子窗口不激活扩展，但仍会 import 入口**：子窗口（`?obox-window=app`；overlay 窗体 `?obox-window=overlay` 同判，`src/renderer/src/main.ts:21-23`）由 `src/renderer/src/main.ts:37` 传 `activateExtensions:false`，**只跳过阶段二**（不调用 `plugin(api)`，`host.ts:1006-1012`）；**阶段一照常执行**——宿主仍 `await load()` 每个扩展入口模块并 `registerContributions`（`host.ts:986-1000`）。也就是说：**入口模块的顶层代码会在每个 App 子窗口重跑**，`default` 插件函数才只在主窗口执行一次。因此**副作用（连 IPC、写盘、起定时器、装监听、注册命令）必须放进插件函数**，写在模块顶层会在每个子窗口重复执行。子窗口渲染所需的数据来自贡献点注册表与（与主窗口同源的）localStorage 里的 App 卡片（`appStore`）；子窗口内的交互请走 `api.app.onMessage` 消息桥
+- **依赖拓扑序**：`extensionDependencies` 先激活依赖；**检测到环不跳过**——环内扩展仍会被激活，只是排到最后（`manifest.ts:197-200` 把环内扩展补进 `ordered`，`host.ts:1013-1022` 照常激活）；宿主启动日志末尾会列出环内 id（`host.ts:1024-1031` 的 `依赖环 …`）。缺失依赖不阻塞，扩展照常激活（`manifest.ts:187`）
 - **命令归属**：命令 id 全局唯一，`api.registerCommand(id, handler)` 只能绑定**本扩展 manifest 声明**的命令；绑定别人声明的 id 会被拒绝（`console.warn` + 返回空 Disposable，`registry.ts:206-211`），绑定完全未声明的 id 直接抛错（见 `registerCommand`）。扩展被热移除/卸载/覆盖安装时，其命令会从注册表**物理移除**，同 id 可被其它版本或扩展重新声明（`registry.ts:189-191`）
 - **停用**：扩展停用（禁用/重启/卸载）时，宿主执行插件返回的 cleanup、dispose 全部注册（命令 handler 清空、App 卡片移除、事件监听移除）
 - **热生效**：安装 .oix 后宿主立即热加载（扫描→注册贡献点→激活），无需重启；禁用/卸载未激活扩展立即热移除，已激活扩展显示"立即重启"按钮（重载渲染进程生效）
-- **激活失败**：`plugin(api)` 抛错 → `activationError` 记录（`host.ts:937-939`），扩展管理器详情页展示，不影响其他扩展
+- **激活失败**：`plugin(api)` 抛错 → `activationError` 记录（`host.ts:1019-1021`），扩展管理器详情页展示，不影响其他扩展
 - **热重载（dev）**：Vite HMR 会重载扩展模块；注册必须可清理，否则重复注册冲突
 
 ## 方法总览
 
-以下小节都是 `api` 对象的成员（含 `### api.ipc` / `### api.python`）。
+以下小节都是 `api` 对象的成员（含 `### overlay` / `### api.ipc` / `### api.python`）。
 
 ### registerCommand(id, handler) → Disposable
 
@@ -48,7 +48,7 @@ const d = api.registerCommand('my-ext.do', async (arg) => {
 // d.dispose() 解除绑定
 ```
 
-- **命令必须已在 `manifest.contributes.commands` 声明**：未声明时宿主先打一条 `console.warn`（`host.ts:287-291`），紧接着 `registry.setCommandHandler` **抛错**（`registry.ts:203`）——错误从 `plugin(api)` 冒出，扩展被标红 `activationError`，host 捕获后**不再继续激活该扩展**（`host.ts:937-939`）
+- **命令必须已在 `manifest.contributes.commands` 声明**：未声明时宿主先打一条 `console.warn`（`host.ts:313-317`），紧接着 `registry.setCommandHandler` **抛错**（`registry.ts:203`）——错误从 `plugin(api)` 冒出，扩展被标红 `activationError`，host 捕获后**不再继续激活该扩展**（`host.ts:1019-1021`）
 - 归属校验：id 已被别的扩展声明时只 `console.warn` 并返回空 Disposable，即**静默不绑定**（`registry.ts:206-211`）
 
 ### executeCommand<T>(id, ...args) → Promise<T>
@@ -82,8 +82,8 @@ item.show() // 显示
 item.dispose() // 销毁（扩展停用宿主自动清理）
 ```
 
-- 上面前四个方法作用于**已声明**的项：id 不存在时静默无操作（`host.ts:297-312`）
-- `createItem(init?)` 的 `init` 可选字段：`text` / `tooltip` / `alignment`（`'left' | 'right'`）/ `priority`（`src/api/types.ts:118-123`）
+- 上面前四个方法作用于**已声明**的项：id 不存在时静默无操作（`host.ts:322-338`）
+- `createItem(init?)` 的 `init` 可选字段：`text` / `tooltip` / `alignment`（`'left' | 'right'`）/ `priority`（`src/api/types.ts:141-146`）
 
 ### navbar（导航栏徽标）
 
@@ -166,7 +166,7 @@ const d = api.app.register({
 })
 ```
 
-- `icon` 必填；`iconUrl` 只接受 `app://extensions/<id>/<rest>` 形状——主进程解析成 `userData/extensions/<id>/<rest>` 设为**子窗口任务栏图标**，其它形状或含 `..` 时静默忽略、回落应用默认图标（`src/main/appWindow.ts:33-43,82-85`）
+- `icon` 必填；`iconUrl` 只接受 `app://extensions/<id>/<rest>` 形状——主进程解析成 `userData/extensions/<id>/<rest>` 设为**子窗口任务栏图标**，其它形状或含 `..` 时静默忽略、回落应用默认图标（`src/main/appWindow.ts:34-44,83-86`）
 - `app://` 三个主机名（`src/main/protocol.ts:13-15,46-58`，越出根目录或含 `..` 返回 403/404）：
   - `app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（用户扩展；宿主还会二次校验符号链接解析后的真实路径）
   - `app://builtin/<id>/<rest>` → `resources/extensions/<id>/<rest>`（`src/main/paths.ts:16-19`）；**当前打包配置未产出该目录**（`electron-builder.yml` 无对应 `extraResources`，仓库 `resources/` 只有 `icon.png`/`tray.ico`），故该通道虽注册但无内容可服务
@@ -175,7 +175,7 @@ const d = api.app.register({
 - 子窗口标题 = `name`（多开时 `name 2`、`name 3`…）
 - 子窗口内容通信：iframe 内 `parent.postMessage({source:'obox-app', action:'close'|'minimize'|'maximize'}, '*')` 控制子窗口（**不要用内联 onclick，会被 CSP 阻止**）
 - **url 加载用户扩展静态页**：CSP 已放行 `app:` scheme（`src/renderer/index.html:10` 的 `default-src 'self' app:` 也覆盖 `frame-src`，故 iframe 可加载），`url: 'app://extensions/<id>/todo.html'` 的页面可执行脚本、可用 localStorage；子窗口 iframe 无 allow-modals，禁 alert/confirm/prompt
-- **这是跨源加载，不是同源**：父文档在 dev 是 `http://localhost:5173`（`ELECTRON_RENDERER_URL`）、打包是 `file://`（`src/main/appWindow.ts:25-30`），而 `app:` 是独立注册的 standard scheme（`src/main/protocol.ts:18-29`）——`app://extensions` 与父文档**不同源**，靠 CSP 放行而非同源策略。因此该静态页有**自己的 localStorage**，与主窗口/扩展的 localStorage **不共享**（跨窗口传数据请走 `api.app.onMessage` 消息桥）
+- **这是跨源加载，不是同源**：父文档在 dev 是 `http://localhost:5173`（`ELECTRON_RENDERER_URL`）、打包是 `file://`（`src/main/appWindow.ts:26-31`），而 `app:` 是独立注册的 standard scheme（`src/main/protocol.ts:18-29`）——`app://extensions` 与父文档**不同源**，靠 CSP 放行而非同源策略。因此该静态页有**自己的 localStorage**，与主窗口/扩展的 localStorage **不共享**（跨窗口传数据请走 `api.app.onMessage` 消息桥）
 - **主题下发（宿主 → 子窗口，单向）**：`url` 型卡片跨源，宿主**注入不了** CSS（`iframe.contentDocument` 恒为 `null`），CSS 变量也不跨文档继承 ⇒ token 只能经消息送达。宿主在 iframe `load` 完成、每次主题变化、以及收到子页面请求这三个时机，向 `iframe.contentWindow` 发 `{source:'obox-app', action:'obox-theme', themeId, tokens}`：`tokens` 是宿主 25 个 token 的**生效值**快照（与主窗口所见一致），扩展侧把每条 `documentElement.style.setProperty(k, v)` 即跟随主题；拿不到时用**内置兜底**（不报错、不空白）。子页面可用 `{source:'obox-app', action:'obox-theme-request'}` 请宿主重发。**`url` 型卡片切主题不再重渲染**（`:key` 为 `url:<url>`，与主题无关 ⇒ 页内表单内容不丢），**`srcdoc` 型仍靠重渲染**（`:key` 为 `srcdoc:<themeId>`）。协议细节、最小接收代码与降级行为见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)；实现见 `src/renderer/src/core/appTheme.ts` 与 `src/renderer/src/AppWindow.vue`
 
 ### app.onMessage(handler) → Disposable（App 子窗口 ↔ 扩展消息桥）
@@ -214,9 +214,178 @@ window.parent.postMessage(
 // 结果回传：parent 收到后 postMessage { source:'obox-app', action:'obox-extension-reply', requestId, result:{ok,data|error} }
 ```
 
-- `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；**60s 超时**（放宽以容纳 handler 内弹模态框等需用户填写的场景）
-- `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销（每个扩展只保留**最后一个** handler，`host.ts:400-406`）
+- `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；**60s 超时**（放宽以容纳 handler 内弹模态框等需用户填写的场景；实现是 `src/main/appWindow.ts:190-193`，`60_000` 这个超时值全文件只设定在这一处）。**overlay 窗体复用同一座桥与同一超时**——扩展若用"入口 → 页面"的**长轮询 hold** 做状态同步，hold 时长必须**小于** 60s（宠物扩展用 25s，`extensions/pet/lib/constants.js:38-40`），否则宿主先超时、页面收到的是「扩展未响应（超时）」而不是订阅结果（见下方 `### overlay`）
+- `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销（每个扩展只保留**最后一个** handler，`host.ts:426-433`）
+- **路由现支持 overlay（卡片路径行为逐字不变）**：归属查找走纯函数 `resolveMessageExtId`——**先按 `appId` 查 App 卡片**（`appStore.findById(appId)?.extensionId`），**未命中再按 `overlayId` 查 overlay 路由表**（`overlayOwners`），都未命中回**既有**错误「扩展未注册消息处理器」（`host.ts:89-95,622-646`；门禁 `test/overlay-window.test.ts` 的「宿主 · 消息路由」）。overlay 页面把自己的 `overlayId` 当 `appId` 原样发即可；外壳对 overlay 窗口还会**强制**用查询串里的 `appId`（= `overlayId`），页面无法借道指定别人的卡片 id 发消息（`src/renderer/src/AppWindow.vue:204-210`）
 - `app.onMessage` 是**请求/响应**桥（经主进程 IPC、需要扩展注册 handler、有 `requestId` 与超时）。**主题是宿主单向推送**，不经该桥、**不需要** handler、也没有 `requestId`（见上面 `app.register` 的"主题下发"一条）——两者**不要混用**
+
+### overlay（Overlay 窗体：无边框 / 可透明 / 可置顶 / 不占任务栏的固定小窗）
+
+桌面宠物、悬浮小部件一类的**常驻桌面 UI**。与 `api.app` 的区别：overlay **不注册卡片、不进启动器/导航区、不写 `appStore`**，由扩展**自行创建与销毁**——因此**后台扩展**（完全不注册 App 卡片）也能有桌面界面。窗体尺寸固定（不可调整大小、不可最大化），定位在**主显示器工作区**（`workArea`，不含任务栏）内按 `anchor` 贴角。
+
+> **本命名空间随 API v2 引入**（`src/api/types.ts:187-252`；`setPosition` 为卡 14 增补）。它在类型上是**必填**成员（不是 `overlay?`）：宿主 `buildApi` 构造 api 时必定注入（`host.ts:435,581-614`），所以过了门槛成功激活的扩展可以直接 `api.overlay.create(...)`，**不需要可选链**。"老宿主没有本命名空间"由 manifest `apiVersion` 门槛兜底——声明 `apiVersion: 2` 的扩展在老宿主上**直接被拒绝加载**（`core/manifest.ts:28-38`），而不是运行到一半 `undefined`（见 `manifest-reference.md`）。
+
+#### 四方法签名
+
+```ts
+// 创建：失败**不抛错**，返回 { ok:false, error }（中文可执行原因）
+const r = await api.overlay.create({
+  id: 'pet.overlay', // 必填：overlay id，建议含扩展名前缀
+  url: 'app://extensions/pet/overlay.html', // 必填：**本扩展目录内**的页面
+  width: 220, // 必填：> 0（像素）
+  height: 460, // 必填：> 0
+  anchor: 'bottom-right', // 必填：四个合法值之一
+  margin: 24, // 可选：≥ 0，缺省 24
+  transparent: true, // 可选：缺省 false，**只在创建时决定**
+  alwaysOnTop: true, // 可选：缺省 false
+  skipTaskbar: true // 可选：缺省 false
+})
+if (!r.ok) console.error(r.error)
+else console.log(r.position) // R31：{ x, y } = anchor/margin 解析后的**实际窗体坐标**（拖动换算的绝对基准）
+
+await api.overlay.destroy('pet.overlay') // **真销毁**（不是隐藏）；幂等
+await api.overlay.setMouseThrough('pet.overlay', false) // false=接收鼠标事件；true=整窗穿透
+
+// 运行期移动（卡 14）：把窗体左上角移到屏幕坐标 (x, y)；成功时 position = **钳制后的实际坐标**
+const moved = await api.overlay.setPosition('pet.overlay', 120, 340)
+if (moved.ok) console.log(moved.position) // { x, y }（扩展拿不到 workArea，用它校正扩展记录）
+```
+
+签名逐字取自 `src/api/types.ts:207-252`：
+
+| 方法                                                        | 返回                       | 实现                                        |
+| ----------------------------------------------------------- | -------------------------- | ------------------------------------------- |
+| `create(options: CreateOverlayRequest)`                      | `Promise<OverlayResult>`   | `src/main/appWindow.ts:391-502`             |
+| `destroy(id: string)`                                        | `Promise<OverlayResult>`   | `src/main/appWindow.ts:504-533`             |
+| `setMouseThrough(id: string, through: boolean)`              | `Promise<OverlayResult>`   | `src/main/appWindow.ts:535-572`             |
+| `setPosition(id: string, x: number, y: number)`              | `Promise<OverlayResult>`   | `src/main/appWindow.ts:599-660`             |
+
+参数与返回形状定义在 **`src/shared/types.ts:521-580`**（`OverlayAnchor` / `CreateOverlayRequest` / `OverlayResult`）——主进程窗体实现、preload 类型与扩展 API **三处共用同一份**，防签名漂移（与对话框类型同先例）；由 `src/api/types.ts:14-32` 再导出 ⇒ 扩展照旧 `import type { CreateOverlayRequest } from '<...>/api'`。`OverlayResult` 就是 `{ ok: boolean; error?: string; position?: { x: number; y: number } }`（失败不抛错，与 `notification.show` / `shell.openExternal` 同风格）——**`position` 由 `create` 与 `setPosition` 成功时回传**（create = anchor/margin 解析后的初始绝对位置；setPosition = 钳制后的实际位置；destroy/setMouseThrough 不带），用途是给扩展侧一个**绝对坐标基准**：扩展拿不到 `workArea`，既算不出 anchor 落点也不知道宿主钳到了哪（R31）。四条 IPC 通道是 `overlay:create` / `overlay:destroy` / `overlay:set-mouse-through` / `overlay:set-position`（`src/preload/index.ts:69-76`、注册在 `src/main/appWindow.ts:669-686`，由 `src/main/index.ts:103` 挂载）。
+
+#### 参数契约（`CreateOverlayRequest`）与校验
+
+| 字段          | 必填 | 类型                                                                                             | 约束与缺省                                                                                                                                                       |
+| ------------- | ---- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | ✅   | string                                                                                           | 非空。**全局唯一**（不是"每扩展唯一"）：同扩展重复创建被拒（提示先 `destroy`），**别的扩展占了同 id 也被拒**（消息桥按 overlayId 全局寻址，`src/main/appWindow.ts:401-411`） |
+| `url`         | ✅   | string                                                                                           | 非空，且必须指向**调用方扩展目录内**的页面（判据见下方「url 双重校验」）                                                                                            |
+| `width`       | ✅   | number                                                                                           | 有限且 **> 0**（像素）。尺寸固定：不可调整大小、不可最大化                                                                                                        |
+| `height`      | ✅   | number                                                                                           | 有限且 **> 0**                                                                                                                                                     |
+| `anchor`      | ✅   | `'bottom-right' \| 'bottom-left' \| 'top-right' \| 'top-left'`                                    | 必须是这四个之一（`src/shared/types.ts:515`；运行期白名单 `src/main/appWindow.ts:255`）——贴**主显示器工作区**的哪个角                                                        |
+| `margin`      | ❌   | number                                                                                           | 有限且 **≥ 0**（负值拒绝）；**缺省 24**（`src/main/appWindow.ts:258,413`）。可以为 0（完全贴角）                                                                            |
+| `transparent` | ❌   | boolean                                                                                          | **缺省 false**。**只在创建时决定，创建后不可运行时切换**（Electron 限制）；透明时宿主不绘制任何窗体背景并关闭阴影/系统边框/圆角。Windows 上依赖 DWM 合成             |
+| `alwaysOnTop` | ❌   | boolean                                                                                          | **缺省 false**。全屏独占应用下仍可能被遮挡——平台行为，非宿主缺陷                                                                                                  |
+| `skipTaskbar` | ❌   | boolean                                                                                          | **缺省 false**（true = 不占任务栏）                                                                                                                                |
+
+- 校验实现在纯函数 `validateOverlayRequest`（`src/main/appWindow.ts:293-329`，`test/overlay-window.test.ts` 直接喂非法值断言被拒）：三个开关传了非布尔也拒（`:323-327`）；`extId` 不是非空字符串 ⇒ 报「缺少扩展 id（宿主接线错误：overlay 四方法必须由宿主绑定扩展 id 调用）」（`:294-296`）。
+- **所有失败都是 `{ ok:false, error }`，一个窗体都不建、也不抛错**；`error` 是中文可执行原因（如 `anchor 必须是 bottom-right / bottom-left / top-right / top-left 之一：bottom-center`）。
+
+**`setPosition(id, x, y)` 的参数契约（运行期移动，卡 14）**：
+
+| 参数 | 必填 | 类型   | 约束                                                                                                                       |
+| ---- | ---- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `id` | ✅   | string | 非空；作用域同下节（越权 ⇒ `ok:false` + error 指认真实属主；不存在/已销毁 ⇒ `ok:false`，与 `setMouseThrough` 同口径）          |
+| `x`  | ✅   | number | **有限数字**；NaN / Infinity / 非数字（含字符串 `'10'`）/ 缺参一律 `ok:false` 拒绝（**不钳不猜**）；合法数字被钳进工作区（见下） |
+| `y`  | ✅   | number | 同 `x`                                                                                                                      |
+
+- 成功返回 `{ ok: true, position: { x, y } }`，`position` = **钳制后的实际坐标**（与 `create` 回传初始绝对位置同一字段，R31）；失败/拒绝路径**不带** `position`（不回传任何"猜测"出来的坐标）。
+- 校验与钳位实现在 `setOverlayPosition`（`src/main/appWindow.ts:599-660`）+ 纯函数 `clampOverlayPosition`（`:574-597`，`test/overlay-window.test.ts` 直接喂边界值断言钳制结果）；钳位公式见下方「窗体参数与定位 · 运行期移动」。
+
+#### 作用域安全（只能操作自己创建的 overlay）
+
+四个方法都只能操作**调用方扩展自己创建的** overlay，越权一律 `{ ok:false }` + 中文 error + `[overlay]` 前缀 `console.warn`：
+
+- **定位方式**：主进程登记表 key = `overlayKey(extId, overlayId)` = `` `${extId}:${overlayId}` ``（`src/main/appWindow.ts:240-252`；扩展 id 字符集不含 `:`，故首冒号即分界）。
+- **区分"别人的"与"不存在"**：`findOverlayOwner(overlayId)` 扫登记表找所属扩展（`:384-389`）。找到且不是调用方 ⇒ **越权拒绝**：`destroy` 回「越权被拒：overlay X 由扩展 Y 创建，Z 只能销毁自己创建的 overlay」（`:516-525`），`setMouseThrough` 回同款文案（`:555-562`），`setPosition` 与 `setMouseThrough` **完全同构**（越权 `:627-634`，不存在 `:635-636`，卡 14）；找不到 ⇒ `destroy` **静默成功**（幂等），`setMouseThrough` / `setPosition` **明确报错**（见下方生命周期）。
+- **宿主侧把 `ext.id` 绑死在闭包里**：`buildOverlayApi(ext, disposables)` 构造的四个方法都只转发 `ext.id`（`host.ts:581-614`），扩展拿不到别人的绑定，也无法从参数里伪造。
+- **这是能力封装，不是安全边界**：扩展与宿主同进程同上下文、无沙箱（ADR-0015）。作用域校验防的是**误用/串号**；不限定作用域等于任一扩展都能销毁、穿透或**移走**别人的窗体，所以必须严格。门禁：`test/overlay-window.test.ts` 的「主进程 · 作用域安全」与「主进程 · setPosition」。
+
+#### 生命周期
+
+| 事件                     | 行为                                                                                                                                                                                                                            | 证据                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| 创建成功                 | 窗体**默认鼠标穿透**（等效已调用 `setMouseThrough(id, true)`）——透明 overlay 不应一出现就吞掉其覆盖区域的桌面点击；实现是 `setIgnoreMouseEvents(true, { forward: true })`                                                          | `src/main/appWindow.ts:459-462`                                      |
+| 创建成功回传位置         | `create` 成功回包带 `position` = anchor/margin 解析后的**实际窗体坐标**（与创建日志里的 `@(x,y)` 同一份，不重算）——扩展拿不到 workArea，首次拖动（存档还没有位置）时入口靠它建立绝对基准（R31）                                        | `src/main/appWindow.ts:498-501`                                      |
+| 显示时机                 | `show:false` 创建，`ready-to-show`（首帧绘制完成）后才 `show()`——避免创建瞬间闪一块底色                                                                                                                                           | `src/main/appWindow.ts:447-448,474`                                  |
+| `destroy(id)`            | **真销毁**（`win.destroy()`，不是隐藏）：页面与驱动它的 rAF/定时器动画循环随之终止，CPU 占用回落；权威状态应由扩展入口持有，不随窗体销毁丢失                                                                                       | `src/main/appWindow.ts:527-531`；**已实机验证**：卡 01 证据 §4        |
+| `destroy` 幂等           | 不存在（或已销毁）的 `id` 重复销毁**静默成功**（`ok:true`）；销毁后同 id 可重建（登记表已被 `closed` 清理）                                                                                                                        | `src/main/appWindow.ts:516-525,475-480`                              |
+| `setMouseThrough` 不存在 | 与 `destroy` 的幂等**不同**：对不存在/已销毁的 id 返回 **`ok:false`**（`overlay 不存在（或已销毁）：X`）——切换穿透没有"默认成功"语义，明确报错让扩展能自查                                                                          | `src/main/appWindow.ts:555-564`                                      |
+| `setPosition` 不存在/已销毁 | 与 `setMouseThrough` **同口径**：返回 **`ok:false`**（`overlay 不存在（或已销毁）：X`），**不抛错**——移动没有幂等语义，明确报错让扩展能自查                                                                                        | `src/main/appWindow.ts:635-636`                                      |
+| 扩展停用 / 卸载          | **自动回收**该扩展的全部 overlay：`create` 发起时就把「销毁该 overlay」挂进 `disposables`，走既有 cleanup 路径（`disposeAll` / `removeExtension` 的 `cleanup()`）；`removeExtension` 另对路由表做**兜底清扫**，防路由项残留        | `host.ts:586-596,1132-1152`                                 |
+| 主窗口关闭               | overlay 一并关闭（对齐 App 子窗口的既有行为）：overlay 是扩展的附属桌面 UI，主窗口没了它就没有存在意义（消息桥的对端宿主也没了）                                                                                                    | `src/main/appWindow.ts:217-232`（由 `src/main/index.ts:54` 接线）     |
+| 窗体 `closed`            | 清登记表 + **立即结算**该窗口发出、还在等扩展回复的桥请求（`flushPendingReplies`，以「overlay 窗体已销毁」为 error），不让它空挂 60s                                                                                               | `src/main/appWindow.ts:162-170,475-480`                              |
+| 不进启动器               | overlay **不写 `appStore`、不注册卡片**：宿主只在 `overlayOwners`（overlayId → 扩展 id）里登记一条路由项，且**只收成功创建的** overlay（失败不登记）                                                                              | `host.ts:115-122,597-600`                                   |
+
+#### 窗体参数与定位（主进程实现）
+
+`new BrowserWindow({...})` 的全部选项（`src/main/appWindow.ts:424-455`）：
+
+- **尺寸与位置**：`width` / `height`（= 请求值）、`x` / `y`（= `overlayPosition` 算出）
+- **透明相关**：`transparent`（= 请求值，缺省 false）、`backgroundColor`（**`transparent` 为 true 时 `'#00000000'`，否则回落 `'#1e1e1e'`**——带 alpha 的背景必须与 `transparent:true` 同用，否则不透明窗会渲染成黑/灰底；卡 01 证据 §5 对照 1 实测单独留 `'#00000000'` 得到 `#f3f3f3`）
+- **无边框 / 固定尺寸**：`hasShadow:false`、`thickFrame:false`、`roundedCorners:false`（三者全关 = 完全无边框；Wayland/GTK 下 `hasShadow` 不关会留阴影边框）、`resizable:false`、`maximizable:false`、`frame:false`
+- **行为开关**：`alwaysOnTop` / `skipTaskbar`（= 请求值，缺省 false）、`acceptFirstMouse:true`（macOS：未聚焦时第一次点击也直接生效）、`autoHideMenuBar:true`、`show:false`（+ `ready-to-show` 后 `show()`）
+- **webPreferences**：`preload`（与 App 子窗口同一份）、`sandbox:false`、`contextIsolation:true`、`nodeIntegration:false`
+
+上述 11 个与"透明 + 固定尺寸"直接相关的开关（`transparent` / `hasShadow` / `thickFrame` / `roundedCorners` / `acceptFirstMouse` / `alwaysOnTop` / `skipTaskbar` / `resizable` / `maximizable` / `frame` / `show`）连同 `backgroundColor` 与尺寸/坐标，由 `test/overlay-window.test.ts:272-297` 逐项钉住。
+
+**定位公式**（纯函数 `overlayPosition`，`src/main/appWindow.ts:339-362`）：基准是 **主显示器工作区** `screen.getPrimaryDisplay().workArea`（不含任务栏；多显示器环境**只用主显示器**，不用光标所在屏），
+
+```text
+靠右的 anchor：x = workArea.x + workArea.width  - width  - margin
+靠左的 anchor：x = workArea.x + margin
+靠下的 anchor：y = workArea.y + workArea.height - height - margin
+靠上的 anchor：y = workArea.y + margin
+```
+
+`margin` 可为 0（完全贴角）；公式对负 `workArea` 原点（多显示器副屏坐标）同样成立（`test/overlay-window.test.ts` 的「四个 anchor 的定位公式」）。**已实机验证**：卡 01 证据 §0 记录探测窗体实际 bounds 与公式预测**完全一致**。
+
+**运行期移动（`setPosition`，卡 14）**：创建后位置不是死的——扩展可调 `api.overlay.setPosition(id, x, y)` 把窗体**左上角**移到屏幕坐标 (x, y)（拖宠物换位，宠物扩展 design D-13）。`create` 成功即回传初始绝对位置（`OverlayResult.position`，R31），扩展拖动时以它为基准把增量换算成绝对坐标。
+
+- **钳位双保险（扩展主钳、宿主兜底）**：**扩展侧主钳**（入口累加拖动增量后先钳到工作区再调 `setPosition`，design D-13）；**宿主侧兜底**——把 x/y 钳到主显示器工作区：`x ∈ [wa.x, wa.x+wa.width-w]`、`y ∈ [wa.y, wa.y+wa.height-h]`（w/h 取该 overlay **当前尺寸**，`getBounds()`；纯函数 `clampOverlayPosition`，`src/main/appWindow.ts:574-597`，与 D-13 扩展侧公式**完全一致**）。为什么要宿主兜底：扩展拿不到 `workArea`，换显示器/改分辨率后仍可能算出越界值；兜底保证窗体左上角不出工作区（不越界、不盖任务栏）。
+- **不钳不猜**：非法坐标（NaN/Infinity/非数字/缺参）**直接拒绝**（`ok:false` + 中文可执行 error，`:614-626`），不做任何静默"修正"——钳位语义只针对**合法数字**超出工作区的情形。
+- **回传钳制后的实际坐标**：成功时 `OverlayResult.position = { x, y }`，扩展入口用它校正自己记录的位置，避免账实不符（被钳过之后只有扩展自己算的值是错的）。
+- **移动只改位置**：不触碰 `transparent` / `alwaysOnTop` / 鼠标穿透态等其它窗体属性（穿透态由 `setMouseThrough` 专管；拖动期间指针在窗体内，穿透本就是关的，无需联动）；实现只调 `win.setPosition`（`:641-651`）。
+- **日志**：一条 `[overlay] setPosition: <extId>/<id> …`；被钳时含钳前钳后坐标（`请求(x,y) 钳制后(x',y')`，`:652-657`）。
+- 门禁：`test/overlay-window.test.ts` 的「主进程 · setPosition」（越权/非法坐标/钳位边界/不存在/已销毁/属性不变/连续两次移动）。
+
+#### 消息桥（overlay 页面 ↔ 扩展入口）
+
+overlay 页面里**没有 `api` 对象**（扩展入口只跑在主窗口），要用宿主能力就复用**既有**的 `api.app.onMessage` 桥（见上节；路由按 `overlayId` 找所属扩展）。
+
+- **查询串契约（五个参数，名字与顺序固定）**：`obox-window=overlay&extId=<扩展id>&overlayId=<overlay id>&appId=<overlay id>&url=<encodeURIComponent(扩展页URL)>`（纯函数 `overlayQuery`，`src/main/appWindow.ts:364-381`）。
+  - `appId` **为什么填 overlayId**：消息桥按 appId 路由（先查卡片、未命中按 overlayId 查 `overlayOwners`），页面把自己的 overlayId 当 appId 原样发即可，外壳转发代码几乎不用改；
+  - `url` **为什么要带**：preload 只桥接 overlay 四方法（没有一个 IPC 面可查页面地址），overlay 又不进 `appStore`（拿不到卡片注册的 url），只能随查询串下发。
+- **url 双重校验（防御纵深，两处同判据、不得单边放宽）**：主进程 `isOverlayUrlInsideExtension`（`src/main/appWindow.ts:260-286`）与外壳 `isOverlayUrlAllowed`（`src/renderer/src/AppWindow.vue:66-85`）判据**完全一致**：① 协议必须是 `app:`（http/file/相对路径一律拒）；② hostname 必须是 `app://` 的三个合法 host 之一 —— `extensions`（用户扩展）/ `builtin`（内置扩展）/ `debug`（`--debug-extension` 调试扩展）；③ 路径首段必须等于**调用方扩展 id**；④ 首段之后**必须有子路径**（`app://extensions/<id>/` 是目录本身，拒）；⑤ 含 `..` 一律拒。
+- **非法 url 的后果**：主进程侧 `create` 直接拒绝（`ok:false` + 中文原因）；即便查询串被手工构造绕过来，外壳也**不加载 iframe、渲染空白**（透明窗体直接透出桌面，连空态提示都不画——空态文字也是像素）并 `console.warn` 一条 `[overlay] 拒绝非法 url: …`，该日志经 `console-message` 转发进主进程终端（前缀 `[child-renderer:warning]`，`src/main/appWindow.ts:482-491`）。
+- **overlay 的 iframe 只有 url 型**：不走 `srcdoc` 注入，且 `:key` 恒定（`overlayUrl` 是不变常量）⇒ **永不因主题切换重渲染**，页面动画/状态不被打断（`src/renderer/src/AppWindow.vue:137-155`）。
+- **overlay 不参与 `api.ui` 模态框转发**：主进程 `ui.ts` 的 `isChild` 判定按 `obox-window=app` 命中，overlay 不命中 ⇒ `api.ui.showForm` 一类回**主窗口**本地渲染（`{ local: true }`）。这是**预期取舍**而不是 bug（overlay 页面本身没有 api 对象、也开不了模态框，`src/renderer/src/AppWindow.vue:307-313`、`src/renderer/src/main.ts:18-19`）。
+- **60s 请求超时（overlay 复用）**：`app:extension-message` 桥的超时仍是 **60s**（`src/main/appWindow.ts:185-193`；`60_000` 这个值全文件只设定在这一处），overlay 走同一条逻辑。因此扩展若用**长轮询 hold**（入口 hold 到状态变化或超时再 reply）做"入口 → 页面"的状态同步，**hold 必须小于 60s**（宠物扩展用 25s，`extensions/pet/lib/constants.js:38-40`，其 `test/bridge.test.js:131-133` 把"`SUBSCRIBE_HOLD_MS` < `HOST_REQUEST_TIMEOUT_MS`"钉成断言）。`destroy` 时该窗口的 pending 请求由 `flushPendingReplies` **立即**以「overlay 窗体已销毁」结算，不用空等 60s（`:162-170,475-480`）。
+
+#### 透明窗体的五处绘制点（宿主外壳侧）
+
+透明 overlay 要"完全透出桌面"，宿主侧一共改了**五处**，任一处漏改都会得到不透明窗体（排查清单见 [troubleshooting.md 第 34 条](troubleshooting.md#34-透明-overlay-窗体看起来不透明)）：
+
+| #   | 位置                                                                                                     | 内容                                                                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 1/5 | 主进程窗体参数（`src/main/appWindow.ts:429-441`）                                                          | `transparent:true` + `backgroundColor:'#00000000'`，并关掉 `hasShadow` / `thickFrame` / `roundedCorners`                     |
+| 2/5 | `src/renderer/src/AppWindow.vue:287-314`                                                                   | overlay 模式**不渲染** `<TitleBar>` 与 `<PromptHost>`（任何不透明像素都会破坏"完全透出桌面"，模态遮罩同理）                   |
+| 3/5 | `src/renderer/src/AppWindow.vue:336-345`                                                                   | 根 class `.app-window--overlay` 下 `.app-window` / `.app-window-content` 的 `var(--bg)` 背景置 `transparent`                 |
+| 4/5 | 同上                                                                                                       | `.app-frame` 的**白底覆盖**为 `transparent`——最容易漏的一处：iframe 默认白底会把内容糊成白色矩形                              |
+| 5/5 | `src/renderer/src/assets/main.css:53-61` + `src/renderer/src/AppWindow.vue:1-17`                            | 全局 `body { background: var(--bg) }` 对**每个窗口**都生效 ⇒ 用 `html.obox-overlay` 规则把 html/body 就地置透明；class 由 SFC **模块级 script** 在**首帧前**挂上（等挂载再改会闪一块底色） |
+
+- 五处都由 `isOverlay` 单一开关隔离，**App 卡片子窗口的基础样式逐字保留**（回归约束；门禁 `test/overlay-window.test.ts` 的「外壳 · 五处透明改动」，含"卡片模式基础样式逐字保留"一条）。
+- **已实机验证**：卡 01 证据 §1 —— 判据点取色 `maxdiff=0`（≤ 2/255），窗体区域完全透出桌面壁纸；§5 的两组反向对照（`transparent:false`）证明该判据有区分力。证据文件：`extensions/pet/openspec/changes/pet-desktop-companion/notes/evidence/overlay-feasibility.md`。
+- 引用设计证据链时可指向宠物扩展的 design D-11（`extensions/pet/openspec/changes/pet-desktop-companion/design.md`）。
+
+#### 平台限制与已知取舍
+
+- **打开 DevTools 时透明窗体会变不透明**（Electron 官方限制）⇒ 验收取色**必须不开 DevTools**。**未实机验证**（卡 01 证据 §6-6：只做了防御性守卫，未主动开 DevTools 复现）。
+- **Windows 上透明依赖 DWM 合成**：被组策略关闭时退化为不透明。**未实机验证**（卡 01 证据 §6-5：该场景未测）。
+- **`transparent` 创建后不可运行时切换**（Electron 限制）；同理透明窗**不可 resize**、Windows 下**不可最大化**，故宿主强制固定尺寸。**未实机验证**（卡 01 证据 §6-5：仅引用官方文档，未主动复测）。
+- **全屏独占应用下 `alwaysOnTop` 窗体可能被遮挡**——平台行为，非宿主缺陷。**未实机验证**（卡 01 证据 §6-5）。`alwaysOnTop` 本身**已实机验证**（§3：`isAlwaysOnTop()=true` + 压在普通窗口之上的截图证据）；`skipTaskbar` **已实机验证但只有截图/目检证据**（§3：任务栏条目 11 → 11，同 app 的普通窗对照 11 → 12 → 11）。
+- **鼠标穿透是整窗切换**：`setIgnoreMouseEvents(true, { forward: true })` 没有逐像素 alpha 穿透（Electron 无此能力）⇒ 关闭穿透期间，窗体**空白区也会捕获点击**（已知取舍，**已实机验证**：卡 01 证据 §2 记录 IGNORE_OFF 下点空白区得到 `target=body`）。
+- **`forward:true` 对注入式合成输入间歇性不转发**（**已实机验证的负记录**：卡 01 证据 §2/§6-2，5 组合成扫掠中 2 组收到事件、3 组为 0；根因未查明，疑与本机虚拟显示/远控输入栈有关）⇒ 排查 hover 命中时先用**真实鼠标**或 `WindowFromPoint` 复核，别先怀疑宿主。穿透开关本身双向生效**已实机验证**（§2：IGNORE_ON 下窗内三点 `WindowFromPoint` = 桌面 `SysListView32/FolderView`，IGNORE_OFF 下 = 本窗 `Chrome_RenderWidgetHostHWND`）。
+- **overlay 页面里 `alert` / `confirm` / `prompt` 无效**：iframe sandbox 无 `allow-modals`（`src/renderer/src/AppWindow.vue:298`），与 App 卡片子窗口同款，见 [troubleshooting.md 第 36 条](troubleshooting.md#36-overlay-里-alertconfirmprompt-无效)。
+- 多显示器/混合 DPI 下"只用主显示器工作区"的行为**未实机验证**（卡 01 证据 §6-5：本机仅 1 个显示器、`scaleFactor=1`）。
 
 ### i18n（扩展多语言）
 
@@ -283,6 +452,16 @@ const page = api.settings.register({
       // 值空 ⇒ 什么都不渲染。default 必须为空串：模态框只看设置值，不看 default。
       modal: true,
       default: ''
+    },
+    {
+      key: 'my-ext.syncProgress',
+      label: '同步进度',
+      // progress：**只读**进度条（宿主渲染条 + 右侧 {cur}/{max}，零可编辑控件）。
+      // 值是**数字**，由扩展经 api.settings.set 写入；max 可选、缺省 100；
+      // 声明了 description 也**不渲染**（进度行保持紧凑）
+      type: 'progress',
+      max: 100,
+      default: 0
     }
   ]
 })
@@ -293,10 +472,12 @@ api.settings.set('my-ext.interval', 60)
 api.settings.set('my-ext.migrationStatus', '正在迁移：书签 3/8\n已完成：历史记录')
 // 迁移结束：必须清空同一个键（写 ''）——这是等待模态框唯一的消失通路，忘了写用户就被永久挡住
 api.settings.set('my-ext.migrationStatus', '')
+// progress 字段同理：写**数字**（0..max），宿主只渲染；文本 {cur} 向下取整、条宽用未取整的真实比例
+api.settings.set('my-ext.syncProgress', 42)
 page.dispose() // 注销设置页
 ```
 
-设置字段类型：`text` / `number` / `boolean` / `select` / `directory` / `status`；可选 `default` / `options` / `description` / `modal`（`src/api/contributions.ts:97-127`）。扩展可用 `api.settings.set` 写状态键，供设置页 `status` 字段**只读**展示（宿主不弹任何编辑控件）；`status` + `modal: true` 时值非空即弹**不可关闭的等待模态框**，扩展清空该键后模态框消失。
+设置字段类型（`type`）与可选属性（`default` / `options` / `description` / `max` / `modal`）的**完整清单与逐类型契约见 [themes-settings.md](themes-settings.md#扩展设置页双通道)——它是主题与设置的唯一真相，本文件不复制副本**（类型定义在 `src/api/contributions.ts:106-150`）。扩展可用 `api.settings.set` 写状态键，供设置页的**只读**字段展示（宿主不弹任何编辑控件）：`status` 是只读文本（含 `\n` 按行渲染），`progress` 是只读进度条（值是数字，宿主渲染条 + `{cur}/{max}`，`max` 缺省 100，显示值向下取整而条宽用未取整比例，见 [themes-settings.md 的「`progress` 字段」](themes-settings.md#progress-字段只读进度条)）；`status` + `modal: true` 时值非空即弹**不可关闭的等待模态框**，扩展清空该键后模态框消失。
 
 `directory`（目录选择）的契约：
 
@@ -307,9 +488,9 @@ page.dispose() // 注销设置页
 
 `status`（只读状态展示）的契约：
 
-- **只读**：宿主渲染成纯文本（无 `input` / `button` / `select`，也不接保存通路），用户**不能**在设置页改动它；值由扩展用 `api.settings.set(key, value)` 写入统一设置存储（`host.ts:440`），宿主只负责显示。
+- **只读**：宿主渲染成纯文本（无 `input` / `button` / `select`，也不接保存通路），用户**不能**在设置页改动它；值由扩展用 `api.settings.set(key, value)` 写入统一设置存储（`host.ts:467`），宿主只负责显示。
 - **多行**：值里含 `\n` 时按行渲染为列表（首尾空行忽略、中间空行保留）；空值 / 全空白显示占位「（无）」。非字符串值按 `String(value)` 展示。
-- **写后设置页立即刷新**：扩展写键与设置页读值落在**同一渲染进程的同一个 `stateStore`**（`api.settings.set` = `stateStore.setSetting`），`setSetting` 同步通知订阅者，设置页据此重渲染（`SettingsView.vue:298-301,465-470`、`core/state.ts:143-148`）——**不需要重进设置页**。
+- **写后设置页立即刷新**：扩展写键与设置页读值落在**同一渲染进程的同一个 `stateStore`**（`api.settings.set` = `stateStore.setSetting`），`setSetting` 同步通知订阅者，设置页据此重渲染（`SettingsView.vue:322-325,565-570`、`core/state.ts:143-148`）——**不需要重进设置页**。
 - **老宿主（≤ v1.0.8）**：与 `directory` 相同，渲染链无兜底分支 ⇒ `status` 字段不渲染任何控件（label 仍在、内容为空）。**认识 `directory` 但没有 `status` 分支的中间版本宿主**会把它按未知类型兜底成**可编辑文本框**（值仍取自同一设置存储，但用户误编辑会覆盖扩展写的状态）；需要兼容这类宿主时请自行降级或自绘视图。
 
 `status` + `modal: true`（**不可关闭的等待模态框**）的契约：
@@ -329,7 +510,7 @@ const off = api.settings.onChanged((key) => {
 off.dispose()
 ```
 
-> 回调参数是**变更的设置项 key**（如 `my-ext.interval`）；无具体 key 的场景（如语言切换）传空字符串（`host.ts:443`）。监听者仍可用 `api.settings.get` 读取当前值。
+> 回调参数是**变更的设置项 key**（如 `my-ext.interval`）；无具体 key 的场景（如语言切换）传空字符串（`host.ts:469-470`）。监听者仍可用 `api.settings.get` 读取当前值。
 
 ### update（更新能力，仅更新提供者扩展可用）
 
@@ -417,13 +598,13 @@ api.timer.clearInterval('tick')
 - 回调在扩展上下文（渲染进程）执行，**无 payload**（纯"到点了"），需要数据的扩展在回调里自行查询
 - 定时器 id 在**扩展内**唯一即可（内部 key = `<扩展id>:<id>`，跨扩展自动隔离，`src/main/timer.ts:16-18`）
 - `seconds` 必须是 **1–86400 的整数**（`src/main/timer.ts:29-37`）。上限的存在理由：`seconds * 1000` 超过 2³¹−1 时 Node 会把延时钳成 1ms，`setInterval` 退化成"每毫秒广播 `timer:fire`"的事件风暴（`src/main/timer.ts:26-27`）
-- **非法 `seconds` 是静默失败，不会抛错**：主进程校验失败只返回 `{ ok:false, error }`（`src/main/timer.ts:69-88`），宿主用 `void` 丢弃该结果（`host.ts:626-631`）——既不抛错也不提示，定时器**不会建立**、回调永不触发
+- **非法 `seconds` 是静默失败，不会抛错**：主进程校验失败只返回 `{ ok:false, error }`（`src/main/timer.ts:69-88`），宿主用 `void` 丢弃该结果（`host.ts:724-726`）——既不抛错也不提示，定时器**不会建立**、回调永不触发
 
 ### sqlite（数据库，node:sqlite 内置驱动）
 
 宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。相对路径可含子目录（如 `sub/a.db`，Windows 上写 `/` 亦可）；**不同子目录下的同名库互不干扰**（列类型元数据按库路径隔离）。
 
-> **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的沙箱。两者的失败形态不同：`exec` **原样返回** `{ ok:false, error:'不允许的 SQL 语句：…' }`（`host.ts:656`），`query` 经内部 `call()` **抛 `Error`**（`host.ts:648-654,657-659`）。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
+> **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的沙箱。两者的失败形态不同：`exec` **原样返回** `{ ok:false, error:'不允许的 SQL 语句：…' }`（`host.ts:752`），`query` 经内部 `call()` **抛 `Error`**（`host.ts:744-750,753-755`）。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
 
 ```ts
 const db = await api.sqlite.open('todo.db') // → userData/extensions/todo_chenzhi/data/todo.db
@@ -444,7 +625,7 @@ await db.close()
 
 - 默认表名 = 数据库文件名去扩展名（`open('todo.db')` → 表 `todo`）；`query`/`exec` 作用于整个库
 - 条件对象（`get_by`/`update`/`del_by` 的 where）只支持**等值匹配**，多键为 AND；复杂条件用 `query` 写 SQL
-- 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:648-654`）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 也**不经 `call()`**，直接返回 IPC 原始结果（`host.ts:678`，主进程侧是无返回值句柄关闭，`src/main/sqlite.ts:78-80`），因此对不存在的库 `close()` 静默无操作、**不会抛错**
+- 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:744-750`）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 也**不经 `call()`**，直接返回 IPC 原始结果（`host.ts:774`，主进程侧是无返回值句柄关闭，`src/main/sqlite.ts:78-80`），因此对不存在的库 `close()` 静默无操作、**不会抛错**
 - 全部方法 `async`（经 IPC 到主进程）；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
 - **数据目录的生命周期**：库文件在 `<扩展>/data/<name>.db`（安装态即 `userData/extensions/<扩展id>/data/`）；**覆盖安装（升级）时宿主保留 `data/`**，所以数据不会因升级丢失；**卸载时 `data/` 随扩展目录一起删除**。因此打包时不要把 `data/` 放进 `.oix`——宿主会直接拒收（见 `docs/extension-api/guides-user.md` §6「打包 `.oix`」）
 
@@ -570,8 +751,8 @@ await api.fs.watch('watch-1', '.', (e) => {
 await api.fs.unwatch('watch-1') // 停止监听
 ```
 
-- 除 `watch` 的超限错误外，所有失败都是**抛 `Error`**（宿主把主进程的 `{ok:false}` 转成 `throw new Error(...)`，`host.ts:573-579`）
-- `watch`：**单扩展并发监听上限 16**（`src/main/fs.ts:25`）；超限时主进程返回 `{ok:false, error:'监听数量已达上限（16）'}`（`src/main/fs.ts:154-156`），宿主**转成抛错**（`host.ts:596-603`）。同 id 重复 `watch` 会先关掉旧监听、不占新增额度（`src/main/fs.ts:151-153`）
+- 除 `watch` 的超限错误外，所有失败都是**抛 `Error`**（宿主把主进程的 `{ok:false}` 转成 `throw new Error(...)`，`host.ts:669-675`）
+- `watch`：**单扩展并发监听上限 16**（`src/main/fs.ts:25`）；超限时主进程返回 `{ok:false, error:'监听数量已达上限（16）'}`（`src/main/fs.ts:154-156`），宿主**转成抛错**（`host.ts:692-699`）。同 id 重复 `watch` 会先关掉旧监听、不占新增额度（`src/main/fs.ts:151-153`）
 - 监听目录被删 / 权限变化 → 宿主记录并自动关闭该监听（`src/main/fs.ts:166-170`），扩展侧此后收不到事件（不会崩主进程）
 - 扩展停用/卸载时宿主自动关闭全部监听
 - `api.fs` 只能读写扩展自己的 data 目录；`api.dialog` 选到的外部路径**不能**用 `api.fs` 读写（安全边界）
@@ -635,8 +816,8 @@ log.clear() // 清空
 log.dispose() // 关闭并移除通道
 ```
 
-- channel 的方法就这 5 个：`append(text)` / `appendLine(text)` / `show()` / `clear()` / `dispose()`（`src/api/types.ts:62-70`）
-- **没有 `api.output.append(...)`**：`append` 只在 `createChannel(name)` 返回的 channel 上（`src/api/types.ts:420-422`）
+- channel 的方法就这 5 个：`append(text)` / `appendLine(text)` / `show()` / `clear()` / `dispose()`（`src/api/types.ts:86-93`）
+- **没有 `api.output.append(...)`**：`append` 只在 `createChannel(name)` 返回的 channel 上（`src/api/types.ts:608-611`）
 
 ### secrets（密钥存储，safeStorage 加密）
 
@@ -648,7 +829,7 @@ const token = await api.secrets.get('github_token') // undefined = 未设置
 await api.secrets.delete('github_token')
 ```
 
-> 系统加密不可用（或 Linux 上后端回落为明文 `basic_text`）时，`api.secrets.*` **抛 `Error`**（`host.ts:524-538`），而不是明文落盘（fail-closed），也不是返回错误对象——调用方需 `try/catch` 并把该功能视为不可用。
+> 系统加密不可用（或 Linux 上后端回落为明文 `basic_text`）时，`api.secrets.*` **抛 `Error`**（`host.ts:545-559`），而不是明文落盘（fail-closed），也不是返回错误对象——调用方需 `try/catch` 并把该功能视为不可用。
 
 ### views（树视图，contributes.views 声明 + 数据源注册）
 
@@ -669,7 +850,7 @@ off.dispose() // 注销数据源
 
 - 节点 `collapsible: true` 展开时才调用 `getChildren(element)` 加载子节点
 - 节点 `command` 点击时执行（`args` 作为参数传给命令 handler；命令须已声明）
-- 节点可选 `icon`（SVG 字符串，`src/api/types.ts:84-97`）
+- 节点可选 `icon`（SVG 字符串，`src/api/types.ts:106-120`）
 
 ### api.ipc（与外部进程的端口无关 IPC，见 ADR-0016）
 
@@ -914,5 +1095,6 @@ export function uninstall(ctx) {
 
 - `src/api/`（聚合出口 `src/api/index.ts`）：`src/api/types.ts` = `ExtensionActivationApi` / `SqliteDb` / `OutputChannel` / `TreeItem`；`src/api/contributions.ts` = 贡献点类型；`src/api/manifest.ts` = `ExtensionManifest`；`src/api/registration.ts` = `AppRegistration`；`src/api/shared.ts` = `Memento` / `UpdateEvent` / `ProxyConfig` / `IpcChannelDeclaration`；`src/api/runtime.ts` = `ExtensionInfo` / `Disposable` / `ExtensionModule` 等
 - 对话框类型（`DialogProperty` / `DialogOpenOptions` / `DialogOpenResult` / `DialogFilter`）**定义在 `src/shared/types.ts`**（主进程 / preload 类型 / 扩展 API **三处共用同一份**，避免签名漂移），由 `src/api/types.ts` 再导出 ⇒ 扩展照旧 `import type { DialogOpenOptions } from '<...>/api'` 即可（`src/api/types.ts` 的 `dialog` 段）
+- overlay 类型（`OverlayAnchor` / `CreateOverlayRequest` / `OverlayResult`）**沿用同一先例，也定义在 `src/shared/types.ts:521-580`**（扩展 API 与主进程窗体实现共用一份契约，防签名漂移），由 `src/api/types.ts:14-32` 再导出 ⇒ 扩展 `import type { CreateOverlayRequest } from '<...>/api'` 即可；主进程侧的四个 IPC 方法（`overlayCreate` / `overlayDestroy` / `overlaySetMouseThrough` / `overlaySetPosition`）声明在同一份 `MainApi` 里（`src/shared/types.ts:338-367`），preload 桥在 `src/preload/index.ts:69-76`
 - `src/renderer/src/core/types.ts` 是历史兼容入口（再导出 `src/api`，旧 import 零改动）；**新代码直接 import `src/api`**
 - 扩展经相对路径导入类型，如内置扩展入口 `import type { ExtensionActivationApi } from '../../../../api'`

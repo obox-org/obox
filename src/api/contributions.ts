@@ -84,6 +84,12 @@ export interface ThemeContribution {
  *   `default` 仅在设置里没有该键时作为回退展示值。
  *   `status` 字段再带上 `modal: true`（见 `SettingField.modal`）时，值非空即在设置页渲染成
  *   一个**不可关闭的等待模态框**（迁移进度这类"没完之前不许操作"的场景），值被清空即消失。
+ * - `progress`：**只读**进度条——沿用 `status` 的"扩展写、宿主只读渲染"语义：值是数字（0..`max`），
+ *   **由扩展用 `api.settings.set(key, value)` 写入**，宿主只渲染进度条 + 右侧 `{cur}/{max}` 文本，
+ *   **不提供任何编辑控件**。显示的 `{cur}` 先钳制到 `[0, max]` 再**向下取整**；进度条宽度用
+ *   **未取整**的比例 `cur/max`（宽度若也取整，条与数字会在边界处互相矛盾）。`max` 缺省为
+ *   **100**（见 `SettingField.max`）。`progress` 字段**不渲染 `description`**（写了也不显示，
+ *   行保持紧凑——这是显示约定，不是实现遗漏）。`default` 仅在设置里没有该键时作回退展示值。
  * - **未知类型**：宿主按 `text` 兜底渲染（可编辑、可保存）并 `console.warn`，
  *   避免宿主类型演进时设置项"凭空消失"。
  *
@@ -92,8 +98,13 @@ export interface ThemeContribution {
  * （label 仍在，控件为空）。扩展若要在老宿主上也有可用输入，需自行降级为 `text`；
  * 对 `status`，认识它但未实现该分支的**前一版新版宿主**会走兜底 `text`（可编辑框，
  * 值仍取自同一设置存储，用户误编辑会覆盖扩展写的状态）——见 `docs/extension-api/themes-settings.md`。
+ * `progress` 同样是**新增**类型（随 API v2 引入）：不认识它的老宿主会按上面的"未知类型"兜底
+ * 渲染成可编辑文本框（用户误编辑会覆盖扩展写的数值），≤ v1.0.8 则不渲染任何控件——用
+ * `progress` 的扩展应在 manifest 声明能力诞生起的 `apiVersion`（≥ 2），让老宿主直接拒绝
+ * 加载而不是降级显示（门槛实现见 `core/manifest.ts`）。
  */
-export type SettingFieldType = 'text' | 'number' | 'boolean' | 'select' | 'directory' | 'status'
+export type SettingFieldType =
+  'text' | 'number' | 'boolean' | 'select' | 'directory' | 'status' | 'progress'
 
 /** 设置字段定义（api.settings.register 或 manifest 声明） */
 export interface SettingField {
@@ -107,8 +118,20 @@ export interface SettingField {
   default?: unknown
   /** select 类型的选项 [{ value, label }] */
   options?: Array<{ value: string; label: string }>
-  /** 字段描述（可选） */
+  /** 字段描述（可选）。注意：`progress` 字段**不渲染 description**（见 `SettingFieldType` 文档） */
   description?: string
+  /**
+   * 进度上限（**可选**，只对 `type: 'progress'` 有意义；缺省时按 **100** 处理）。
+   *
+   * - 值域 `0..max`：宿主只读渲染为进度条 + 右侧 `{cur}/{max}` 文本；`{cur}` 取设置存储里
+   *   的值（扩展经 `api.settings.set` 写入），先钳制到 `[0, max]` 再**向下取整**，
+   *   进度条宽度用**未取整**的比例 `cur/max`（宽度若也取整，条与数字会在边界处互相矛盾）。
+   * - `progress` 字段**不渲染 `description`**（写了也不显示，行保持紧凑）。
+   * - `max` 自身必须 > 0：≤ 0 或非数字属非法输入，由宿主侧校验拒绝。
+   * - **老宿主忽略它**：与 `modal` 一样是新增的**可选**属性，不认识的老宿主不会读它、
+   *   也不会报错，只是按 `progress` 类型的兼容性规则降级（见 `SettingFieldType` 文档）。
+   */
+  max?: number
   /**
    * 「等待模态框」开关（**可选**，只对 `type: 'status'` 有意义；值仍是字符串）。
    *

@@ -464,6 +464,82 @@ watch(
   { immediate: true }
 )
 
+// ---- progress 字段：只读进度条 ----
+
+/**
+ * `progress` 的类型判断走这个常量（与上方 `MODAL_FIELD_TYPE` 同一约定）：
+ * 接线门禁（test/settings-view-wiring.test.ts）用**带引号的字面量**匹配链上的分支条件，
+ * 钉住既有六分支的序列与「directory 尾 → status 起点」「status 尾 → 兜底」两段缝隙的紧邻性。
+ * 常量不改变任何语义：模板仍是**一条完整相邻**的 `v-if / v-else-if / v-else` 链，
+ * progress 分支仍在链上、仍在兜底之前（为什么必须如此见模板处注释）。
+ */
+const PROGRESS_FIELD_TYPE: SettingField['type'] = 'progress'
+
+/** progress 字段的显示状态（`progressMetrics` 的输出，模板直接消费） */
+interface ProgressMetrics {
+  /** 生效上限（`max` 声明缺失/非法时回落 100） */
+  max: number
+  /** 值是否为有限数字（false ⇒ 按 0 渲染，`progressView` 发去重 warn） */
+  numeric: boolean
+  /** 填充宽度百分比（0..100，**未取整**——为什么见 `progressMetrics` 文档） */
+  width: number
+  /** 钳制后向下取整的当前值（`{cur}` 显示与 aria-valuenow 用） */
+  now: number
+  /** 右侧文本 `{cur}/{max}` */
+  text: string
+}
+
+/**
+ * progress 的显示口径（**纯函数**，不触 store——测试可把它从本文件源码里原样提取后直接跑
+ * 行为用例，见 test/settings-progress-field.test.ts，避免"测试里复制一份实现"漂移）：
+ *
+ * - `{cur}` = `floor(clamp(cur, 0, max))`；条宽 = `clamp(cur, 0, max) / max` 的**未取整**比例。
+ *   为什么条宽不取整：宽度若也取整，条与数字会在边界处互相矛盾——cur=99.9 时数字显示
+ *   `99/100`，宽度按真实 99.9% 才能"贴边"；两边各自取整则永远对不齐
+ *   （pet-settings spec Requirement 2 的显示口径逐字如此）。
+ * - 非数字值（`'abc'` / null / undefined / NaN / ±Infinity / 布尔 / 对象）⇒ 按 0 渲染
+ *   （`numeric: false`，由 `progressView` 据此发**去重**的 warn），绝不抛错：设置页是宿主
+ *   内置页面，扩展写坏一个值不能整页白屏。
+ * - `max` 缺省 **100**；`max` 声明本身非法（非数字 / ≤0 / 非有限）⇒ 同样回落 100
+ *   （manifest 校验层已把它拦成 error——scripts/validate-manifest.mjs，这里只是运行期自保）。
+ */
+function progressMetrics(rawValue: unknown, declaredMax: unknown): ProgressMetrics {
+  const max =
+    typeof declaredMax === 'number' && Number.isFinite(declaredMax) && declaredMax > 0
+      ? declaredMax
+      : 100
+  const numeric = typeof rawValue === 'number' && Number.isFinite(rawValue)
+  const cur = numeric ? (rawValue as number) : 0
+  const clamped = Math.min(Math.max(cur, 0), max)
+  const now = Math.floor(clamped)
+  return { max, numeric, width: (clamped / max) * 100, now, text: `${now}/${max}` }
+}
+
+/** 已警告过的非法 progress 值（按 fieldSlot 去重：渲染期调用，不能每次重渲染都刷屏） */
+const warnedProgressFields = new Set<string>()
+
+/**
+ * progress 字段的显示状态（模板的唯一取值入口）。取值路径与 status/text **完全同源**：
+ * `fieldValue`（`settingsRevision` → `stateStore.getSetting`，无值回退 `field.default`）⇒
+ * 扩展经 `api.settings.set`（= `stateStore.setSetting`，core/host.ts:467）写入数字后，
+ * `setSetting` 同步通知订阅者、`settingsRevision++`，已打开的设置页**当帧刷新**——
+ * 不需要重进页面，也不需要为 progress 新增任何订阅机制。
+ */
+function progressView(page: RegisteredSettingsPage, field: SettingField): ProgressMetrics {
+  const raw = fieldValue(page, field.key) ?? field.default
+  const metrics = progressMetrics(raw, field.max)
+  if (!metrics.numeric) {
+    const slot = fieldSlot(page, field.key)
+    if (!warnedProgressFields.has(slot)) {
+      warnedProgressFields.add(slot)
+      console.warn(
+        `[settings] progress 字段 "${slot}" 的值不是有限数字（收到 ${String(raw)}），已按 0 渲染；请扩展用 api.settings.set 写入 0..max 的数字`
+      )
+    }
+  }
+  return metrics
+}
+
 // ---- 未知字段类型：回落成文本框 ----
 
 /** 已警告过的字段（按 fieldSlot 去重；渲染期调用，不能每次渲染都刷屏） */
@@ -841,6 +917,37 @@ onUnmounted(() => {
                 </option>
               </select>
               <!--
+                progress：**只读**进度条（扩展写、宿主只渲染；取值与 status 同一条响应式路径：
+                progressView → fieldValue → settingsRevision/stateStore.getSetting）。
+                ⚠️ 为什么必须在链尾兜底 v-else **之前**：兜底把未知类型渲染成**可编辑文本框**
+                （unknownTypeValue），progress 落到兜底就成了用户能改坏的输入框——宠物三行属性
+                会变回三个可编辑框，误编辑即覆盖扩展经 api.settings.set 写的数值状态。
+                ⚠️ 为什么插在 select 之后而不是「status 之后」：接线门禁
+                （settings-view-wiring.test.ts）把「directory 尾 → status 起点」「status 尾 → 兜底」
+                两段缝隙钉死为紧邻（其间不得出现任何分支指令），status 之后没有合法插入点；
+                分支顺序对语义无影响（类型互斥，每个字段恰好命中一个分支）。
+                类型判断走 PROGRESS_FIELD_TYPE 常量（与 MODAL_FIELD_TYPE 同一约定，见脚本注释）。
+                **不渲染** description（spec Requirement 2 的 MUST NOT：行保持紧凑）——
+                排除条件写在下方 description <p> 的 v-if 上，不在本分支内另造节点。
+              -->
+              <div v-else-if="field.type === PROGRESS_FIELD_TYPE" class="progress-field">
+                <div
+                  class="progress-track"
+                  role="progressbar"
+                  :aria-label="field.label"
+                  :aria-valuemin="0"
+                  :aria-valuemax="progressView(page, field).max"
+                  :aria-valuenow="progressView(page, field).now"
+                >
+                  <!-- 填充宽度 = clamp(cur,0,max)/max 的**未取整**百分比（口径见 progressMetrics 注释） -->
+                  <div
+                    class="progress-fill"
+                    :style="{ width: progressView(page, field).width + '%' }"
+                  ></div>
+                </div>
+                <span class="config-value progress-text">{{ progressView(page, field).text }}</span>
+              </div>
+              <!--
                 directory：**点输入框或按钮都弹框**（用户裁定：选目录是主要输入方式）——输入框 `readonly` + `@click`，值只能由选择器写入；「浏览…」按钮保留（键盘可达、冗余）。代价：路径不能手工输入/粘贴。
               -->
               <div v-else-if="field.type === 'directory'" class="directory-input">
@@ -890,7 +997,14 @@ onUnmounted(() => {
                 :value="unknownTypeValue(page, field)"
                 @change="onFieldChange(page, field.key, ($event.target as HTMLInputElement).value)"
               />
-              <p v-if="field.description" class="config-desc">{{ field.description }}</p>
+              <!--
+                progress 字段**不渲染** description（即使声明了也忽略——spec Requirement 2 的
+                MUST NOT：进度行保持紧凑）。排除条件写在这里而不是给 progress 分支加节点：
+                本 <p> 在字段链之外，动它的 v-if 不影响链的完整性。
+              -->
+              <p v-if="field.description && field.type !== PROGRESS_FIELD_TYPE" class="config-desc">
+                {{ field.description }}
+              </p>
             </div>
           </div>
         </template>
@@ -1063,6 +1177,34 @@ onUnmounted(() => {
 .config-row .status-lines {
   margin: 0;
   padding-left: 18px;
+}
+/*
+ * progress 字段：只读进度条（槽 + 填充 + 右侧 {cur}/{max} 文本）。
+ * 设置页是宿主内置页面 ⇒ 颜色一律走宿主主题 token（不新增 token、不写死色值；
+ * var() 的 fallback 是 themes-settings.md token 表记录的文档默认值，与既有写法一致）：
+ * 槽 = --bg-input（输入类控件的底色）、填充 = --accent（强调色）、
+ * 文本沿用 .config-value（--fg-bright + 等宽字体）。标签列沿用 .config-row label
+ * （块级、左对齐、固定样式）——design「UI 视觉规范」硬约束第 3 条：不新造布局。
+ */
+.config-row .progress-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.config-row .progress-track {
+  flex: 1;
+  min-width: 0;
+  height: 10px;
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border, #454545);
+}
+.config-row .progress-fill {
+  height: 100%;
+  background: var(--accent, #007acc);
+}
+.config-row .progress-text {
+  flex-shrink: 0;
+  font-size: var(--font-size-sm, 12px);
 }
 .actions-row {
   display: flex;

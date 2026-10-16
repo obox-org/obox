@@ -41,6 +41,10 @@ _Avoid_: 应用中心、应用市场
 **App Registration / 插件卡片**:
 扩展经 `api.app.register` 注册进 App 的条目。含多开开关（multiOpen）、子窗口尺寸（width/height）等配置。
 
+**Overlay Window / overlay 窗体**:
+后台扩展用 `api.overlay.create` 请求的独立 BrowserWindow：无边框、可透明、置顶、不占任务栏、固定尺寸、**不进启动器也不作为可点击卡片**（与 App 子窗口的区别）。加载同一渲染入口（`?obox-window=overlay&extId=…&overlayId=…&appId=…&url=…`），复用窗口外壳但**不渲染 TitleBar/PromptHost、不接主题推送**；创建后默认鼠标穿透（`setIgnoreMouseEvents`），由扩展按命中结果切换。生命周期由创建它的扩展负责（可 `destroy`/`setPosition`），宿主在扩展停用、卸载、主窗口关闭时一并回收。
+_Avoid_: App 子窗口（那是卡片窗）、浮窗、托盘窗
+
 **App Window / 子窗口**:
 点击插件卡片弹出的独立 BrowserWindow（无边框）。加载同一渲染入口（`?obox-window=app&appId=xxx`），复用 TitleBar 组件（标题=插件名），内容栏用 iframe 渲染插件提供的 URL 或 HTML（srcdoc）。主窗口关闭时一并关闭。
 _Avoid_: 弹窗、模态框

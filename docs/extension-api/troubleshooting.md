@@ -36,6 +36,8 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 **原因**：iframe sandbox 无 `allow-modals`。
 **修复**：交互全部用页面内 UI（行内确认、自定义输入），不依赖浏览器弹窗。
 
+> **overlay 窗体（`api.overlay.create`）同款**：它复用同一份外壳 `AppWindow.vue`，sandbox 属性逐字相同，因此 overlay 页面里 `alert` / `confirm` / `prompt` 也一律无效；overlay 还额外**不渲染** `PromptHost`，宿主 `api.ui` 模态框也不会在 overlay 上出现。详见第 36 条。
+
 ## 4. oix 安装失败
 
 **排查**（扩展管理器提示的失败信息）：
@@ -60,7 +62,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 6. 扩展收集到但未激活（激活 0）
 
-**症状**：启动日志 `[host] 启动完成: 1 个扩展（1 启用 / 0 禁用），激活 0，依赖环 无`（格式见 `src/renderer/src/core/host.ts:943-949`；末尾的"依赖环"是环内扩展 id 列表，正常为 `无`）。
+**症状**：启动日志 `[host] 启动完成: 1 个扩展（1 启用 / 0 禁用），激活 0，依赖环 无`（格式见 `src/renderer/src/core/host.ts:1024-1031`；末尾的"依赖环"是环内扩展 id 列表，正常为 `无`）。
 
 **原因**：入口未导出 `default` 插件函数，或入口加载/执行抛错。
 
@@ -78,13 +80,13 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 8. 导航项点击内容栏空白
 
-- `view` 字段引用的组件未在入口具名导出 → 宿主 warning `导航项 X 声明的视图组件 Y 未在扩展入口导出`（`src/renderer/src/core/host.ts:227`）
+- `view` 字段引用的组件未在入口具名导出 → 宿主 warning `导航项 X 声明的视图组件 Y 未在扩展入口导出`（`src/renderer/src/core/host.ts:249-255`）
 - 组件导出名与 `view` 值不一致（大小写敏感）
 - 扩展未激活（见 #6）
 
 ## 9. 注册了未声明的命令：先 warning，紧接着抛错标红
 
-**症状**：日志先出现 `[host] <id> 注册了未声明的命令 <cmd>（manifest contributes.commands 未包含）`（`src/renderer/src/core/host.ts:287-291`），紧接着 `[host] activate <id> failed Error: command not declared: <cmd>`，扩展在管理器标红 `activationError`。
+**症状**：日志先出现 `[host] <id> 注册了未声明的命令 <cmd>（manifest contributes.commands 未包含）`（`src/renderer/src/core/host.ts:313-317`），紧接着 `[host] activate <id> failed Error: command not declared: <cmd>`，扩展在管理器标红 `activationError`。
 
 **原因**：`api.registerCommand(id, handler)` 的命令 id 不在该扩展 manifest `contributes.commands`。warning 之后 `registry.setCommandHandler` 找不到已声明项会**直接 throw**（`src/renderer/src/core/registry.ts:203`）→ `plugin(api)` 抛错、本次激活失败。**这不是"只打一条 warning"**。
 
@@ -92,11 +94,11 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 10. 依赖环
 
-**症状**：启动日志末尾 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 a,b`（`src/renderer/src/core/host.ts:943-949`）。
+**症状**：启动日志末尾 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 a,b`（`src/renderer/src/core/host.ts:1024-1031`）。
 
 **原因**：`extensionDependencies` 成环。
 
-**行为**：环内扩展**不会被跳过**——拓扑排序仍把它们放进激活序列（`src/renderer/src/core/manifest.ts:195-200`），宿主照常激活（`src/renderer/src/core/host.ts:931-940`），只是排到最后。所以"没激活"要先查 #6 的其它原因，别被这一行误导。
+**行为**：环内扩展**不会被跳过**——拓扑排序仍把它们放进激活序列（`src/renderer/src/core/manifest.ts:195-200`），宿主照常激活（`src/renderer/src/core/host.ts:1013-1022`），只是排到最后。所以"没激活"要先查 #6 的其它原因，别被这一行误导。
 
 **修复**：打破环（移除其中一个依赖），让依赖顺序可确定。
 
@@ -115,7 +117,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 13. App 应用里出现重复/残留卡片
 
-**结论**（宿主侧已修复，扩展不需要为此写兼容代码）：`appStore` 从 localStorage 恢复时按 id 去重并重建索引（`src/renderer/src/core/appStore.ts:20-50`），同 id 重复注册只更新不新建（`:61-74`），停用/卸载按 `extensionId` 清空其全部卡片（`:92-102`），启动时清理"扩展已不在"的孤儿卡片（`src/renderer/src/core/host.ts:861-867`）。
+**结论**（宿主侧已修复，扩展不需要为此写兼容代码）：`appStore` 从 localStorage 恢复时按 id 去重并重建索引（`src/renderer/src/core/appStore.ts:20-50`），同 id 重复注册只更新不新建（`:61-74`），停用/卸载按 `extensionId` 清空其全部卡片（`:92-102`），启动时清理"扩展已不在"的孤儿卡片（`src/renderer/src/core/host.ts:943-949`）。
 
 **扩展侧注意事项**：`api.app.register` 的 `id` 必须是稳定的唯一值（如 `todo.main`）；热重载/覆盖安装时宿主保证不产生重复卡片。
 
@@ -144,7 +146,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 - 用 compound **`Debug All`**：`Debug Main Process`（由 electron-vite 启动，`env` 里设 `REMOTE_DEBUGGING_PORT=9222`，`.vscode/launch.json:14-16`）+ `Debug Renderer Process`（`type: chrome` + `request: attach` + `port: 9222`，`.vscode/launch.json:18-28`）
 - **CDP 端口是怎么来的**：`npm run dev` 就是 `electron-vite dev`（`package.json:19`），**它自己不开**调试端口；electron-vite 在 dev 下读环境变量 `REMOTE_DEBUGGING_PORT` 并给 Electron 追加 `--remote-debugging-port=<port>`（`node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js:225-226`，仅 `isDev` 生效；也可用 `electron-vite dev --remoteDebuggingPort 9222`，`node_modules/electron-vite/dist/cli.js:42,46-48`）。因此"断点完全不命中 / 附加失败"的**第一嫌疑是没有这个端口**：确认 9222 在监听（`netstat -ano | findstr 9222`），没有就补上环境变量或命令行参数
 - attach 的是**渲染进程**（chrome 协议），不是主进程 inspector；`webRoot` 指 `${workspaceFolder}/src/renderer`
-- 改扩展代码后需**重载 obox 窗口**：宿主只在窗口启动时收集并 import 扩展入口（`src/renderer/src/core/host.ts:905-918`），`app://` 动态 import 的模块缓存不会自动失效
+- 改扩展代码后需**重载 obox 窗口**：宿主只在窗口启动时收集并 import 扩展入口（`src/renderer/src/core/host.ts:986-1000`），`app://` 动态 import 的模块缓存不会自动失效
 - 断点落在"无源码"位置时，先回看启动日志 `[debug] 调试扩展 N 个: id@路径`（`src/main/debug.ts`）确认加载的确实是 `--debug-extension` 给的目录；调试扩展经 `app://debug/<id>/` 加载（`src/main/protocol.ts:48-58`），打包版（`file://`）没有这条 dev 链路、也没有可 attach 的端口
 
 > `references/guides-user.md` 里那份给**扩展自己仓库**用的 `.vscode/launch.json` 模板（`args` 写死 `--remote-debugging-port=9333`，并带 `pathMapping` / `urlFilter`，见该文 :190-215，`pathMapping` 说法在 :217）**未实机验证**——照抄前先按上面对齐本仓库自带配置。其中 `urlFilter` 依赖 electron-vite dev 端口，而仓库**未固定 `server.port`**（`electron.vite.config.ts:15-20`），端口被占用时 Vite 会顺延换端口，写死端口的 `urlFilter` 会失配。
@@ -155,7 +157,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 **userData 下为什么还会有同名目录**：`api.fs` / sqlite / python 的数据目录固定按 `userData/extensions/<id>/data` 建（`src/main/fs.ts:12-14`、`src/main/sqlite.ts:34-37`、`src/main/python.ts:34-36`），调试扩展也照此写盘。这类只有 `data/`、没有 `manifest.json` 的目录不会被当成扩展加载（主进程按有无 manifest 过滤，`src/main/capabilities.ts:38-51`）。
 
-**若管理器里出现可卸载项**：那是以前用同名 id 做的 .oix 安装态——先卸载安装态，再用调试参数加载。管理器里的调试扩展本身来源是 `debug`，调卸载会直接抛"调试扩展不占用安装态，无需卸载"（`src/renderer/src/core/host.ts:1110`）。
+**若管理器里出现可卸载项**：那是以前用同名 id 做的 .oix 安装态——先卸载安装态，再用调试参数加载。管理器里的调试扩展本身来源是 `debug`，调卸载会直接抛"调试扩展不占用安装态，无需卸载"（`src/renderer/src/core/host.ts:1199`）。
 
 ## 17. 生命周期钩子（install/uninstall）怎么写才生效
 
@@ -526,6 +528,86 @@ git show v1.0.8:src/renderer/src/extensions/settings/SettingsView.vue |
    - 需要兼容 ≤ v1.0.8 时，别把关键状态只放在 `status` 字段里（老宿主上它连控件都不渲染）——可以同时在扩展自己的设置页/卡片里展示同一份状态，或声明成 `type: 'text'` 并接受"用户可编辑"（`text` 在每个宿主版本上都有控件）；
    - 状态值本身仍写**同一把 key**（`api.settings.set`），换字段类型不需要改扩展的写入侧。
 
-**正面结论：扩展写状态键后，设置页当帧刷新——不需要轮询、不需要重进设置页。** 因为写与读落在**同一个渲染进程里的同一个 `stateStore`**：`api.settings.set` = `stateStore.setSetting`（`src/renderer/src/core/host.ts:440`）→ `save()` 之后**同步**遍历变更订阅者（`src/renderer/src/core/state.ts:143-148`）→ 设置页订阅里 `settingsRevision++` 触发重渲染、渲染期经 `fieldValue` 重新读值（`SettingsView.vue:397-402`）。所以"状态不刷新"的排查方向是**宿主版本/渲染链**，不是"要不要加个定时器"（`status` 字段值本身没有轮询机制，也不需要）。
+**正面结论：扩展写状态键后，设置页当帧刷新——不需要轮询、不需要重进设置页。** 因为写与读落在**同一个渲染进程里的同一个 `stateStore`**：`api.settings.set` = `stateStore.setSetting`（`src/renderer/src/core/host.ts:467`）→ `save()` 之后**同步**遍历变更订阅者（`src/renderer/src/core/state.ts:143-148`）→ 设置页订阅里 `settingsRevision++` 触发重渲染（`SettingsView.vue:565-570`）、渲染期经 `fieldValue` 重新读值（`SettingsView.vue:322-325`）。所以"状态不刷新"的排查方向是**宿主版本/渲染链**，不是"要不要加个定时器"（`status` 字段值本身没有轮询机制，也不需要）。`progress` 字段（API v2 新增的只读进度条）走的是**同一条**取值与刷新路径，同样不需要轮询（见 `themes-settings.md` 的「`progress` 字段」）。
 
 **回归防线（宿主侧）**：`test/settings-view-wiring.test.ts` 钉住 `status` 分支**只读**（无 `input`/`button`/`select`/`@change`/`onFieldChange`、位于 `directory` 之后且兜底 `v-else` 之前）与**多行按行渲染**；`test/settings-first-paint.test.ts` 钉住值与 `text` 同源（同一份设置存储）以及"扩展写键 → 订阅者同步收到"的当帧刷新路径。
+
+## 34. 透明 overlay 窗体看起来不透明
+
+**症状**：`api.overlay.create({ transparent: true, … })` 出来的窗体带一块底色（深灰 `#1e1e1e` / 白 / 黑 / 灰 `#f3f3f3`），桌面透不出来；或者截图里内容外面套着一个不透明矩形。
+
+**原因**：透明是**五处绘制点一起改**才成立的结果，任一处漏改都会得到不透明窗体（宿主侧实现见 `api-reference.md` 的 `### overlay`「透明窗体的五处绘制点」）。
+
+**排查清单（按顺序，逐处对源码）**：
+
+| #   | 绘制点                                        | 检查什么                                                                                                                                                    | 证据                                                            |
+| --- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| 1   | **主进程窗体参数**                            | `transparent: true` 是否与 `backgroundColor: '#00000000'` **同用**；`hasShadow` / `thickFrame` / `roundedCorners` 是否都为 `false`                            | `src/main/appWindow.ts:429-441`                                 |
+| 2   | **TitleBar / PromptHost**                     | overlay 模式是否**不渲染** `<TitleBar>` 与 `<PromptHost>`（标题栏与模态遮罩都是不透明像素）                                                                    | `src/renderer/src/AppWindow.vue:287-314`                        |
+| 3   | **`.app-window` / `.app-window-content`**     | 根 class `.app-window--overlay` 下这两层的 `var(--bg)` 背景是否置 `transparent`                                                                               | `src/renderer/src/AppWindow.vue:336-345`                        |
+| 4   | **`.app-frame` 白底**                         | iframe 的白底是否被覆盖为 `transparent`——**最容易漏的一处**：漏了就把内容糊成白色矩形                                                                         | 同上                                                            |
+| 5   | **全局 `body` 背景**                          | `main.css` 的 `body { background: var(--bg) }` 对**每个窗口**都生效 ⇒ 是否有 `html.obox-overlay` 规则把 html/body 置透明，且 class 在**首帧前**挂上（模块级 script） | `src/renderer/src/assets/main.css:53-61` + `AppWindow.vue:1-17` |
+
+**参数组合的实测结论（已实机验证）**：
+
+- 只给 `backgroundColor:'#00000000'`、**不给** `transparent:true` ⇒ 得到**灰底 `#f3f3f3`**（maxdiff=10）——带 alpha 的背景对不透明窗没有意义；
+- `transparent:false` + `backgroundColor:'#1e1e1e'` ⇒ **`#1e1e1e` 精确命中**（maxdiff=223）；
+- `transparent:true` + `backgroundColor:'#00000000'` ⇒ 判据点取色 **maxdiff=0**（≤ 2/255），完全透出桌面。
+  三项均见卡 01 实机证据 `extensions/pet/openspec/changes/pet-desktop-companion/notes/evidence/overlay-feasibility.md` §1（正向）与 §5（两组反向对照，证明判据有区分力）。
+
+**平台限制（会让"代码全对但仍不透明"）**：
+
+- **打开 DevTools 时透明窗体会变不透明**（Electron 官方限制）⇒ **验收取色必须不开 DevTools**（用外部截图/取色工具）。**未实机验证**（卡 01 证据 §6-6：探测脚本只对 `devtools-opened` 做防御性守卫并写日志，未主动开 DevTools 复现）。
+- **Windows 上透明依赖 DWM 合成**：被组策略关闭时退化为不透明。**未实机验证**（§6-5：该场景未测）。
+- **`transparent` 创建后不可运行时切换**（Electron 限制）⇒ 想改透明只能 `destroy` 后重新 `create`；同理透明窗**不可 resize**、Windows 下**不可最大化**，所以宿主把 overlay 尺寸做成固定（`resizable:false` / `maximizable:false`）。**未实机验证**（§6-5：仅引用官方文档，未主动复测）。
+- **全屏独占应用下 `alwaysOnTop` 窗体可能被遮挡**——平台行为，**不是宿主 bug**，别按"置顶失效"排查。**未实机验证**（§6-5：全屏独占场景未测）。`alwaysOnTop` 本身**已实机验证**（§3：`isAlwaysOnTop()=true` + "压在普通窗口之上"的截图对照）；`skipTaskbar` **已实机验证，但只有截图/目检证据**（§3：任务栏条目 11 → 11，同 app 的普通窗对照 11 → 12 → 11）。
+
+**自查（不要猜，直接读宿主源码）**：
+
+```powershell
+# 五处一次看全（在 obox 仓库根执行）
+Select-String -Path src/main/appWindow.ts -Pattern "transparent|backgroundColor|hasShadow|thickFrame|roundedCorners"
+Select-String -Path src/renderer/src/AppWindow.vue -Pattern "obox-overlay|isOverlay|background: transparent|TitleBar|PromptHost"
+Select-String -Path src/renderer/src/assets/main.css -Pattern "obox-overlay"
+```
+
+**回归防线（宿主侧）**：`test/overlay-window.test.ts` 的「外壳 · 五处透明改动」逐处断言（含"卡片模式基础样式逐字保留"的回归项）。
+
+## 35. overlay 窗体吞桌面点击 / 或点击不响应
+
+两种**相反**的症状，成因不同：
+
+- **A. 窗体覆盖区域的桌面点不动**（右键菜单弹不出来、桌面图标选不中、下层窗口收不到点击）；
+- **B. 页面里的精灵/按钮点不到**（明明已经关掉穿透）。
+
+**排查**：
+
+1. **创建后默认就是鼠标穿透**：宿主在 `create` 成功后立刻 `setIgnoreMouseEvents(true, { forward: true })`（`src/main/appWindow.ts:459-462`）⇒ 症状 B 先确认扩展有没有在**命中时**调 `api.overlay.setMouseThrough(id, false)`。注意 `setMouseThrough` 对不存在/已销毁的 id 返回 **`ok:false`**（与 `destroy` 的幂等不同，`:552-561`），**检查返回值**别当它一定成功。
+2. **穿透是"整窗"切换，没有逐像素 alpha 穿透**（Electron 无此能力）⇒ 关闭穿透期间，窗体的**空白区也一并捕获点击**（症状 A 的最常见成因：命中后忘了切回 `true`）。这是**已知取舍**，不是 bug；**已实机验证**（卡 01 证据 §2：IGNORE_OFF 下点空白区得到 `CLICK target=body`，即整窗捕获）。正确写法是"命中测试驱动"：`forward:true` 让悬停移动仍转发给页面，页面判断指针是否落在精灵/面板上，命中才临时关穿透、离开立刻切回。
+3. **`forward:true` 对注入式合成输入间歇性不转发**：**已实机验证的负记录**——卡 01 用合成光标扫掠 5 组，只有 2 组收到事件（`pointermove` +9 / +39），**3 组为 0**（钩子层就没收到），根因未查明，疑与本机虚拟显示/远控（ToDesk 一类）输入栈干扰注入事件有关（证据 §2、§6-2）。**真实人工移动正常**（§2：IGNORE_ON 期间真实鼠标划过窗体，页面收到 `PM_TICK n=101`）。⇒ **在自动化/CI（注入输入）环境里 hover 命中偶发失灵时，先用真实鼠标或 `WindowFromPoint` 复核，不要先怀疑宿主实现。**
+4. **命中测试的复核判据（已实机验证，双向）**：`WindowFromPoint` 在 IGNORE_ON 下应返回**桌面**（`SysListView32` / `FolderView`），IGNORE_OFF 下应返回**本窗**（`Chrome_RenderWidgetHostHWND`）——Electron 源码注明 click-through 窗体对 `WindowFromPoint` 不可见，所以它的返回值就是点击的真实接收者（证据 §2）。
+5. **overlay 页面里没有 `api` 对象**：`setMouseThrough` 只能由**扩展入口**调用；页面要切穿透得经消息桥请求入口（消息收不到的排查见第 37 条）。
+
+## 36. overlay 里 alert/confirm/prompt 无效
+
+**原因**：与第 3 条同源——overlay 窗体复用同一份外壳 `AppWindow.vue`，iframe 的 `sandbox` 是 `allow-scripts allow-same-origin allow-forms allow-popups`，**没有 `allow-modals`**（`src/renderer/src/AppWindow.vue:298`）⇒ overlay 页面里 `alert` / `confirm` / `prompt` 全部**静默无效**（不报错、不弹）。
+
+**overlay 特有的两点补充**：
+
+- overlay 窗体**不渲染 `<PromptHost>`**（透明窗体里模态遮罩也是不透明像素，`:307-313`）⇒ 宿主的 `api.ui.showForm` / `showQuickPick` / `showInputBox` **不会**在 overlay 上出现。主进程 `ui.ts` 的 `isChild` 判定按 `obox-window=app` 命中，overlay **不命中** ⇒ 这类模态框回**主窗口**本地渲染（返回 `{ local: true }`）。这是**预期取舍**而不是 bug（overlay 页面本身没有 api 对象、也开不了模态框；能调 `api.ui` 的只有扩展入口，那时焦点通常也不在 overlay 上，`src/renderer/src/main.ts:18-19`）。
+- **修复**：交互一律**自绘**（页面内面板/气泡/行内确认），不依赖浏览器弹窗，也不指望宿主模态框。
+
+## 37. overlay 页面收不到消息（宿主能力全部无响应）
+
+**症状**：overlay 页面 `parent.postMessage({source:'obox-app', action:'obox-extension', …})` 后收到 `{ ok:false, error:'扩展未注册消息处理器' }`，或干脆没有回包；或页面**整个空白**（透明窗体直接透出桌面，什么也没画）。
+
+**排查（按顺序）**：
+
+1. **查询串五个参数缺一不可**：`obox-window=overlay&extId=<扩展id>&overlayId=<overlay id>&appId=<overlay id>&url=<encodeURIComponent(扩展页URL)>`（`overlayQuery`，`src/main/appWindow.ts:364-381`）。**尤其 `appId` 必须填 overlayId**——消息桥按 `appId` 路由：**先查 App 卡片**、未命中**再按 `overlayId` 查 overlay 路由表**（`resolveMessageExtId`，`host.ts:89-95,619-643`）。手工构造 URL 调试时最容易漏 `appId`，漏了就正好是"扩展未注册消息处理器"。
+2. **页面空白 ⇒ 先看 `url` 是否被外壳拒载**：主进程与外壳对 `url` 做**同判据的双重校验**（`isOverlayUrlInsideExtension`，`src/main/appWindow.ts:260-286`；`isOverlayUrlAllowed`，`src/renderer/src/AppWindow.vue:66-100`）——① `app:` 协议；② host ∈ {`extensions`, `builtin`, `debug`}；③ 路径首段 = 本窗口的 `extId`；④ 首段之后**必须有子路径**（`app://extensions/<id>/` 是目录，拒）；⑤ 不含 `..`。不合法 ⇒ **不加载 iframe、渲染空白**（连空态提示都不画：空态文字也是像素），并 `console.warn` 一条 `[overlay] 拒绝非法 url: …`，该日志经 `console-message` 转发进主进程终端，前缀 `[child-renderer:warning]`（`src/main/appWindow.ts:482-491`）。**看到这条日志就是 url 的问题，不是消息桥的问题。**
+3. **扩展入口注册 handler 了吗**：overlay **复用** `api.app.onMessage`（没有单独的 overlay handler）；每个扩展只保留**最后一个** handler（`host.ts:426-433`）。
+4. **60s 超时**：桥的单次请求超时是 **60s**（`src/main/appWindow.ts:185-193`），overlay 复用同一条逻辑 ⇒ 长轮询 hold 必须**小于** 60s（宠物扩展用 25s），否则页面收到「扩展未响应（超时）」。
+5. **error 是「overlay 窗体已销毁」**：说明窗体 `destroy` 后页面还在等回复——宿主在窗体 `closed` 时把该窗的 pending 请求**立即**以此错误结算（`flushPendingReplies`，`:162-170,475-480`），不让它空挂 60s。这是正常的生命周期收尾，不是丢消息。
+6. **error 是「主窗口不可用」**：只有 overlay 窗体、主窗口已关（overlay 随主窗口一并关闭，`:217-232`）⇒ 桥的对端宿主没了，消息投不出去（`mainWindow()` 会把 overlay 排除在"主窗口"之外，`:151-160,178-183`）。
+
+**回归防线（宿主侧）**：`test/overlay-window.test.ts` 的「宿主 · 消息路由」（卡片优先 / overlay 兜底 / 都未命中回既有错误文案）、「外壳 url 二次校验」、「60s 桥超时未被缩短」与「生命周期联动」。

@@ -66,6 +66,14 @@ const api: MainApi = {
   showNotification: (extId, opts) => ipcRenderer.invoke('notification:show', extId, opts),
   // 扩展停用/卸载/重载时清理主进程资源
   cleanupExtension: (extId) => ipcRenderer.invoke('extension:cleanup', extId),
+  // 扩展能力：overlay 窗体（桌面宠物类；作用域由主进程按 extId 校验，越权返回 ok:false，卡 03/R13）
+  overlayCreate: (extId, options) => ipcRenderer.invoke('overlay:create', extId, options),
+  overlayDestroy: (extId, id) => ipcRenderer.invoke('overlay:destroy', extId, id),
+  overlaySetMouseThrough: (extId, id, through) =>
+    ipcRenderer.invoke('overlay:set-mouse-through', extId, id, through),
+  // 移动窗体（卡 14）：坐标钳位与合法性校验都在主进程（宿主兜底、扩展主钳，design D-13）
+  overlaySetPosition: (extId, id, x, y) =>
+    ipcRenderer.invoke('overlay:set-position', extId, id, x, y),
   // 扩展能力：网络（主进程 fetch + 代理）
   netFetch: (req, proxy) => ipcRenderer.invoke('net:fetch', req, proxy),
   // 扩展能力：文件系统（限定扩展 data 目录）

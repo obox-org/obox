@@ -14,7 +14,7 @@ src/
 ├── main/            # Electron 主进程
 │   ├── index.ts     # 入口：窗口创建、协议、IPC 注册
 │   ├── window.ts    # 无边框窗口 + 窗口控制 IPC（最小化/最大化/关闭/状态推送）
-│   ├── appWindow.ts # App 子窗口管理（单开聚焦/多开序号/主机关闭全关）
+│   ├── appWindow.ts # App 子窗口管理（单开聚焦/多开序号/主机关闭全关）+ **overlay 窗体**（api.overlay 三方法的 IPC 与窗体实现：无边框/可透明/可置顶/不占任务栏的固定小窗，按扩展 id 限定作用域）
 │   ├── tray.ts      # 系统托盘（仅 Windows）：菜单 打开/设置/关于/退出，左键无行为、双击打开、右键菜单（ADR-0019）
 │   ├── trayCore.ts  # 托盘菜单/tooltip 文案的纯逻辑（中英两份，可单测）
 │   ├── windowBehavior.ts     # 关闭行为：偏好读写 + 关闭拦截 + 原生提示（ADR-0019）
@@ -56,7 +56,7 @@ src/
     └── src/
         ├── main.ts        # 入口：启动扩展宿主 → 按 URL 参数渲染主布局或 AppWindow
         ├── App.vue        # 主布局（标题栏/导航栏/内容栏/状态栏 + 命令面板）
-        ├── AppWindow.vue  # App 子窗口布局（TitleBar + iframe 内容 + postMessage 窗口控制桥）
+        ├── AppWindow.vue  # App 子窗口 / overlay 窗体的**共用外壳**（?obox-window=app：TitleBar + iframe 内容 + postMessage 窗口控制桥；=overlay：不渲染标题栏、背景全透明的固定小窗）
         ├── components/    # TitleBar / NavBar / ContentArea / StatusBar / CommandPalette
         ├── core/          # 扩展系统核心（见下）
         └── extensions/    # 内置扩展目录（每个扩展 = manifest.json + index.ts + 视图组件）

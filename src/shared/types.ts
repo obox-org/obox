@@ -335,6 +335,36 @@ export interface MainApi {
   ): Promise<{ ok: boolean; id?: number; error?: string }>
   /** 扩展停用/卸载/重载时清理主进程资源（定时器 + 数据库连接） */
   cleanupExtension(extId: string): Promise<void>
+  // ---- 扩展能力：overlay 窗体（无边框/可透明/可置顶/不占任务栏的固定小窗；桌面宠物类，卡 03） ----
+  /**
+   * 创建 overlay 窗体（主进程实现：`src/main/appWindow.ts` 的 createOverlayWindow）。
+   * 参数校验（id/url 非空、width/height > 0、margin ≥ 0 缺省 24、anchor 枚举、url 必须指向
+   * 本扩展目录内页面、overlayId 全局唯一）与窗体创建都在主进程；失败**不抛错**，返回
+   * `ok:false` + 中文可执行原因。创建成功后窗体**默认鼠标穿透**
+   * （`setIgnoreMouseEvents(true,{forward:true})`，design D-2）。
+   * 成功回传 `position` = anchor/margin 解析后的实际窗体坐标（R31：扩展拿不到 workArea，
+   * 拖动换算需要这个绝对基准）。
+   */
+  overlayCreate(extId: string, options: CreateOverlayRequest): Promise<OverlayResult>
+  /**
+   * 销毁 overlay 窗体（**真销毁**不是隐藏：页面与其 rAF/定时器动画循环随之终止）。
+   * 幂等：不存在/已销毁的 id 静默成功（ok:true）；越权（id 属于别的扩展）拒绝并记 `[overlay]` 日志。
+   */
+  overlayDestroy(extId: string, id: string): Promise<OverlayResult>
+  /**
+   * 切换鼠标穿透：true ⇒ `setIgnoreMouseEvents(true,{forward:true})`（悬停移动仍转发给页面，
+   * 供页面做命中测试）；false ⇒ `setIgnoreMouseEvents(false)` 恢复接收。
+   * 不存在的 id 返回 ok:false（与 destroy 的幂等语义不同）；越权拒绝。
+   */
+  overlaySetMouseThrough(extId: string, id: string, through: boolean): Promise<OverlayResult>
+  /**
+   * 移动 overlay 窗体到屏幕坐标 (x, y)（窗体左上角；扩展拖宠物换位用，卡 14/design D-13）。
+   * 钳位双保险：扩展侧主钳，宿主侧兜底把 x/y 钳进主显示器工作区；成功回传 `position` =
+   * **钳制后的实际坐标**（扩展拿不到 workArea，靠它校正自己记录的位置）。
+   * 非法坐标（NaN/Infinity/非数字）直接拒绝（不钳不猜）；不存在的 id 返回 ok:false
+   * （与 setMouseThrough 同口径）；越权拒绝。移动不改变 transparent/alwaysOnTop/穿透态。
+   */
+  overlaySetPosition(extId: string, id: string, x: number, y: number): Promise<OverlayResult>
   // ---- 扩展能力：网络（渲染 CSP 禁外网，走主进程 + 代理） ----
   netFetch(
     req: {
@@ -486,6 +516,67 @@ export interface PythonRunOutcome {
   code?: string
   error?: string
   result?: { code: number | null; stdout: string; stderr: string }
+}
+
+/**
+ * overlay 窗体的锚点方位：贴主显示器**工作区**（`workArea`，不含任务栏）的哪个角。
+ * 桌面宠物这类常驻 UI 常用 `bottom-right`；其余三角为其它 overlay 场景预留。
+ */
+export type OverlayAnchor = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left'
+
+/**
+ * overlay 窗体的创建请求（`api.overlay.create` 入参）。
+ *
+ * 扩展 API 与主进程窗体实现**共用同一份**，避免签名漂移——与 `openAppWindow` 的请求形状
+ * （`OpenAppWindowRequest`，`src/main/appWindow.ts`）同先例。这里只定类型面：运行时的参数
+ * 校验与窗体创建由主进程实现负责，违反下方 JSDoc 契约（`width`/`height` 必须 > 0、
+ * `margin` ≥ 0、`url` 不得越出扩展目录等）时以 `OverlayResult.ok: false` 拒绝，不抛错。
+ * 四方法的作用域约束（只能操作**自己创建的** overlay，宿主按扩展 id 校验）见
+ * `src/api/types.ts` 的 `ExtensionActivationApi.overlay` JSDoc。
+ */
+export interface CreateOverlayRequest {
+  /** overlay id（扩展内唯一，建议含扩展名前缀，如 `pet.overlay`）；`destroy` / `setMouseThrough` 以它寻址 */
+  id: string
+  /** 页面 URL：**该扩展内**的页面（如 `app://extensions/<id>/overlay.html`）；越出扩展目录一律拒绝 */
+  url: string
+  /**
+   * 窗体宽（像素，必须 > 0）。overlay 尺寸固定：不可调整大小、不可最大化
+   * （透明窗体被拉伸后在部分平台会失去透明，Electron 官方限制，故宿主强制固定尺寸）。
+   */
+  width: number
+  /** 窗体高（像素，必须 > 0） */
+  height: number
+  /** 贴主显示器工作区的哪个角 */
+  anchor: OverlayAnchor
+  /** 距锚定角的边距（像素，缺省 24；必须 ≥ 0，负值拒绝） */
+  margin?: number
+  /**
+   * 是否透明窗体（缺省 false）。**只在创建时决定，创建后不可运行时切换**（Electron 限制）；
+   * 透明时宿主不绘制任何窗体背景，并关闭阴影/系统边框/圆角。Windows 上依赖 DWM 合成
+   * （被组策略关闭时退化为不透明）。
+   */
+  transparent?: boolean
+  /** 是否置顶（缺省 false；全屏独占应用下仍可能被遮挡——平台行为，非宿主缺陷） */
+  alwaysOnTop?: boolean
+  /** 是否不占任务栏（缺省 false） */
+  skipTaskbar?: boolean
+}
+
+/**
+ * `api.overlay` 四方法的统一返回：失败**不抛错**，调用方检查 `ok`
+ * （与 `notification.show` / `shell.openExternal` 等扩展能力同风格；`error` 为人类可读原因）。
+ */
+export interface OverlayResult {
+  ok: boolean
+  /** 失败原因（参数校验不通过 / 越权被拒 / 窗体创建失败等） */
+  error?: string
+  /**
+   * 窗体的**实际屏幕坐标**（左上角）：`create` 与 `setPosition` 成功时回传
+   * （destroy/setMouseThrough 不带该字段）——create 回传 anchor/margin 解析后的真实位置，
+   * setPosition 回传钳制后的真实位置。为什么必须回传：扩展拿不到 workArea，既算不出 anchor
+   * 的绝对落点、也不知道宿主兜底钳位钳到了哪——入口要靠它建立/校正自己的位置基准（R31）。
+   */
+  position?: { x: number; y: number }
 }
 
 /** 主进程 → 渲染进程：请执行某扩展的钩子（钩子在渲染进程执行，因为扩展入口只在这里被 import） */

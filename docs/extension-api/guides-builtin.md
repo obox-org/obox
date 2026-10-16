@@ -1,6 +1,6 @@
 # 内置扩展开发指南（改 obox 仓库源码）
 
-**内置扩展**：源码在 `src/renderer/src/extensions/<id>/`，TypeScript + Vue SFC，随应用打包、开机即加载、**不可卸载**（`core/host.ts:1109`）。
+**内置扩展**：源码在 `src/renderer/src/extensions/<id>/`，TypeScript + Vue SFC，随应用打包、开机即加载、**不可卸载**（`core/host.ts:1198`）。
 若你的扩展要独立仓库、`.oix` 分发、纯 JS 入口 —— 那是用户扩展，读 [guides-user.md](guides-user.md)。
 
 前置：贡献点字段查 [manifest-reference.md](manifest-reference.md)；运行时 API 查 [api-reference.md](api-reference.md)；踩坑查 [troubleshooting.md](troubleshooting.md)。流程（提问 → spec → 确认 → 设计 → 开发 → 测试审视）见 [workflow.md](workflow.md)。
@@ -60,9 +60,9 @@ node skills/obox-ext-init/scripts/create-extension.mjs my-hello --title "你好"
 
 三条硬规则：
 
-- **元数据只写在 manifest**，代码里不做注册（`core/host.ts:160` 按声明注册贡献点），代码只 `api.registerCommand` 绑实现。
-- **命令必须先声明**：未声明的命令由 `registry.setCommandHandler` **直接抛错**（`core/registry.ts:203`），会让 `plugin(api)` 抛错、扩展标红 `activationError`（`core/host.ts:271-278`）——不是 warning。
-- **状态栏项 id 必须与声明一致**：`api.statusBar.setText` 找不到条目时静默无效（`core/host.ts:296-300`）。
+- **元数据只写在 manifest**，代码里不做注册（`core/host.ts:157` 按声明注册贡献点），代码只 `api.registerCommand` 绑实现。
+- **命令必须先声明**：未声明的命令由 `registry.setCommandHandler` **直接抛错**（`core/registry.ts:203`），会让 `plugin(api)` 抛错、扩展标红 `activationError`（`core/host.ts:290-305`）——不是 warning。
+- **状态栏项 id 必须与声明一致**：`api.statusBar.setText` 找不到条目时静默无效（`core/host.ts:323-326`）。
 
 命名与数组形状（`ipcChannels` / `keybindings` / `menus` / `views` 等）见 [manifest-reference.md](manifest-reference.md)。
 
@@ -75,7 +75,7 @@ node skills/obox-ext-init/scripts/create-extension.mjs my-hello --title "你好"
 | `src/renderer/src/i18n/locales/zh.ts` | `navbar.myHello` | `你好`  |
 | `src/renderer/src/i18n/locales/en.ts` | `navbar.myHello` | `Hello` |
 
-现有 `navbar.extensions` / `navbar.apps` / `navbar.settings` 就是这类词条（`i18n/locales/zh.ts:33-37`）。**`contributes.i18n` 与 `api.i18n.*` 是扩展自己的命名空间**（`core/extensionI18n.ts:29-34`，`core/host.ts:410`），只服务 `api.i18n.t()`，**不会被 `titleKey` 命中**；不写 `titleKey` 则回退 `title` 原文（英文界面会显示中文）。
+现有 `navbar.extensions` / `navbar.apps` / `navbar.settings` 就是这类词条（`i18n/locales/zh.ts:33-37`）。**`contributes.i18n` 与 `api.i18n.*` 是扩展自己的命名空间**（`core/extensionI18n.ts:29-34`，`core/host.ts:436`），只服务 `api.i18n.t()`，**不会被 `titleKey` 命中**；不写 `titleKey` 则回退 `title` 原文（英文界面会显示中文）。
 
 **命令（`contributes.commands`）与状态栏项（`contributes.statusBarItems`）没有 `titleKey` 字段**（`api/contributions.ts:33-60`）——给它们加词条是静默无效的。要双语只能自己接 `api.i18n`，并在语言变更时重新刷新文本（命令面板标题直接取 `title` 原文，状态栏文本用 `setText` 覆盖）。
 
@@ -85,7 +85,7 @@ node skills/obox-ext-init/scripts/create-extension.mjs my-hello --title "你好"
 import type { ExtensionActivationApi } from '../../../../api'
 import HelloView from './HelloView.vue'
 
-// 具名导出：manifest 的 navItems[].view 按名字取组件（core/host.ts:243-249）
+// 具名导出：manifest 的 navItems[].view 按名字取组件（core/host.ts:271-275）
 export { HelloView }
 
 export default function myHello(api: ExtensionActivationApi): () => void {
@@ -107,8 +107,8 @@ export default function myHello(api: ExtensionActivationApi): () => void {
 ```
 
 - 类型从 `../../../../api` 导入（单包共享类型，`src/api/index.ts:1-12`）。
-- `default` 插件函数在激活时调用，返回的清理函数被收集；激活抛错时宿主**立即释放本次已注册的副作用**（`core/host.ts:265-278`）。
-- **视图必须具名导出**：`navItems[].view` 只在入口模块里按名字取（`core/host.ts:222-230`），缺失只有 warning，表现为点开导航项是空白占位（`components/ContentArea.vue:19-21`）。
+- `default` 插件函数在激活时调用，返回的清理函数被收集；激活抛错时宿主**立即释放本次已注册的副作用**（`core/host.ts:297-305`）。
+- **视图必须具名导出**：`navItems[].view` 只在入口模块里按名字取（`core/host.ts:249-255`），缺失只有 warning，表现为点开导航项是空白占位（`components/ContentArea.vue:19-21`）。
 - 命令 / 导航 id **全局唯一**：命令同名时只允许声明它的扩展绑定实现，别的扩展绑会被静默忽略（`core/registry.ts:206-211`）；**命令 id 跨扩展重复**时保留先注册者，冲突写进后注册方扩展的 `validations`（warning，`core/registry.ts:122-140`）。
 
 ## 5. 视图组件
@@ -145,7 +145,7 @@ npm run dev
 
 - 左栏出现导航项（`group: 'top'`），点击渲染视图；状态栏项与 `Ctrl+Shift+P` 命令面板出现对应条目（`palette: false` 不出现）。
 - 扩展管理器**默认隐藏内置扩展**，勾选工具栏「显示内置」才看到（`extensions/ext-manager/ExtensionManagerView.vue:30-37,261-263`）。
-- 启动日志 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 …`（`core/host.ts:943-947`）：`Z < X` 说明有扩展未激活，去扩展管理器详情页看 `activationError`。
+- 启动日志 `[host] 启动完成: N 个扩展（X 启用 / Y 禁用），激活 Z，依赖环 …`（`core/host.ts:1024-1031`）：`Z < X` 说明有扩展未激活，去扩展管理器详情页看 `activationError`。
 
 改 `src/` 必须过质量门槛：`npm run typecheck`、`npm run lint`、`npm test`（只查渲染进程可用 `npm run typecheck:web`）。
 
