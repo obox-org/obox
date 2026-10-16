@@ -198,7 +198,7 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 
 | 项 | 结果 |
 | --- | --- |
-| tag → 工作流 | 待回填（发布完成后补 `release.yml` 运行链接与结论） |
-| 资产数 / 名称 | 待回填 |
-| `latest.yml` 的版本与 sha512 一致性 | 待回填 |
+| tag → 工作流 | ✅ `Release` **#32**（run [38862262546](https://github.com/obox-org/obox/actions/runs/38862262546)），`conclusion = success`，耗时约 **5 分钟**（含 tag ↔ `package.json` 版本一致性校验、x64 与 arm64 两轮构建与上传） |
+| 资产数 / 名称 | ✅ **7 项**，与历次同形：`obox-1.0.16-x64-setup.exe`（121,777,493 B）、`obox-1.0.16-arm64-setup.exe`（116,200,869 B）、`obox-1.0.16-setup.exe`（237,140,486 B，**无架构后缀的"臃肿包"**，成因见第 8 节与 9.2 节）、三份对应 `*.blockmap`（129,230 / 121,353 / 246,982 B）、`latest.yml`（654 B） |
+| `latest.yml` 的版本与一致性 | ✅ `version: 1.0.16`；`files` 列出三份安装包且**尺寸与 release 资产逐一相等**（237140486 / 121777493 / 116200869），`path: obox-1.0.16-setup.exe`（与 9.2 节"无后缀包不影响自动更新"的结论一致）；三个 sha512 字段齐全（`ThJrHCjE…` / `IKhCIH7n…` / `WrTacUnQ…`）。**未下载合计约 475 MB 产物本地重算 sha512**，一致性以"工作流内计算 + 尺寸逐项吻合"为准（如实登记该口径） |
 
