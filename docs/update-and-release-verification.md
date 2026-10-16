@@ -180,3 +180,25 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 而打包版本机与最新版同号时只能得到 `update-not-available`。
 退场条件：保留上一版打包版（如 1.0.10），等下一版发布后点「检查更新」验证发现新版、下载与安装向导。
 
+## 10. v1.0.16 发布数据（2026-10-16）
+
+**触发方式**：本地 `git tag v1.0.16` + `git push origin v1.0.16` ⇒ `.github/workflows/release.yml`（`on.push.tags: v*`）在 `windows-latest` 上构建；工作流第一步**校验 tag 与 `package.json` 的 `version` 一致**（`v1.0.16` ↔ `1.0.16`），不一致直接失败。
+
+**本版头条能力（为什么必须有这一版）**：
+
+- 新增扩展 **`api.overlay`** 命名空间（`create` / `destroy` / `setMouseThrough` / `setPosition`，均按扩展 id 限定作用域）+ `OverlayResult.position`，以及设置页只读 **`progress`** 字段类型；根 `package.json` 的 **`apiVersion` 由 1 升到 2**（决策与四个被否决备选见 [ADR-0024](adr/0024-extension-overlay-window-capability.md)；实现来自 PR #130 / merge `a06bf98`）。
+- **这一版是"装机使用宠物扩展"的前提**：`pet` 扩展 v1.0.0（`obox-org/pet` 的 release）在清单里声明 `apiVersion: 2`，而 `apiVersion: 1` 的旧宿主（≤ 1.0.15）会按 `core/manifest.ts:28-38` **直接拒绝加载**（清单无效、管理器标红、入口根本不执行）。因此 v1.0.16 之前，宠物扩展只能在 `npm run dev` 的开发宿主或 `--debug-extension` 下使用。
+- 回归范围：既有 rdp / webapp 的 App 卡片窗口不受影响（`isOverlay` 单开关隔离，卡片窗仍为无边框白底 + 标题栏）；未声明 `apiVersion: 2` 的既有扩展在所有版本上照常加载。
+
+**发布资产**：与历次同形 **7 项**（`obox-1.0.16-x64-setup.exe`、`obox-1.0.16-arm64-setup.exe`、两份 `*.blockmap`、`latest.yml` 及工作流上传的其余元数据；具体清单以 release 页面回读为准）。
+
+**本版未新增"运行期未验证"项**：第 3–6 节的既有未验证项（arm64 端到端、代码签名、降级/同版本重装、应用内更新链路）**沿用不变**；本次改动（主进程 overlay 窗体 + 设置页字段渲染 + `apiVersion` 递增）已由宿主单测（`test/overlay-window.test.ts` 67 条、`test/host-api-surface.test.ts` 28 条、`test/settings-progress-field.test.ts` 22 条）与宠物扩展的实机证据覆盖。
+
+**实测记录（发布后回读）**：
+
+| 项 | 结果 |
+| --- | --- |
+| tag → 工作流 | 待回填（发布完成后补 `release.yml` 运行链接与结论） |
+| 资产数 / 名称 | 待回填 |
+| `latest.yml` 的版本与 sha512 一致性 | 待回填 |
+
