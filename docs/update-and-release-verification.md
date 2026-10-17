@@ -225,3 +225,35 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 | 资产数 / 名称 | ✅ **7 项**，与历次同形：`obox-1.0.16-x64-setup.exe`（121,777,493 B）、`obox-1.0.16-arm64-setup.exe`（116,200,869 B）、`obox-1.0.16-setup.exe`（237,140,486 B，**无架构后缀的"臃肿包"**，成因见第 8 节与 9.2 节）、三份对应 `*.blockmap`（129,230 / 121,353 / 246,982 B）、`latest.yml`（654 B） |
 | `latest.yml` 的版本与一致性 | ✅ `version: 1.0.16`；`files` 列出三份安装包且**尺寸与 release 资产逐一相等**（237140486 / 121777493 / 116200869），`path: obox-1.0.16-setup.exe`（与 9.2 节"无后缀包不影响自动更新"的结论一致）；三个 sha512 字段齐全（`ThJrHCjE…` / `IKhCIH7n…` / `WrTacUnQ…`）。**未下载合计约 475 MB 产物本地重算 sha512**，一致性以"工作流内计算 + 尺寸逐项吻合"为准（如实登记该口径） |
 
+## 11. v1.0.17 发布数据（2026-10-16）
+
+**触发方式**：本地 `git tag v1.0.17` + `git push origin v1.0.17` ⇒ `.github/workflows/release.yml`（`on.push.tags: v*`）在 `windows-latest` 上构建；工作流第一步**校验 tag 与 `package.json` 的 `version` 一致**（`v1.0.17` ↔ `1.0.17`），不一致直接失败。
+
+**本版头条能力（都直接来自用户反馈）**：
+
+1. **更新链路真正走代理**（PR #133 / merge `2c7bb09`）。用户报告"obox-updater 扩展没有使用代理"，代码级定位出三处缺陷并修复：
+   - `applyProxy()`（"把代理同时应用到扩展联网与更新两个 session"）此前是**死代码**（全仓无调用方）⇒ 新增宿主内部 IPC `proxy:apply`（`src/main/net.ts` 的 `registerProxyIpc()`）+ preload 桥接 + `MainApi.applyProxy`，渲染进程外壳**启动时**与**代理设置变化时**各推送一次；
+   - `update:download` / `update:install` 此前**完全没碰代理**（是否走代理取决于"上一次 check 是否恰好配过"这种偶然状态）⇒ 两个动作前各应用一次当前代理；
+   - `applyProxyToSession(ses, undefined)` 会把 session **静默重置为直连**并清空代理凭据 ⇒ 所有调用点收敛为 `proxy ?? currentProxy()`（`applyUpdaterProxy()`），同时**保留** `applyProxy(undefined)` = 直连的语义（用户关代理必须关得掉）；
+   - 新增诊断日志 `[updater] 代理：<URL|direct>（rules=…；来源：显式|当前配置）`。
+   - 实机证据与口径见 §2（死代理下 `resolve-feed`/`force-install`/`download` 全部 `net::ERR_PROXY_CONNECTION_FAILED`；未打包时 electron-updater 会跳过 `checkForUpdates`）。
+2. **设置新增「AI」选项**（PR #134 / merge `7b17d8a`）：可配置 OpenAI 兼容参数 `ai.baseUrl` / `ai.apiKey` / `ai.model` / `ai.contextLen`（默认 8192）/ `ai.dailyLimit`（**留空 = 不限**，与"填 0"在存储层是两个值）；密钥用**页内掩码控件**（掩码态 DOM 不渲染明文输入框）；「测试连接」**在主进程 `netSession()` 上发** ⇒ 自动继承上面的代理与忽略 SSL 设置。决策与五个被否决备选见 [ADR-0025](adr/0025-host-ai-options.md)。
+   **`apiVersion` 仍为 2**：本次没有新增/修改任何扩展可见面（未动 `src/api/**`、贡献点 schema、manifest 校验规则），新增的 `ai:test-connection` 与 `proxy:apply` 都是宿主内部 IPC。
+
+**本版新增的"待验证项"（如实登记，不要当作已验证）**：
+
+| # | 待验证 | 为什么现在验不了 | 验证方式 |
+| --- | --- | --- | --- |
+| V1 | 打包版上**「检查更新」在代理不通时报代理类错误** | 未打包时 electron-updater 直接跳过 `checkForUpdates`（§9.3 既有事实）⇒ 只能在打包版复验 | 安装本版 ⇒ 把代理设为打不通的 `http://127.0.0.1:9` ⇒ 点「设置 → 更新 → 检查更新」应报代理类错误；恢复代理后应恢复正常 |
+| V2 | 「AI → 测试连接」对**真实 `api.openai.com`** 的成功路径 | 手头没有可用的真实 key（成功路径已由**本地 OpenAI 兼容端点**实机跑通 + 单测覆盖请求构造；"走代理"已由 `7897 ↔ 127.0.0.1:9` 对照实机证明） | 填入真实 key 后点「测试连接」应显示"连接成功（N 个模型可用）…" |
+
+**发布资产**：预期与历次同形 **7 项**（x64 / arm64 安装包、无架构后缀的"臃肿包"、三份 `*.blockmap`、`latest.yml`）。
+
+**实测记录（发布后回读）**：
+
+| 项 | 结果 |
+| --- | --- |
+| tag → 工作流 | 待回填 |
+| 资产数 / 名称 | 待回填 |
+| `latest.yml` 的版本与一致性 | 待回填 |
+
