@@ -14,7 +14,14 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { join } from 'node:path'
 import type { ProxyConfig } from '../shared/types'
-import { applyProxyToSession, currentProxyCredentials, updaterSession } from './proxy'
+import {
+  applyProxyToSession,
+  currentProxy,
+  currentProxyCredentials,
+  proxyConfigError,
+  proxyRulesOf,
+  updaterSession
+} from './proxy'
 import { buildAssetUrl, parseUpdateFeed, pickArtifact } from './updateFeed'
 
 /** 更新事件（主进程 → 渲染进程） */
@@ -50,6 +57,46 @@ interface ReleaseItem {
   assets?: ReleaseAsset[]
 }
 
+/** 本次调用所用代理的来源：调用方显式传入 / 回落到「当前配置」（供日志诊断） */
+type ProxySource = 'explicit' | 'current'
+
+/** 代理的日志描述：配置了可用代理给「URL（rules=…）」；其余一律 `direct`（非法配置附原因） */
+function describeProxy(cfg?: ProxyConfig): string {
+  const rules = proxyRulesOf(cfg)
+  if (rules) return `${cfg?.url ?? ''}（rules=${rules}${cfg?.ignoreSSL ? '；ignoreSSL' : ''}）`
+  const issue = cfg ? proxyConfigError(cfg) : undefined
+  return issue ? `direct（配置非法：${issue}）` : 'direct'
+}
+
+/**
+ * 更新链路（解析源 / 检查 / 下载 / 安装 / 强制重装）动作前**统一**配置 updater session 的代理。
+ *
+ * 语义是"**显式覆盖 else 当前配置**"：调用方传了就用手上的，没传则回落 `currentProxy()`
+ * ——也就是渲染进程启动/改设置时经 `proxy:apply` 推入的配置（或上一次调用应用过的配置）。
+ *
+ * 为什么不能直接把调用方给的（可能为 `undefined` 的）proxy 交给 `applyProxyToSession`：
+ * `undefined` 在那里的语义是
+ * **「用户关掉了代理 ⇒ 直连」**（见 proxy.ts），调用方一漏传就等于**静默**把 session 重置成直连，
+ * 顺带清空 `currentProxyCredentials()` 让认证代理的 `login` 事件拿不到凭据。回落后用户真关代理仍生效
+ * ——那时 `currentProxy()` 返回的是 `{enabled:false}`（非 `undefined`）⇒ 直连。
+ *
+ * 每次调用都打一条 `[updater] 代理：…（来源：…）`；**是否回落按"参数有没有传"判定**（不是按调用点），
+ * 回落到当前配置时额外 warn 一条，便于将来排查"某条链路忘了带代理"的同类问题。
+ */
+function applyUpdaterProxy(proxy?: ProxyConfig): void {
+  const cfg = proxy ?? currentProxy()
+  const source: ProxySource = proxy === undefined ? 'current' : 'explicit'
+  if (source === 'current') {
+    console.warn(
+      `[updater] 调用方未传代理，已回落当前配置：${describeProxy(cfg)}（不再隐式重置为直连）`
+    )
+  }
+  applyProxyToSession(updaterSession(), cfg)
+  console.log(
+    `[updater] 代理：${describeProxy(cfg)}（来源：${source === 'explicit' ? '显式' : '当前配置'}）`
+  )
+}
+
 /**
  * 解析 GitHub 仓库的更新源：取**最近若干 release 中第一个可用项**——
  * 非 draft、非 prerelease，且资产里含 `latest.yml`（只认"已编译出更新元数据"的 release）。
@@ -61,7 +108,7 @@ export async function resolveLatestRelease(
   proxy?: ProxyConfig
 ): Promise<{ ok: boolean; tag?: string; feedUrl?: string; publishedAt?: string; error?: string }> {
   const ses = updaterSession()
-  applyProxyToSession(ses, proxy)
+  applyUpdaterProxy(proxy)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 10_000)
   try {
@@ -178,7 +225,7 @@ async function forceInstallFromFeed(opts: {
   proxy?: ProxyConfig
 }): Promise<{ ok: boolean; version?: string; filePath?: string; error?: string }> {
   const ses = updaterSession()
-  applyProxyToSession(ses, opts.proxy)
+  applyUpdaterProxy(opts.proxy)
   const feedBase = opts.feedUrl.endsWith('/') ? opts.feedUrl : `${opts.feedUrl}/`
 
   // 1) 取并解析更新元数据
@@ -296,7 +343,7 @@ export function registerUpdateIpc(): void {
       if (activeCheck) return activeCheck
       activeCheck = (async (): Promise<{ ok: boolean; available?: string; error?: string }> => {
         try {
-          applyProxyToSession(updaterSession(), opts.proxy)
+          applyUpdaterProxy(opts.proxy)
           // Windows 上 electron-builder 生成的更新元数据固定叫 latest.yml（无架构后缀），
           // 其中 files 含全部架构安装包；electron-updater 按机器架构自动选匹配的安装包。
           // 不要设 channel（arm64 不存在 latest-arm64.yml，设了会 404）。
@@ -318,6 +365,10 @@ export function registerUpdateIpc(): void {
     if (activeDownload) return activeDownload
     activeDownload = (async (): Promise<{ ok: boolean; error?: string }> => {
       try {
+        // 下载动作前**再**配置一次：本 IPC 不带 proxy 参数 ⇒ 回落「当前配置」（渲染进程启动/改设置
+        // 时推入，或上一次 check 用的配置）。此前这里完全不碰代理，是否走代理取决于上一次 check
+        // 是否恰好配置过这个 session —— 顺序一变（先下载后检查 / 重启后直接下载）代理就静默失效。
+        applyUpdaterProxy()
         await autoUpdater.downloadUpdate()
         return { ok: true }
       } catch (err) {
@@ -331,6 +382,8 @@ export function registerUpdateIpc(): void {
 
   // 安装并重启（下载完成后调用）
   ipcMain.handle('update:install', (): void => {
+    // 同样先补齐 session 配置（安装器启动前的最后一跳不再依赖此前是否配置过代理）
+    applyUpdaterProxy()
     autoUpdater.quitAndInstall()
   })
 

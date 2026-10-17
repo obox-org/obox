@@ -76,6 +76,9 @@ const api: MainApi = {
     ipcRenderer.invoke('overlay:set-position', extId, id, x, y),
   // 扩展能力：网络（主进程 fetch + 代理）
   netFetch: (req, proxy) => ipcRenderer.invoke('net:fetch', req, proxy),
+  // 宿主内部：渲染进程启动 / 代理设置变化时把代理推给主进程，由其同时应用到
+  // 扩展联网（obox-net）与更新（electron-updater）两个 session（卡 20；主进程侧 registerProxyIpc）
+  applyProxy: (proxy) => ipcRenderer.invoke('proxy:apply', proxy),
   // 扩展能力：文件系统（限定扩展 data 目录）
   fsReadFile: (extId, rel) => ipcRenderer.invoke('fs:read-file', extId, rel),
   fsWriteFile: (extId, rel, content) => ipcRenderer.invoke('fs:write-file', extId, rel, content),
