@@ -29,6 +29,7 @@ import { registerSqliteIpc } from './sqlite'
 import { registerTimerIpc } from './timer'
 import { registerNotificationIpc } from './notification'
 import { registerNetIpc } from './net'
+import { registerAiIpc } from './ai'
 import { registerFsIpc } from './fs'
 import { registerExtIpc } from './ext'
 import { registerSecretsIpc } from './secrets'
@@ -108,6 +109,8 @@ app.whenReady().then(() => {
   registerTimerIpc()
   registerNotificationIpc()
   registerNetIpc()
+  // 「设置 → AI」的测试连接（宿主内部；在 netSession 上发 ⇒ 与 api.net.fetch 同一条代理链路）
+  registerAiIpc()
   registerFsIpc()
   registerExtIpc()
   registerSecretsIpc()

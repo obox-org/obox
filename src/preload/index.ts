@@ -79,6 +79,8 @@ const api: MainApi = {
   // 宿主内部：渲染进程启动 / 代理设置变化时把代理推给主进程，由其同时应用到
   // 扩展联网（obox-net）与更新（electron-updater）两个 session（卡 20；主进程侧 registerProxyIpc）
   applyProxy: (proxy) => ipcRenderer.invoke('proxy:apply', proxy),
+  // 宿主内部：「设置 → AI」的测试连接（主进程用 netSession() 发请求 ⇒ 继承宿主代理与忽略 SSL）
+  aiTestConnection: (req) => ipcRenderer.invoke('ai:test-connection', req),
   // 扩展能力：文件系统（限定扩展 data 目录）
   fsReadFile: (extId, rel) => ipcRenderer.invoke('fs:read-file', extId, rel),
   fsWriteFile: (extId, rel, content) => ipcRenderer.invoke('fs:write-file', extId, rel, content),

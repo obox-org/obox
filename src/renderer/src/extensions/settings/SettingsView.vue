@@ -26,6 +26,7 @@ type TreeKey =
   | 'keyboard'
   | 'update'
   | 'network'
+  | 'ai'
   | 'notification'
   | 'extension'
 
@@ -261,6 +262,177 @@ function saveProxy(): void {
     stateStore.setSetting('network.proxy', normalizeProxyConfig(proxyConfig))
   } finally {
     savingProxy = false
+  }
+}
+
+// ---- AI（OpenAI 兼容接口参数；决策与取舍见 docs/adr/0025-host-ai-options.md） ----
+
+/**
+ * 五个设置键（一律统一设置存储，前缀 `ai.`）。
+ *
+ * ⚠️ 读值必须重算：`stateStore` 的 state 是**普通对象**（`core/state.ts:85`），读设置**不被追踪**，
+ * 且设置页在 `KeepAlive` 里；所以每个取值函数都先 `void settingsRevision.value`
+ * （与代理表单、快捷键表格同一约定），`setSetting` 会触发订阅 → 计数变化 → 当帧重读。
+ */
+const AI_KEYS = {
+  baseUrl: 'ai.baseUrl',
+  apiKey: 'ai.apiKey',
+  model: 'ai.model',
+  contextLen: 'ai.contextLen',
+  dailyLimit: 'ai.dailyLimit'
+} as const
+
+/** `contextLen` 的默认值（缺省/非法/小于 1 时回落到它） */
+const DEFAULT_CONTEXT_LEN = 8192
+/** `contextLen` 的上限（超过按上限钳制；1M token 已远超任何现实端点） */
+const MAX_CONTEXT_LEN = 1_048_576
+/** 模板里展示默认值用的文本（模板只认白名单全局，这里先算好） */
+const DEFAULT_CONTEXT_LEN_TEXT = String(DEFAULT_CONTEXT_LEN)
+
+/** 读一个 AI 设置值（依赖 `settingsRevision`，见 `AI_KEYS` 注释） */
+function aiStored(key: string): unknown {
+  void settingsRevision.value
+  return stateStore.getSetting(key)
+}
+
+/** 文本类字段的显示值（未设置/非字符串 → 空串） */
+function aiTextOf(key: string): string {
+  const value = aiStored(key)
+  return typeof value === 'string' ? value : ''
+}
+
+/**
+ * 数字类字段的显示值：未设置或存值不是有限数字 → `fallback`（`''` = 空输入框）。
+ * 存值为数字时按数字显示——**`0` 要显示成 `0`**（与"空"区分，`dailyLimit` 的语义靠它）。
+ */
+function aiNumberTextOf(key: string, fallback: string): string {
+  const value = aiStored(key)
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : fallback
+}
+
+/**
+ * `contextLen` 的归一策略（纯函数；测试从本文件源码原样提取后直接跑，避免"测试里复制实现"）：
+ * - 空串 / 全空白 / null / undefined / 非数字文本 / NaN / ±Infinity → **默认 8192**
+ * - 小数 → 向下取整
+ * - `< 1`（0 与负数）→ **默认 8192**（"1 token 上下文"没有意义，回落到可用的默认值比钳到 1 更可预期）
+ * - `> MAX_CONTEXT_LEN` → **钳到上限**（荒谬的大值不该原样存下去，也别让输入框"拒绝保存"没有反馈）
+ */
+function normalizeContextLen(raw: unknown): number {
+  const value = typeof raw === 'string' ? raw.trim() : raw
+  if (value === '' || value === null || value === undefined) return DEFAULT_CONTEXT_LEN
+  const num = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(num)) return DEFAULT_CONTEXT_LEN
+  const floored = Math.floor(num)
+  return floored < 1 ? DEFAULT_CONTEXT_LEN : Math.min(floored, MAX_CONTEXT_LEN)
+}
+
+/**
+ * `dailyLimit` 的归一策略（纯函数；同上）：
+ * - 空串 / 全空白 / null / undefined → **`null` = 不限**（用户明确要求"每日限额可以为空"）
+ * - 非有限（NaN / ±Infinity / 非数字文本）→ `null`
+ * - 负数 → `null`（负数限额没有意义；归一为"不限"而不是 0——归一为 0 等于把一次误填变成
+ *   "禁止使用"，那是更坏的降级）
+ * - 其余 → 向下取整的非负整数；**`0` 保留为 `0`**（"额度 0"，与空的"不限"是两回事）
+ */
+function normalizeDailyLimit(raw: unknown): number | null {
+  const value = typeof raw === 'string' ? raw.trim() : raw
+  if (value === '' || value === null || value === undefined) return null
+  const num = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(num)) return null
+  const floored = Math.floor(num)
+  return floored < 0 ? null : floored
+}
+
+/** 文本字段保存（baseUrl / model：与其它页一致走 `@change`，失焦即落库） */
+function saveAiText(key: string, value: string): void {
+  stateStore.setSetting(key, value)
+}
+
+/** `contextLen` 保存：空/非法按默认归一后落库（输入框随之显示归一结果） */
+function onContextLenChange(e: Event): void {
+  stateStore.setSetting(
+    AI_KEYS.contextLen,
+    normalizeContextLen((e.target as HTMLInputElement).value)
+  )
+}
+
+/** `dailyLimit` 保存：空 ⇒ `null`（不限）；`0` ⇒ `0`（额度 0） */
+function onDailyLimitChange(e: Event): void {
+  stateStore.setSetting(
+    AI_KEYS.dailyLimit,
+    normalizeDailyLimit((e.target as HTMLInputElement).value)
+  )
+}
+
+/**
+ * apiKey 的掩码态开关（`false` = 掩码）。
+ *
+ * **只影响显示**：它是组件内的 ref，既不写设置、也不落盘，切走页面即回到掩码态
+ * （组件被 KeepAlive 缓存，重挂载时重新初始化为 `false`）。掩码态**不渲染密钥明文**
+ * （只渲染固定圆点串，见模板）：比 `type="password"` 更硬的保证——DOM 里根本没有明文。
+ */
+const showApiKey = ref(false)
+
+/** 掩码显示的固定圆点串：**与密钥长度无关**（固定 8 个），避免从点的数量反推长度 */
+const MASKED_KEY = '••••••••'
+
+/** 是否已配置密钥（只对外暴露这一个布尔量，不暴露内容；未配置时掩码位置显示「未配置」） */
+function hasApiKey(): boolean {
+  return aiTextOf(AI_KEYS.apiKey).trim() !== ''
+}
+
+/**
+ * apiKey 保存走 `@input`（**不是** `@change`）：掩码切换会重建这个输入框，"输入到一半点隐藏"
+ * 若等失焦才保存就会丢输入；逐键落库让"切换/失焦丢输入"不可能发生（localStorage 写入很小）。
+ * 值相同时 Vue 不重写 DOM，光标不会跳。
+ */
+function onApiKeyInput(e: Event): void {
+  stateStore.setSetting(AI_KEYS.apiKey, (e.target as HTMLInputElement).value)
+}
+
+// ---- AI：测试连接 ----
+const aiTestState = ref<'idle' | 'testing'>('idle')
+const aiTestOk = ref(false)
+const aiTestMessage = ref('')
+
+/**
+ * 「测试连接」：**先本地快速失败，再发请求**。
+ *
+ * - baseUrl 空 ⇒ 提示「请先填写 baseUrl」并**直接 return**（不发任何 IPC / 网络请求）；
+ * - baseUrl 非 `http(s)://` ⇒ 同样本地拒绝（与主进程同口径；主进程侧仍会再校验一次，防绕过）；
+ * - 通过后交给**主进程**：`window.api.aiTestConnection` → `ai:test-connection`
+ *   （`src/main/ai.ts`），请求在 `netSession()` 上发 ⇒ **自动继承「设置 → 网络」的代理与
+ *   忽略 SSL 设置**（与 `api.net.fetch` 同一条链路；渲染进程自己 fetch 走默认 session、不经代理）。
+ * - 期间 `aiTestState = 'testing'`：按钮进 loading 态并禁用，UI 不阻塞（不 await 到渲染里）。
+ * - 结果文案由主进程给（中文，含状态码/Chromium 错误名等一手信息）；IPC 本身失败（如老宿主
+ *   没有这个方法）时用 i18n 文案兜底，不让异常冒泡成白屏。
+ */
+async function testAiConnection(): Promise<void> {
+  const baseUrl = aiTextOf(AI_KEYS.baseUrl).trim()
+  aiTestOk.value = false
+  aiTestMessage.value = ''
+  if (!baseUrl) {
+    aiTestMessage.value = t('settings.ai.needBaseUrl')
+    return
+  }
+  if (!/^https?:\/\//i.test(baseUrl)) {
+    aiTestMessage.value = t('settings.ai.invalidBaseUrl')
+    return
+  }
+  aiTestState.value = 'testing'
+  try {
+    const result = await window.api.aiTestConnection({
+      baseUrl,
+      apiKey: aiTextOf(AI_KEYS.apiKey).trim()
+    })
+    aiTestOk.value = result.ok
+    aiTestMessage.value = result.message
+  } catch (err) {
+    aiTestMessage.value = t('settings.ai.testFailed', {
+      msg: err instanceof Error ? err.message : String(err)
+    })
+  } finally {
+    aiTestState.value = 'idle'
   }
 }
 
@@ -610,6 +782,14 @@ onUnmounted(() => {
       <div class="tree-node" :class="{ active: active === 'network' }" @click="active = 'network'">
         <span class="tree-label">{{ t('settings.tree.network') }}</span>
       </div>
+      <!--
+        AI 节点放在「网络」之后、「通知」之前：AI 配置是"对外连接"类设置（它的「测试连接」还
+        直接吃「网络」里的代理），与代理相邻最符合排查路径（连不上时第一反应是查代理）；
+        也不插在末尾靠近「通知/扩展」这两个与本地扩展管理相关的节点。
+      -->
+      <div class="tree-node" :class="{ active: active === 'ai' }" @click="active = 'ai'">
+        <span class="tree-label">{{ t('settings.tree.ai') }}</span>
+      </div>
       <div
         class="tree-node"
         :class="{ active: active === 'notification' }"
@@ -838,6 +1018,111 @@ onUnmounted(() => {
           <label>{{ t('settings.network.noProxy') }}</label>
           <textarea v-model="noProxyText" class="text-input" rows="3" @change="saveProxy" />
         </div>
+      </div>
+
+      <!--
+        AI（OpenAI 兼容接口参数）：五个设置键见脚本里的 AI_KEYS，一律走 stateStore。
+        本期**只存储 + 展示**（没有消费者会拿它们去调用模型），唯一的动作是「测试连接」。
+        决策与取舍（掩码控件为什么不新增公开字段类型、key 明文存储的退场条件、测试连接为什么
+        必须在主进程走 netSession）见 docs/adr/0025-host-ai-options.md。
+      -->
+      <div v-else-if="active === 'ai'" class="config-block ai-block">
+        <h2>{{ t('settings.ai.title') }}</h2>
+        <p class="config-desc">{{ t('settings.ai.intro') }}</p>
+
+        <div class="config-row">
+          <label>{{ t('settings.ai.baseUrl') }}</label>
+          <input
+            class="text-input"
+            :value="aiTextOf(AI_KEYS.baseUrl)"
+            :placeholder="t('settings.ai.baseUrlPlaceholder')"
+            @change="saveAiText(AI_KEYS.baseUrl, ($event.target as HTMLInputElement).value)"
+          />
+          <p class="config-desc">{{ t('settings.ai.baseUrlHint') }}</p>
+        </div>
+
+        <!--
+          apiKey：**本页专用掩码控件**（不新增公开的 SettingFieldType——那属扩展可见能力，
+          要 bump apiVersion 3，见 ADR-0025）。
+          掩码态只渲染固定圆点串（MASKED_KEY，与密钥长度无关）：**密钥明文不进 DOM**；
+          点「显示」才挂载明文输入框（`v-else` 分支里唯一的密钥取值点）。
+          切换只改组件内的 showApiKey（不写设置、不落盘、不触发保存）；明文不入任何日志/提示。
+        -->
+        <div class="config-row">
+          <label>{{ t('settings.ai.apiKey') }}</label>
+          <div v-if="!showApiKey" class="api-key-row">
+            <span class="config-value masked-key">
+              {{ hasApiKey() ? MASKED_KEY : t('settings.ai.apiKeyEmpty') }}
+            </span>
+            <button class="btn" type="button" @click="showApiKey = true">
+              {{ t('settings.ai.show') }}
+            </button>
+          </div>
+          <div v-else class="api-key-row">
+            <input
+              class="text-input"
+              type="text"
+              :value="aiTextOf(AI_KEYS.apiKey)"
+              @input="onApiKeyInput"
+            />
+            <button class="btn" type="button" @click="showApiKey = false">
+              {{ t('settings.ai.hide') }}
+            </button>
+          </div>
+          <p class="config-desc">{{ t('settings.ai.apiKeyHint') }}</p>
+        </div>
+
+        <div class="config-row">
+          <label>{{ t('settings.ai.model') }}</label>
+          <input
+            class="text-input"
+            :value="aiTextOf(AI_KEYS.model)"
+            :placeholder="t('settings.ai.modelPlaceholder')"
+            @change="saveAiText(AI_KEYS.model, ($event.target as HTMLInputElement).value)"
+          />
+        </div>
+
+        <div class="config-row">
+          <label>{{ t('settings.ai.contextLen') }}</label>
+          <input
+            class="text-input"
+            type="number"
+            min="1"
+            :value="aiNumberTextOf(AI_KEYS.contextLen, DEFAULT_CONTEXT_LEN_TEXT)"
+            @change="onContextLenChange"
+          />
+          <p class="config-desc">
+            {{
+              t('settings.ai.contextLenHint', {
+                default: DEFAULT_CONTEXT_LEN,
+                max: MAX_CONTEXT_LEN
+              })
+            }}
+          </p>
+        </div>
+
+        <div class="config-row">
+          <label>{{ t('settings.ai.dailyLimit') }}</label>
+          <input
+            class="text-input"
+            type="number"
+            min="0"
+            :value="aiNumberTextOf(AI_KEYS.dailyLimit, '')"
+            @change="onDailyLimitChange"
+          />
+          <p class="config-desc">{{ t('settings.ai.dailyLimitHint') }}</p>
+        </div>
+
+        <div class="config-row actions-row">
+          <button class="btn" :disabled="aiTestState === 'testing'" @click="testAiConnection">
+            {{ aiTestState === 'testing' ? t('settings.ai.testing') : t('settings.ai.test') }}
+          </button>
+          <!-- 结果：成功绿、失败红（文案由主进程给的中文原因，见 testAiConnection） -->
+          <span v-if="aiTestMessage" :class="aiTestOk ? 'config-success' : 'config-error'">
+            {{ aiTestMessage }}
+          </span>
+        </div>
+        <p class="config-desc">{{ t('settings.ai.testHint') }}</p>
       </div>
 
       <!-- 通知（逐扩展开关） -->
@@ -1117,6 +1402,40 @@ onUnmounted(() => {
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
+}
+/*
+ * AI 分区：baseUrl / model / 两个数字框都按内容区比例缩放（与网络分区同一理由：地址比
+ * 固定 220px 长得多）。**只作用于 `.config-row` 的直接子元素**——apiKey 那一行的输入框在
+ * `.api-key-row` 里，由下面的 flex 规则控制宽度。
+ */
+.ai-block .config-row > .text-input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+/* apiKey 掩码行：只读圆点/「未配置」（或明文输入框）+「显示/隐藏」按钮 */
+.ai-block .api-key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-block .api-key-row .text-input {
+  flex: 1;
+  min-width: 0;
+}
+/*
+ * 掩码显示框：沿用输入类控件的底色/边框 token，视觉上就是"一个被遮住的输入框"
+ * （不自造色值、不新增主题 token）。
+ */
+.ai-block .masked-key {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-input, #3c3c3c);
+  border: 1px solid var(--border, #454545);
+  padding: 5px 8px;
+  font-size: 13px;
+  /* 圆点串之间留点空隙，读起来像掩码而不是乱码 */
+  letter-spacing: 2px;
 }
 /*
  * 字段级说明（如代理地址下方的 urlHint）：**紧贴它描述的那个控件**，与下一个选项拉开距离。
