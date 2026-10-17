@@ -119,6 +119,7 @@ export default {
       extensions: 'Extensions',
       update: 'Update',
       network: 'Network',
+      ai: 'AI',
       notification: 'Notifications'
     },
     appearance: {
@@ -180,6 +181,40 @@ export default {
         "Supports http / https / socks4 / socks5; credentials may be embedded in the URL (http://user:pass{'@'}host:8080); leave empty for a direct connection.",
       ignoreSSL: 'Ignore SSL certificate validation',
       noProxy: 'No-proxy list (one per line, e.g. localhost, 127.0.0.1)'
+    },
+    // AI (OpenAI-compatible endpoint parameters): all five settings live in stateStore under `ai.`.
+    // This page only stores and displays them (nothing consumes them yet); the only action is the
+    // connection test. Connection results are produced by the main process in Chinese.
+    ai: {
+      title: 'AI',
+      intro:
+        'Configure an OpenAI-compatible endpoint. This release only stores and displays these values — no feature consumes them yet. "Test connection" sends one real request with the current settings.',
+      baseUrl: 'baseUrl (API root)',
+      baseUrlPlaceholder: 'https://api.openai.com/v1',
+      baseUrlHint:
+        'Root URL of an OpenAI-compatible endpoint, usually ending with /v1; a trailing slash is fine.',
+      apiKey: 'apiKey (secret key)',
+      apiKeyEmpty: '(not set)',
+      apiKeyHint:
+        'The key is stored in plain text in this machine’s local config (persisted via localStorage, like every other setting). Leave it empty to send no Authorization header — some local endpoints need no key, but endpoints that do will answer 401.',
+      show: 'Show',
+      hide: 'Hide',
+      model: 'model',
+      modelPlaceholder: 'gpt-4o-mini',
+      contextLen: 'contextLen (max context length)',
+      contextLenHint:
+        'In tokens. Empty or invalid falls back to the default {default}; values above the cap {max} are clamped.',
+      dailyLimit: 'Daily limit (requests)',
+      dailyLimitHint:
+        'Leave empty for unlimited (stored as empty); 0 means a quota of zero — the two differ.',
+      test: 'Test connection',
+      testing: 'Testing…',
+      testHint:
+        'Sends one GET request to “API root + /models” to check connectivity (through the host proxy, 10s timeout).',
+      // Renderer-side fast fail (no request at all): same rule as the main process, minus the round trip
+      needBaseUrl: 'Please fill in baseUrl first',
+      invalidBaseUrl: 'baseUrl must start with http:// or https://',
+      testFailed: 'Connection test failed: {msg}'
     },
     notification: {
       title: 'Notifications',

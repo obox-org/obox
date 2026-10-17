@@ -197,6 +197,50 @@ export interface LegacyProxyConfig {
   noProxy?: string[]
 }
 
+/**
+ * 「设置 → AI」的**测试连接**请求（宿主内部，见 `MainApi.aiTestConnection`）。
+ *
+ * 参数就是设置页里那五个键中的两个：`baseUrl`（OpenAI 兼容端点根地址，如
+ * `https://api.openai.com/v1`，带不带尾斜杠都可）与 `apiKey`（可为空——不少本地端点不要密钥）。
+ * 两者都由渲染进程从统一设置存储（localStorage）读出后经 IPC 传入；**密钥不过网络**，
+ * 只在主进程被拼进 `Authorization` 头。
+ */
+export interface AiConnectionRequest {
+  baseUrl?: string
+  apiKey?: string
+}
+
+/** 测试连接的失败原因（稳定码；中文文案见 `message`，UI 直接展示 message） */
+export type AiConnectionReason =
+  | 'missing-base-url'
+  | 'invalid-base-url'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'not-found'
+  | 'http-error'
+  | 'bad-response'
+  | 'network'
+  | 'timeout'
+
+/**
+ * 「测试连接」的结果（**失败不抛错**：与 notification/shell/dialog 的 `{ok, error}` 风格同构）。
+ *
+ * - `message`：中文、可执行的原因或结论（成功形如「连接成功（N 个模型可用）」）——
+ *   由主进程生成，因为"请求失败"的一手信息（状态码 / Chromium 错误名）只在主进程拿得到；
+ * - `reason`：稳定码，供 UI/测试做分支判断（不锁文案）；
+ * - `modelCount` / `models`：成功且端点返回 OpenAI 风格 `{data:[{id}]}` 时给出（模型名至多 3 个）；
+ * - `status`：拿到 HTTP 响应时的状态码（网络错误/超时为 undefined）；
+ * - **绝不回传 `apiKey`**（结果里只有端点的公开信息，避免密钥随 UI 文案/日志扩散）。
+ */
+export interface AiConnectionResult {
+  ok: boolean
+  message: string
+  reason?: AiConnectionReason
+  modelCount?: number
+  models?: string[]
+  status?: number
+}
+
 /** 渲染进程 → 主进程 的调用（invoke） */
 export interface MainApi {
   /** 窗口控制 */
@@ -387,6 +431,19 @@ export interface MainApi {
    * `An object could not be cloned.`）。
    */
   applyProxy(proxy?: ProxyConfig): Promise<void>
+  /**
+   * 宿主内部（**不属扩展 API 面**，「设置 → AI」的「测试连接」按钮专用）：
+   * 用当前 AI 配置发一次最小请求 `GET {baseUrl}/models`（带 `Authorization: Bearer <apiKey>`，
+   * `apiKey` 为空则不带该头）验证配置可用。
+   *
+   * - **必须在主进程用 `netSession()` 发起**（`src/main/ai.ts`）：只有这条 session 上应用了
+   *   用户配置的代理与忽略 SSL 设置（卡 20），与 `api.net.fetch` 同一条路；渲染进程的 `fetch`
+   *   走默认 session、**不**经宿主代理，因此不能在这里用；
+   * - 带 10 秒超时（`AbortController`），失败**不抛错**，返回 `{ok:false, message, reason}`；
+   * - `baseUrl` 为空/非 http(s) 时主进程侧直接拒绝（渲染进程也会先行早退，见设置页）；
+   * - 返回结果**不回传 apiKey**（见 `AiConnectionResult`）。
+   */
+  aiTestConnection(req: AiConnectionRequest): Promise<AiConnectionResult>
   // ---- 扩展能力：文件系统（限定扩展 data 目录，相对路径） ----
   fsReadFile(extId: string, rel: string): Promise<{ ok: boolean; content?: string; error?: string }>
   fsWriteFile(extId: string, rel: string, content: string): Promise<{ ok: boolean; error?: string }>

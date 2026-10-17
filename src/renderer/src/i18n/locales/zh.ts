@@ -119,6 +119,7 @@ export default {
       extensions: '扩展',
       update: '更新',
       network: '网络',
+      ai: 'AI',
       notification: '通知'
     },
     appearance: {
@@ -178,6 +179,38 @@ export default {
         "支持 http / https / socks4 / socks5；账号密码可直接写在地址里（http://user:pass{'@'}host:8080）；留空表示直连。",
       ignoreSSL: '忽略 SSL 证书校验',
       noProxy: '排除列表（每行一个，如 localhost, 127.0.0.1）'
+    },
+    // AI（OpenAI 兼容接口参数）：五个设置键都存 stateStore（前缀 `ai.`）。
+    // 本页**只存储 + 展示**（本期没有消费者会拿它们去调用模型），唯一的动作是「测试连接」。
+    ai: {
+      title: 'AI',
+      intro:
+        '配置 OpenAI 兼容接口参数（本期只存储与展示，尚无功能会拿这些参数去调用模型）。「测试连接」会按当前配置发一次真实请求。',
+      baseUrl: 'baseUrl（接口根地址）',
+      baseUrlPlaceholder: 'https://api.openai.com/v1',
+      baseUrlHint: 'OpenAI 兼容端点的根地址，通常以 /v1 结尾；带不带尾斜杠都可以。',
+      apiKey: 'apiKey（密钥）',
+      apiKeyEmpty: '（未配置）',
+      // 安全口径（卡片要求页内明写）：密钥与其它设置一样明文存在本机 localStorage
+      apiKeyHint:
+        '密钥以明文保存在本机配置中（与其他设置一样，经 localStorage 持久化）。留空表示不带 Authorization 头——有些本地端点不需要密钥，但需要密钥的端点会返回 401。',
+      show: '显示',
+      hide: '隐藏',
+      model: 'model（模型名）',
+      modelPlaceholder: 'gpt-4o-mini',
+      contextLen: 'contextLen（上下文长度上限）',
+      contextLenHint:
+        '单位 token。留空或填非法值按默认 {default} 处理；超过上限 {max} 按上限处理。',
+      dailyLimit: '每日限额（请求次数）',
+      dailyLimitHint: '留空表示不限（存空值）；填 0 表示额度为 0——两者不同。',
+      test: '测试连接',
+      testing: '测试中…',
+      testHint:
+        '按当前配置向「接口根地址 + /models」发一次 GET 请求验连通性（经宿主代理，10 秒超时）。',
+      // 渲染进程侧的快速失败（**不发请求**）：与主进程同口径，只是省掉一次往返
+      needBaseUrl: '请先填写 baseUrl',
+      invalidBaseUrl: 'baseUrl 必须以 http:// 或 https:// 开头',
+      testFailed: '测试连接失败：{msg}'
     },
     notification: {
       title: '通知',
