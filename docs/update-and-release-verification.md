@@ -225,7 +225,7 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 | 资产数 / 名称 | ✅ **7 项**，与历次同形：`obox-1.0.16-x64-setup.exe`（121,777,493 B）、`obox-1.0.16-arm64-setup.exe`（116,200,869 B）、`obox-1.0.16-setup.exe`（237,140,486 B，**无架构后缀的"臃肿包"**，成因见第 8 节与 9.2 节）、三份对应 `*.blockmap`（129,230 / 121,353 / 246,982 B）、`latest.yml`（654 B） |
 | `latest.yml` 的版本与一致性 | ✅ `version: 1.0.16`；`files` 列出三份安装包且**尺寸与 release 资产逐一相等**（237140486 / 121777493 / 116200869），`path: obox-1.0.16-setup.exe`（与 9.2 节"无后缀包不影响自动更新"的结论一致）；三个 sha512 字段齐全（`ThJrHCjE…` / `IKhCIH7n…` / `WrTacUnQ…`）。**未下载合计约 475 MB 产物本地重算 sha512**，一致性以"工作流内计算 + 尺寸逐项吻合"为准（如实登记该口径） |
 
-## 11. v1.0.17 发布数据（2026-10-16）
+## 11. v1.0.17 发布数据（2026-10-17 发布；版本号 PR 于 10-16 提交）
 
 **触发方式**：本地 `git tag v1.0.17` + `git push origin v1.0.17` ⇒ `.github/workflows/release.yml`（`on.push.tags: v*`）在 `windows-latest` 上构建；工作流第一步**校验 tag 与 `package.json` 的 `version` 一致**（`v1.0.17` ↔ `1.0.17`），不一致直接失败。
 
@@ -253,7 +253,7 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 
 | 项 | 结果 |
 | --- | --- |
-| tag → 工作流 | 待回填 |
-| 资产数 / 名称 | 待回填 |
-| `latest.yml` 的版本与一致性 | 待回填 |
+| tag → 工作流 | ✅ `Release` **#33**（run [38991523038](https://github.com/obox-org/obox/actions/runs/38991523038)），`conclusion = success`（tag ↔ `package.json` 版本校验通过、x64 与 arm64 两轮构建与上传） |
+| 资产数 / 名称 | ✅ **7 项**：`obox-1.0.17-x64-setup.exe`（121,800,443 B）、`obox-1.0.17-arm64-setup.exe`（116,223,975 B）、`obox-1.0.17-setup.exe`（237,186,531 B，无架构后缀的"臃肿包"，成因见第 8 节与 9.2 节）、三份 `*.blockmap`（129,350 / 121,378 / 247,226 B）、`latest.yml`（654 B） |
+| `latest.yml` 的版本与一致性 | ✅ `version: 1.0.17`；`files` 三份安装包**尺寸与 release 资产逐一相等**（237186531 / 121800443 / 116223975），`path: obox-1.0.17-setup.exe`，顶层 `sha512` 与首项一致；`releaseDate: 2026-10-17T01:39:30.065Z`。**取回方式如实登记**：`objects.githubusercontent.com` 直连不通，本次 `Invoke-WebRequest` **显式经本机代理 `http://127.0.0.1:7897`** 才取回（654 B）；仍**未下载合计约 475 MB 产物本地重算 sha512**，一致性以"工作流内计算 + 尺寸逐项吻合"为准 |
 
