@@ -376,6 +376,17 @@ export interface MainApi {
     },
     proxy?: ProxyConfig
   ): Promise<{ ok: boolean; status?: number; statusText?: string; data?: unknown; error?: string }>
+  /**
+   * 宿主内部（**不属扩展 API 面**，扩展读代理请用 `api.proxy.get()`）：把「网络代理」设置推给主进程。
+   *
+   * 渲染进程在**启动时**与**代理设置变化时**调用；主进程据此在扩展联网（`obox-net`）与更新
+   * （`electron-updater`）两个 session 上应用代理，使更新链路的检查/下载/安装**不依赖调用顺序**
+   * （此前 `applyProxy()` 无调用方，下载/安装是否走代理纯靠"上一次 check 恰好带过 proxy"）。
+   * 传 `undefined` = 直连（用户关掉代理）；非法值由主进程归一化后按直连处理。
+   * 参数**必须**经 `core/plainProxy.ts` 的 `plainProxyConfig()` 归一化（reactive Proxy 进 IPC 会抛
+   * `An object could not be cloned.`）。
+   */
+  applyProxy(proxy?: ProxyConfig): Promise<void>
   // ---- 扩展能力：文件系统（限定扩展 data 目录，相对路径） ----
   fsReadFile(extId: string, rel: string): Promise<{ ok: boolean; content?: string; error?: string }>
   fsWriteFile(extId: string, rel: string, content: string): Promise<{ ok: boolean; error?: string }>

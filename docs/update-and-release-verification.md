@@ -53,6 +53,29 @@
   - `api.net.fetch` **不支持逐请求凭据**（Chromium 的 `session.fetch` 没有 per-request login 回调路径；`proxyRules` 也带不了 userinfo）：命中需要认证的代理时请求会失败（通常 407）。**【源码核验】【运行期未验证】**
     → 扩展若必须在认证代理后联网，请把该限制作为已知失败路径处理（提示用户改走更新链路或改用直连/免认证代理），不要反复重试。
 - `ignoreSSL` 只作用于上述 session（不再是进程级全局开关）。**【运行期未验证】**
+- **更新链路何时应用代理（1.0.16 修复，见 [ADR-0007 修订](adr/0007-update-provider-and-proxy.md)）**：
+  - **渲染进程推送**：宿主内部 IPC `proxy:apply`（preload `window.api.applyProxy`，主进程 `registerProxyIpc`）把设置-网络的当前代理推给主进程，由 `applyProxy()` **同时**应用到 `obox-net` 与 `electron-updater` 两个 session。推送时机有两处：**启动时**（`src/renderer/src/main.ts`）与**代理设置变化时**（`stateStore.onSettingsChanged` 的 `network.proxy` / 无 key 通知）。此前 `applyProxy()` **没有任何调用方** ⇒ 两个 session 只在"某次请求恰好带了 proxy 参数"时才被配置。
+  - **为什么下载/安装也要显式应用**：`update:download` / `update:install` 两个 IPC 都**不带** proxy 参数，此前完全不碰代理 ⇒ 是否走代理取决于"上一次 check 是否恰好配置过这个 session"这种偶然状态；先下载后检查、或重启后直接下载，代理就静默失效（用户报告"obox-updater 扩展没有使用代理"）。现在两个动作前各调一次 `applyUpdaterProxy()`（内部即 `applyProxyToSession(updaterSession(), proxy ?? currentProxy())`，按配置指纹去重，重复调用无开销）。
+  - **调用方漏传代理不再静默关代理**：`applyProxyToSession(ses, undefined)` 的语义是"用户关掉了代理 ⇒ 直连"，因此更新链路的五个动作（解析源/检查/下载/安装/强制重装）统一改为"**显式覆盖 else 当前配置**"（`opts.proxy ?? currentProxy()`）。每次动作前主进程都打一条 `[updater] 代理：<URL|direct>（rules=…；来源：显式|当前配置）`，回落时另打一条 `[updater] 调用方未传代理，已回落当前配置：…`，便于排查同类问题。
+  - **关代理如何生效**：用户关掉代理时设置里是 `{enabled:false,url:''}`（**不是** `undefined`）⇒ 推送到主进程后 `currentProxy()` 返回该对象 ⇒ 两个 session 都 `setProxy({mode:'direct'})`。`applyProxyToSession` 对 `undefined` 的语义**未改动**，因此"关代理"仍然关得掉（单测 `test/updater-proxy.test.ts` 有专门防回归用例）。
+  - **本次实机验证（1.0.16，dev 实例 + CDP，2026-10-17）**：把设置-网络代理改为 `http://127.0.0.1:9`（打不通）→ 重启 dev 实例（`REMOTE_DEBUGGING_PORT=9333`）→ 主进程日志
+
+    ```
+    [proxy] 渲染进程推送代理配置：http=127.0.0.1:9;https=127.0.0.1:9
+    ```
+
+    → 界面点「设置 → 更新 → 检查更新」→
+
+    ```
+    [updater] 代理：http://127.0.0.1:9（rules=http=127.0.0.1:9;https=127.0.0.1:9；ignoreSSL）（来源：显式）
+    Skip checkForUpdates because application is not packed and dev update config is not forced
+    ```
+
+    **dev 实例下 `electron-updater` 会跳过整个检查**（未打包，见 §9.3 的口径），所以"检查更新返回代理错误"只能在打包版上看到；同一 `electron-updater` session 上**真正过网**的两条链路给出了代理类错误：`update:resolve-feed`（不传代理参数，走 `currentProxy()` 回落）与 `update:force-install` 均返回
+    `{"ok":false,"error":"net::ERR_PROXY_CONNECTION_FAILED"}`，日志对应 `（来源：当前配置）`；`update:download`（**无前置 check**）日志为 `[updater] 代理：http://127.0.0.1:9（…）（来源：当前配置）` + `[updater] 调用方未传代理，已回落当前配置：…`（随后报 electron-updater 自身的 `Please check update first`）⇒ 下载路径确实自己应用了代理，不再依赖调用顺序。
+    **恢复验证**：把代理设为关闭 → 日志 `[proxy] 渲染进程推送代理配置：direct` + `[updater] 代理：direct（来源：当前配置）` → `update:resolve-feed` 返回 `{"ok":true,"tag":"v1.0.16"}`；改回可用代理 `http://127.0.0.1:7897` → 日志 `[proxy] …http=127.0.0.1:7897…` → 解析同样成功 ⇒ **代理失败/关代理/换可用代理三种状态都能在日志与结果上区分**。
+    **设置变化即生效**：不重启、不刷新，在「设置 → 网络」改动并保存代理 URL，主进程立刻出现 `[proxy] 渲染进程推送代理配置：http=127.0.0.1:7897;https=127.0.0.1:7897`。
+    注：`update:check`（electron-updater 的 `checkForUpdates`）在 dev 下无网络动作，故本节代理生效证据取自 `resolve-feed` / `force-install` / `download` 三条**真实过网**链路；打包版的检查链路仍属第 6 节的"未验证"项。
 
 ## 3. arm64 端到端验证清单（**【运行期未验证】**）
 
