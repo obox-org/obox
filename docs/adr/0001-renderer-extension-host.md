@@ -6,4 +6,4 @@ VS Code 用独立进程 + RPC 承载扩展宿主，换取崩溃隔离与响应�
 
 代价是失去崩溃隔离——一个扩展的运行时错误会与 UI 同进程。我们用每扩展独立的错误捕获与上报（等价 `IExtensionsStatus.runtimeErrors`）缓解，不做进程隔离。
 
-Status: accepted
+Status: superseded by 0026（用户扩展改由独立的 Extension Host Process 执行；渲染进程只保留 UI 与内置扩展）

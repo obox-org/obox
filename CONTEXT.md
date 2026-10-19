@@ -23,6 +23,14 @@ _Avoid_: 状态条
 为宿主贡献能力的可插拔单元。清单（manifest）声明贡献点（导航项、状态栏项、命令），宿主导入后统一解析注册；入口导出 Cordis 插件函数 + 具名导出视图组件。
 _Avoid_: 插件、模块
 
+**Extension Host Process / 扩展宿主进程**:
+承载**用户扩展**（`.oix`）逻辑的独立 Node 进程：由主进程用 Electron `utilityProcess` 拉起、随主窗口同生共死，扩展的入口函数与后台任务都在其中执行，**只跑逻辑、不碰 DOM**。扩展与 UI 之间只经消息桥通信；进程崩溃/卡死的处置见对应 ADR。
+_Avoid_: 扩展宿主（那是旧义，见 `Renderer Runtime`）、sandbox
+
+**Renderer Runtime / 渲染侧运行时**:
+渲染进程里的扩展运行时（Cordis 事件总线 + 注册表 + 能力封装 + 内置扩展）。它只承载 UI 与**内置扩展**（app / settings / ext-manager / theme×2），不再执行用户扩展的业务逻辑。
+_Avoid_: 扩展宿主（旧称，已改名为本词条）、渲染进程（那指整个 Electron 渲染进程）
+
 **Extension Manager / 扩展管理器**:
 内置扩展，以 Grid 网格展示已安装扩展（名称/版本/作者/简介），点击查看详情，支持**安装（.oix 按钮/拖拽）**、禁用/卸载/搜索/排序/来源标注。
 
@@ -100,11 +108,11 @@ _Avoid_: 插件点、扩展点
 扩展注册的可执行动作，有全局唯一 id（`<扩展名>.<动作>`），可从命令面板（Ctrl+Shift+P）、其他扩展、状态栏项触发。
 
 **API Version / API 版本**:
-obox 对外扩展 API 的版本号，**单个非负整数**，单源定义在根 `package.json` 的 `apiVersion` 字段（当前 `1`）。扩展在 manifest 里声明 `apiVersion` 声明其要求的版本：缺失视为 `0`（兼容所有），**高于 obox 当前版本时拒绝加载**；仅在新版 API 破坏性变更时递增，高版本 obox 始终兼容低版本扩展。
+obox 对外扩展 API 的版本号，**单个非负整数**，单源定义在根 `package.json` 的 `apiVersion` 字段（当前 `2`）。扩展在 manifest 里声明 `apiVersion` 声明其要求的版本：缺失视为 `0`（兼容所有），**高于 obox 当前版本时拒绝加载**；仅在新版 API 破坏性变更时递增，高版本 obox 始终兼容低版本扩展。
 _Avoid_: 版本字符串、API level
 
 **Cordis**:
-本项目采用的插件框架，扩展宿主运行在渲染进程，扩展基于其服务注入 + 事件总线运行。
+本项目采用的插件框架，运行在**渲染侧运行时**里；宿主只用其**事件总线**（`new Context()` + `on/off/emit`），扩展并非以 `ctx.plugin()` 挂载的 Cordis 插件实例。
 
 **Memento**:
 扩展的状态存储 API（workspaceState/globalState），get/update 键值，底层存 userData JSON。
