@@ -5,7 +5,7 @@
 ## 决策
 
 1. **进程拓扑**：main（外壳）+ renderer（UI + 内置扩展 + 渲染侧运行时）+ **Extension Host Process**（用户扩展）。单宿主承载全部用户扩展，不按扩展拆进程（可选分组留作将来的清单字段）。
-2. **载体**：Electron `utilityProcess`（Node 环境、官方 MessagePort、`windowLifecycleBound`、崩溃有 exit 事件）。与 VS Code 的桌面实现同路径（`vendor/vscode` 的 `extensionHostStarter.ts` → `utilityProcess.ts`）。
+2. **载体**：Electron `utilityProcess`（Node 环境、官方 MessagePort、崩溃有 exit 事件）。与 VS Code 的桌面实现同路径（`vendor/vscode` 的 `extensionHostStarter.ts` → `utilityProcess.ts`）。**"随窗口同生共死"由主进程手工绑定**（监听主窗口 `closed` → `stop()`、`before-quit` → `dispose()`）：Electron 44 的 `ForkOptions` **没有** `windowLifecycleBound` 这个选项（VS Code 用的是它自己的 UtilityProcess 包装层），实现时不要照抄。
 3. **能力**：扩展在宿主进程里拥有**完整 Node**（`require('fs')`、`child_process`、`node:sqlite`、任意 npm 包）。宿主自带 `fs` / 子进程 / sqlite / timer / net；**只有这些仍回 main**：`safeStorage` 密钥、系统对话框、通知、窗口与托盘、菜单、`app://` 协议、自动更新、单实例、关闭行为。
 4. **API 交付**：保持 `plugin(api)` 传参（不改成 `require('obox')` 拦截），扩展入口写法不变；`api` 由宿主进程按 `extId` 现场构造，与今天的 `buildApi()` 同构。
 5. **与 UI 的边界**：扩展给 UI 的 HTML/SVG **字符串**保留（状态栏文本、卡片图标、iframe `srcdoc`），只是生成地搬到宿主进程后经消息桥送到渲染侧渲染；页面仍由渲染进程的 iframe 加载，`app://` 协议仍只在 main 注册。

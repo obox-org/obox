@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
+import { join } from 'path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createWindow, getMainWindow, registerWindowIpc } from './window'
 import { createTray, destroyTray, isTrayActive } from './tray'
@@ -36,6 +37,13 @@ import { registerSecretsIpc } from './secrets'
 import { registerUiIpc } from './ui'
 import { registerIpcBridge } from './ipc'
 import { registerPythonIpc } from './python'
+import { createExtensionHostStarter, type ExtensionHostStarter } from './extensionHostStarter'
+
+/**
+ * 扩展宿主进程启动器（ADR-0026 / EH-A2）。本卡**只注册**、不启动：`start()` 需要扩展清单，
+ * 那是 EH-A4 的事。放在模块级是因为退出清理（`before-quit`）在 `whenReady` 之外。
+ */
+let extensionHost: ExtensionHostStarter | null = null
 
 /**
  * 确保主窗口存在并可见（启动、托盘"打开/设置"、第二实例唤前台与 macOS activate 共用）。
@@ -151,7 +159,17 @@ app.whenReady().then(() => {
   // 开机自启（注册项带 --autostart）：静默启动，不显示主窗口（ADR-0019 决策 13）
   const hiddenAtStartup = startedByAutoStart(process.argv)
   if (hiddenAtStartup) console.log('[auto-start] 由开机自启拉起：静默启动，只创建托盘')
-  ensureMainWindow({ hidden: hiddenAtStartup })
+  const mainWindow = ensureMainWindow({ hidden: hiddenAtStartup })
+
+  // 扩展宿主进程（ADR-0026 / EH-A2）的**注册接线**：通道 IPC（eh:get-port）+ 与主窗口同生共死
+  // （closed ⇒ terminate/kill，宽限后强杀）。本卡不启动宿主，现有行为不变。
+  const host = createExtensionHostStarter({
+    entryPoint: join(__dirname, 'extension-host.js'),
+    dataDir: app.getPath('userData')
+  })
+  host.registerIpc()
+  host.bindWindow(mainWindow)
+  extensionHost = host
 
   // 系统托盘（仅 Windows）：右键 打开/设置/关于/退出，双击打开（ADR-0019 决策 3/4）
   const SETTINGS_NAV_ID = 'settings.main' // 内置 settings 扩展声明的导航项 id
@@ -178,6 +196,8 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   markQuitting()
   destroyTray()
+  // 扩展宿主随应用退出一起清理（幂等：窗口 closed 时可能已经清过；不 await 以免拖住退出）
+  void extensionHost?.dispose()
   void cleanupAllExtensionResources().then((result) => {
     const tail =
       (result.failed ? '，失败 ' + result.failed : '') + (result.timedOut ? '（超时兜底）' : '')
