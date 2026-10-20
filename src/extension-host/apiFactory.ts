@@ -6,7 +6,20 @@
  *   `env` / `log`）；
  * - **EH-B1**：IO 族补齐——`fs.watch` / `fs.unwatch` / `net.fetch` / `clipboard.*`，实现落在
  *   `./capabilities/io.ts`（`env` 也搬过去，5 个成员在一处定义）；
+ * - **EH-B2**：进程与存储族补齐——`ipc.*`（14 项，`./capabilities/ipc.ts`）、`python.run`
+ *   （`./capabilities/python.ts`）、`sqlite.open`（`./capabilities/sqlite.ts`）；
  * - 其余仍是**显式桩**：抛 `EH_INTERNAL` + 「该能力尚未迁移，见 docs/extension-host-migration.md 阶段 B」。
+ *
+ * ## 扩展 data 目录（R62）：唯一计算点
+ *
+ * 宿主曾经把 `loader.dataDirFor()`（= `<init.dataDir>/<extId>`）直接当扩展 data 目录，而 main 的
+ * 约定一直是 `<userData>/extensions/<extId>/data`——两者**不是同一个目录**，照旧路径升级后用户会
+ * 发现"扩展的 fs 数据与 `.db` 都不见了"（文件其实还在磁盘上，只是新代码去错了地方）。
+ *
+ * 唯一权威现在是 `extensionDataDirOf(ext.path)`（`<扩展目录>/data`，与 main 的 `dataDirFor`
+ * 逐字一致，`ext.path` 就是 `init.extensions[].path` = `<userData>/extensions/<id>`）。
+ * `ExtensionApiOptions.extensionDataDir` 因此**不再参与计算**（保留在签名里是为了不改
+ * `runtime.ts` 的调用点，见该字段的注释）。
  *
  * 为什么桩也要显式写出来，而不是「先不提供这些命名空间」：
  * - 形状必须与 `src/api/types.ts` 的 `ExtensionActivationApi` 对齐——扩展代码是按那个类型写的，
@@ -17,12 +30,16 @@
  * - 桩携带统一标记（`STUB_MARK`），因此「已实现 / 桩」对照表是**从 api 对象本身推导**出来的
  *   （`listApiImplementation`），不会与实现漂移。
  */
+import { mkdirSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Memento } from '../api/shared'
 import type { ExtensionActivationApi } from '../api/types'
 import type { HostedExtensionInfo, LogLevel } from '../shared/extensionHostProtocol'
 import { createIoCapabilities, resolveInsideDataDir, type HostMainBridge } from './capabilities/io'
+import { createIpcCapabilities } from './capabilities/ipc'
+import { createPythonCapabilities } from './capabilities/python'
+import { createSqliteCapabilities } from './capabilities/sqlite'
 import { stubCapabilityError, toErrorMessage } from './errors'
 import type { HostLogger } from './log'
 import type { SafeRunner } from './safety'
@@ -138,15 +155,45 @@ async function withFsError<T>(action: string, rel: string, task: () => Promise<T
 }
 
 /* -------------------------------------------------------------------------------------------- */
+/* 扩展 data 目录（R62 的唯一计算点）                                                              */
+/* -------------------------------------------------------------------------------------------- */
+
+/**
+ * 扩展 data 目录（**全宿主唯一计算点**）：`<扩展目录>/data`。
+ *
+ * 为什么必须有这么一个函数而不是各处拼字符串：main 的两处（`src/main/python.ts` 的 `dataDirFor`、
+ * `src/main/sqlite.ts` 的 `dataDirFor`）与宿主的 fs / sqlite / python(cwd) 必须**逐字同一个目录**，
+ * 否则升级后用户的 fs 数据与 `.db` 会"消失"（见文件头的 R62 说明）。`io` 与 `sqlite` 都从这里拿到
+ * 同一个值（`apiFactory` 算一次、注入两处），不存在第二份拼接。
+ *
+ * 期望 `extensionDir` = `init.extensions[].path`（= `<userData>/extensions/<id>`），于是结果与 main
+ * 的 `join(app.getPath('userData'), 'extensions', id, 'data')` 完全一致。
+ */
+export function extensionDataDirOf(extensionDir: string): string {
+  return path.join(path.resolve(extensionDir), 'data')
+}
+
+/* -------------------------------------------------------------------------------------------- */
 /* 工厂                                                                                          */
 /* -------------------------------------------------------------------------------------------- */
 
 /** `createExtensionApi` 的参数 */
 export interface ExtensionApiOptions {
-  /** 该扩展的清单摘要（`id` 用于日志与隔离归属） */
+  /** 该扩展的清单摘要（`id` 用于日志与隔离归属；`path` 是 data 目录的计算基准） */
   ext: HostedExtensionInfo
-  /** **扩展自己的** data 目录绝对路径（`loader.dataDirFor(extId)` 的结果） */
-  extensionDataDir: string
+  /**
+   * **已不参与任何计算**（R62）：扩展 data 目录的唯一权威是 {@link extensionDataDirOf}
+   * （`<扩展目录>/data` = main 的 `<userData>/extensions/<extId>/data`）。保留该字段只为
+   * "没有 `init` 清单"的嵌入场景（单测直接造 api）不改调用方签名；`runtime.ts` 传进来的
+   * `loader.dataDirFor()`（`<init.dataDir>/<extId>`）**不会被用来算 data 目录**。
+   */
+  extensionDataDir?: string
+  /**
+   * POSIX 套接字目录（`<userData>/ipc`，与 main 的 `ipcSocketDir()` 逐字一致）。
+   * R63：由 `runtime.ts` 显式透传 `join(init.dataDir, 'ipc')`；未给时退回 `<扩展 data 目录>/ipc`
+   * （仅测试/工具路径会走到）。**不再**从 `extensionDataDir` 反推 userData——那是隐式约定。
+   */
+  socketDir?: string
   /** 应用信息（`api.appInfo` / `api.env.getOboxVersion` 的来源） */
   appInfo: { name: string; version: string }
   /** 当前 UI 语言（`api.env.language`） */
@@ -187,13 +234,18 @@ interface ExtensionTimer {
 /**
  * 按扩展构造 api。
  *
- * 输入全部由宿主注入（`extensionDataDir` / `appInfo` / `locale` / `log` / `runSafely`），
+ * 输入全部由宿主注入（`ext` / `appInfo` / `locale` / `log` / `runSafely` / `hostMain`），
  * 因此本函数是**纯装配**，不含任何宿主状态，可单测（`test/extension-host-runtime.test.ts` 直接用它
  * 验 `fs` 与 `timer`）。
  */
 export function createExtensionApi(options: ExtensionApiOptions): BuiltExtensionApi {
   const extId = options.ext.id
-  const root = path.resolve(options.extensionDataDir)
+  // R62：data 目录只在这里算一次（`<扩展目录>/data`），io / sqlite / python(cwd) 共用同一个值。
+  // `mkdir -p`：main 以前在 dataDirFor 之后由各自的 IPC 顺手建，宿主侧统一在装配时建好，
+  // 免得"能力没用到就没人建目录"。
+  const extensionDir = path.resolve(options.ext.path)
+  const root = extensionDataDirOf(extensionDir)
+  mkdirSync(root, { recursive: true })
   const timers = new Map<string, ExtensionTimer>()
 
   const clearTimer = (id: string): void => {
@@ -235,6 +287,31 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     runSafely: options.runSafely,
     hostMain: options.hostMain
   })
+
+  /* ------------------------- 已实现：进程族（ipc / python）与存储族（sqlite） ------------------------- */
+
+  // EH-B2：三条能力族各自一个文件（阶段 B 的并行组 G4 要求文件不相交）：
+  // - ipc.ts：stdio sidecar（宿主 spawn）/ pipe、JSON-RPC 2.0、两种分帧、超时、事件与重连；
+  //           `extensionDir` 是 `program` 的解析基准（来自 init 清单的 `path`），
+  //           `contributes.ipcChannels` 也是宿主自己从该目录的 manifest.json 读的（R61）。
+  //           POSIX 套接字目录由 `runtime.ts` 显式透传（R63：`join(init.dataDir, 'ipc')`），
+  //           不再从 extensionDataDir 反推 userData（隐式约定，布局一换就静默算错）。
+  // - python.ts：经宿主内部 RPC `host.pythonRuntime` 向 main 要 exe/env/cwd，进程与流归宿主。
+  // - sqlite.ts：宿主内 `node:sqlite`，路径与建表语义全部复用 main 的 sqliteCore 纯函数。
+  const ipc = createIpcCapabilities({
+    extId,
+    extensionDir,
+    extensionDataDir: root,
+    ...(options.socketDir === undefined ? {} : { socketDir: options.socketDir }),
+    log: options.log
+  })
+  const python = createPythonCapabilities({
+    extId,
+    log: options.log,
+    hostMain: options.hostMain,
+    ipc
+  })
+  const sqlite = createSqliteCapabilities({ extId, extensionDataDir: root, log: options.log })
 
   /* ---------------------------------- 已实现：fs ---------------------------------- */
 
@@ -343,23 +420,6 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     createItem: stubSync('statusBar.createItem')
   }
 
-  const ipcStub: ExtensionActivationApi['ipc'] = {
-    connect: stubAsync('ipc.connect'),
-    listen: stubAsync('ipc.listen'),
-    close: stubAsync('ipc.close'),
-    channels: stubAsync('ipc.channels'),
-    request: stubAsync('ipc.request'),
-    notify: stubAsync('ipc.notify'),
-    broadcast: stubAsync('ipc.broadcast'),
-    onRequest: stubSync('ipc.onRequest'),
-    onNotification: stubSync('ipc.onNotification'),
-    onClose: stubSync('ipc.onClose'),
-    onStderr: stubSync('ipc.onStderr'),
-    onConnection: stubSync('ipc.onConnection'),
-    onDisconnect: stubSync('ipc.onDisconnect'),
-    onReconnect: stubSync('ipc.onReconnect')
-  }
-
   const api: HostedExtensionApi = {
     registerCommand: stubSync('registerCommand'),
     executeCommand: stubAsync('executeCommand'),
@@ -415,7 +475,7 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     },
     proxy: { get: stubSync('proxy.get') },
     timer: timerApi,
-    sqlite: { open: stubAsync('sqlite.open') },
+    sqlite: sqlite.api,
     notification: { show: stubAsync('notification.show') },
     net: io.net,
     dialog: {
@@ -441,9 +501,9 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
       showForm: stubAsync('ui.showForm'),
       withProgress: stubAsync('ui.withProgress')
     },
-    ipc: ipcStub,
+    ipc: ipc.api,
     output: { createChannel: stubSync('output.createChannel') },
-    python: { run: stubAsync('python.run') },
+    python: python.api,
     secrets: {
       get: stubAsync('secrets.get'),
       set: stubAsync('secrets.set'),
@@ -460,6 +520,11 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     dispose(): void {
       if (disposed) return
       disposed = true
+      // 顺序有意：先停"还在产生事件"的东西（通道/子进程），再关被动句柄。
+      // 三条都幂等，且都各自负责自己的 `unref`（不拖住宿主退出）。
+      ipc.dispose()
+      python.dispose()
+      sqlite.dispose()
       // 监听句柄必须真的关掉：漏一个 inotify/FSEvents 句柄会让宿主退出时被拖住
       io.dispose()
       for (const id of [...timers.keys()]) clearTimer(id)
