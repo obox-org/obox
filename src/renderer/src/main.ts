@@ -4,6 +4,7 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import AppWindow from './AppWindow.vue'
 import { host } from './core/host'
+import { startExtensionHostConsumer } from './core/extensionHostConsumer'
 import { plainProxyConfig } from './core/plainProxy'
 import { stateStore } from './core/state'
 import type { ProxyConfig } from './core/types'
@@ -53,6 +54,13 @@ stateStore.onSettingsChanged((key) => {
 
 // 启动扩展宿主（两阶段），完成后由根组件消费注册表
 void (async () => {
+  // EH-B3b-1：宿主 → 渲染侧的数据面消费者（状态栏/命令/树/设置页/卡片/主图/事件）。
+  // 必须在 `host.start()` **之前**启动：消费者要先订阅"端口到达"，才能保证宿主的第一次
+  // `settings.get` 有缓存可读；开关 `OBOX_EXTENSION_HOST` 关闭时它什么都不做（默认零变化）。
+  // 子窗口不接：宿主只服务主窗口，子窗口连端口都拿不到（且它的 localStorage 是共享的，
+  // 推快照会把"子窗口以为的设置"覆盖成宿主的真相）。
+  if (!isChildWindow) startExtensionHostConsumer({ host })
+
   const [builtins, userExtensions, debugEntries] = await Promise.all([
     collectBuiltinExtensions(),
     collectUserExtensions(),

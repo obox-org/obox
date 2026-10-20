@@ -666,6 +666,41 @@ class ExtensionHost {
       )
   }
 
+  /**
+   * **EH-B3b-1 的唯一内部入口**：登记「宿主扩展」的 App 消息处理器。
+   *
+   * 为什么需要它：宿主模式下 `api.app.onMessage` 的处理器注册在**宿主进程**里，而
+   * `extension:message` 由主进程发给渲染进程、由 `handleExtensionMessage` 按归属路由派发。
+   * 这里把消费者的代理处理器放进**同一张表**（`appMessageHandlers`），归属查找
+   * （`resolveMessageExtId`：卡片 id → 所属扩展）与回包路径因此**逐字复用**，不新增路由。
+   *
+   * 为什么不做更多：状态栏/命令/树数据源/卡片/设置页都由消费者**直接落到既有 store**
+   * （那些 store 就是唯一真相，多绕一层 host 只会造出第二份状态）。本卡对 host.ts 的侵入
+   * 就这一条方法——`handleExtensionMessage` 与 `overlayOwners` 一律不动。
+   *
+   * 已知残留（技术债 #7）：宿主扩展创建的 overlay 收不到 `app.onMessage`——overlay 的归属表
+   * （`overlayOwners`）由渲染侧 `api.overlay.create` 回填，而宿主模式的 overlay 创建在宿主侧
+   * （EH-B3a 的 `capabilities/host-main.ts`），本卡不改那个文件。
+   */
+  registerHostedAppMessageHandler(
+    extensionId: string,
+    handler: (channel: string, payload: unknown) => unknown | Promise<unknown>
+  ): () => void {
+    if (typeof extensionId !== 'string' || extensionId.trim() === '') {
+      throw new Error('registerHostedAppMessageHandler 的 extensionId 必须是非空字符串')
+    }
+    if (typeof handler !== 'function') {
+      throw new Error(`registerHostedAppMessageHandler(${extensionId}) 的 handler 必须是函数`)
+    }
+    this.appMessageHandlers.set(extensionId, handler)
+    return (): void => {
+      // 只删自己这一条：同一个扩展可能被反复注册（宿主重启/热重载），旧 dispose 不该误删新处理器
+      if (this.appMessageHandlers.get(extensionId) === handler) {
+        this.appMessageHandlers.delete(extensionId)
+      }
+    }
+  }
+
   /** 构造 api.theme（读当前主题 + 监听切换，纯渲染侧） */
   private buildThemeApi(disposables: Array<() => void>): ExtensionActivationApi['theme'] {
     const listeners = new Set<(id: string) => void>()

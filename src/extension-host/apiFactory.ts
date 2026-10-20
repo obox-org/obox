@@ -11,7 +11,12 @@
  * - **EH-B3a**：主进程类能力族——`window`(7) / `overlay`(4) / `dialog`(3) / `shell`(2) /
  *   `notification`(1) / `secrets`(3) / `update.getVersion` / `update.onEvent` / `proxy.get`，
  *   实现落在 `./capabilities/host-main.ts`（全部经宿主内部 RPC 回 main）；
- * - 其余仍是**显式桩**：抛 `EH_INTERNAL` + 「该能力尚未迁移，见 docs/extension-host-migration.md 阶段 B」。
+ * - **EH-B3b-1**：**注册面数据面**——`statusBar`(5) / `navbar.setBadge` / `registerCommand` /
+ *   `executeCommand` / `views.registerTreeProvider` / `settings`(4) / `theme`(2) / `i18n`(3) /
+ *   `app`(2) / `on`·`emit`(2) / `workspaceState`(3) / `globalState`(3)，实现落在
+ *   `./capabilities/ui-plane.ts`（宿主 ↔ 渲染侧的 `host-renderer` 通道 + 宿主本地 memento）；
+ * - 其余仍是**显式桩**：`ui`(5) / `output.createChannel` / `update` 的 4 条门控方法——都属
+ *   EH-B3b-2（它们要"渲染侧权威判定"或"渲染侧渲染 UI"，与本卡的注册面数据面不是同一条缝）。
  *
  * ## 扩展 data 目录（R62）：唯一计算点
  *
@@ -36,7 +41,6 @@
 import { mkdirSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { Memento } from '../api/shared'
 import type { ExtensionActivationApi } from '../api/types'
 import {
   EhProtocolError,
@@ -48,8 +52,15 @@ import { createIoCapabilities, resolveInsideDataDir, type HostMainBridge } from 
 import { createIpcCapabilities } from './capabilities/ipc'
 import { createPythonCapabilities } from './capabilities/python'
 import { createSqliteCapabilities } from './capabilities/sqlite'
-import { stubCapabilityError, toErrorMessage } from './errors'
+import {
+  createMementoStore,
+  ensureStateDir,
+  getSharedUiPlaneHub,
+  type UiPlaneHub
+} from './capabilities/ui-plane'
+import { toErrorMessage } from './errors'
 import type { HostLogger } from './log'
+import type { HostRendererPortLike } from './port'
 import type { SafeRunner } from './safety'
 import { unrefTimer } from './timers'
 
@@ -77,24 +88,6 @@ type StubSync = () => never
 
 /** 桩函数（异步）：返回永远 reject 的 Promise，`await api.net.fetch()` 能被 try/catch 捕到 */
 type StubAsync = () => Promise<never>
-
-/** 造同步桩：调用即抛 `EH_INTERNAL` + 迁移提示 */
-function stubSync(capability: string): StubSync {
-  const fn = (): never => {
-    throw stubCapabilityError(capability)
-  }
-  Object.defineProperty(fn, STUB_MARK, { value: capability, enumerable: false })
-  return fn
-}
-
-/** 造异步桩：调用返回 rejected Promise（与真实能力的异步形状一致） */
-function stubAsync(capability: string): StubAsync {
-  const fn = async (): Promise<never> => {
-    throw stubCapabilityError(capability)
-  }
-  Object.defineProperty(fn, STUB_MARK, { value: capability, enumerable: false })
-  return fn
-}
 
 /**
  * 造"原因已查清"的异步桩（EH-B3a 的 4 条 `update` 门控方法用）。
@@ -273,6 +266,21 @@ export interface ExtensionApiOptions {
    * 这样本文件在没有 main 侧的宿主里也能跑（单测与回退期都用这个分支）。
    */
   hostMain?: HostMainBridge
+  /**
+   * `host-renderer` 的 port1（EH-B3b-1）：UI 数据面的出口。
+   *
+   * **可选**：缺省（单测直接造 api、或宿主入口没透传）时数据面能力明确抛 `EH_NOT_READY`
+   * +「host-renderer 端口未到」，绝不静默 no-op（`capabilities/ui-plane.ts` 文件头有完整理由）。
+   * 生产值由 `runtime.ts` 从 `createHostPortsFromParentPort()` 的 `renderer` 透传进来。
+   */
+  rendererPort?: HostRendererPortLike | null
+  /**
+   * 数据面 hub（EH-B3b-1；**可选**，缺省用进程内共享的那一份）。
+   *
+   * 为什么允许注入：命令表 / 事件总线 / 设置缓存都是**进程级**的，单测要能给每个用例一份干净的；
+   * 生产不注入，`getSharedUiPlaneHub()` 保证同一宿主内只有一份。
+   */
+  uiPlane?: UiPlaneHub
 }
 
 /** 构造结果：api + 对照表 + 清理 */
@@ -477,56 +485,51 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     options.log(level, `[${extId}] ${message}`)
   }
 
-  /* ------------------------------------ 桩部分 ------------------------------------ */
+  /* ------------------------- 已实现：注册面数据面（EH-B3b-1） ------------------------- */
 
-  const mementoStub = (prefix: string): Memento => ({
-    keys: stubSync(`${prefix}.keys`),
-    get: stubSync(`${prefix}.get`),
-    update: stubAsync(`${prefix}.update`)
+  // EH-B3b-1：statusBar / navbar / commands / views / settings / theme / i18n / app / on·emit
+  // 全部在 capabilities/ui-plane.ts（宿主 → 渲染侧的 host-renderer 通道 + 宿主内命令表/事件总线）。
+  // `rendererPort` 由 runtime 从 `createHostPortsFromParentPort()` 透传；缺省 ⇒ 明确 EH_NOT_READY。
+  const uiPlane: UiPlaneHub =
+    options.uiPlane ??
+    getSharedUiPlaneHub({
+      rendererPort: options.rendererPort ?? null,
+      log: options.log
+    })
+  const plane = uiPlane.forExtension({
+    extId,
+    extensionDir,
+    locale: options.locale,
+    log: options.log
   })
 
-  const statusBarStub: ExtensionActivationApi['statusBar'] = {
-    setText: stubSync('statusBar.setText'),
-    setTooltip: stubSync('statusBar.setTooltip'),
-    show: stubSync('statusBar.show'),
-    hide: stubSync('statusBar.hide'),
-    createItem: stubSync('statusBar.createItem')
-  }
+  // memento（workspaceState / globalState，6 项）：**不过桥**——数据所有权跟着执行方（宿主），
+  // 落 `<扩展 data 目录>/state/{workspace,global}.json`（理由见 ui-plane.ts 的 createMementoStore）。
+  const stateDir = ensureStateDir(root)
+  const workspaceState = createMementoStore(path.join(stateDir, 'workspace.json'))
+  const globalState = createMementoStore(path.join(stateDir, 'global.json'))
+
+  /* ------------------------------------ 桩部分 ------------------------------------ */
 
   const api: HostedExtensionApi = {
-    registerCommand: stubSync('registerCommand'),
-    executeCommand: stubAsync('executeCommand'),
-    statusBar: statusBarStub,
-    navbar: { setBadge: stubSync('navbar.setBadge') },
-    workspaceState: mementoStub('workspaceState'),
-    globalState: mementoStub('globalState'),
-    on: stubSync('on'),
-    emit: stubSync('emit'),
+    registerCommand: plane.registerCommand,
+    executeCommand: plane.executeCommand,
+    statusBar: plane.statusBar,
+    navbar: plane.navbar,
+    workspaceState,
+    globalState,
+    on: plane.on,
+    emit: plane.emit,
     // EH-B3a：window 全量 7 项（6 条 RPC + `onFocusChanged` 走 main 的聚焦事件）
     window: hostMain.window,
     appInfo,
-    app: {
-      register: stubSync('app.register'),
-      onMessage: stubSync('app.onMessage')
-    },
+    // EH-B3b-1：卡片注册送渲染侧 appStore；`onMessage` 的处理器留在宿主（消息由渲染侧问回来）
+    app: plane.app,
     // EH-B3a：overlay 4 项（`extId` 由宿主绑定，越权判定在 main 里复用既有那一份）
     overlay: hostMain.overlay,
-    i18n: {
-      t: stubSync('i18n.t'),
-      // `locale` 是只读常量，不是能力调用：直接给真实值（读它不该抛错），
-      // 真正的翻译表迁移在阶段 B5。
-      get locale(): string {
-        return options.locale
-      },
-      onLocaleChanged: stubSync('i18n.onLocaleChanged'),
-      registerMessages: stubSync('i18n.registerMessages')
-    },
-    settings: {
-      register: stubSync('settings.register'),
-      get: stubSync('settings.get'),
-      set: stubSync('settings.set'),
-      onChanged: stubSync('settings.onChanged')
-    },
+    // EH-B3b-1：文案在宿主解析（manifest contributes.i18n + registerMessages），语言由渲染侧推
+    i18n: plane.i18n,
+    settings: plane.settings,
     update: {
       // EH-B3a：v1 里这两项**没有**提供者门控（`getVersion` 直接读 app 版本；`onEvent` 只订阅），
       // 因此可以照原样搬过来。剩下 4 条带门控的见下面的显式桩（裁定 R64）。
@@ -547,10 +550,8 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     shell: hostMain.shell,
     clipboard: io.clipboard,
     env,
-    theme: {
-      getCurrent: stubSync('theme.getCurrent'),
-      onChanged: stubSync('theme.onChanged')
-    },
+    // EH-B3b-1：只读缓存（渲染侧 themeStore 推当前主题 id；真正的 token 应用在渲染侧）
+    theme: plane.theme,
     fs: fsApi,
     ui: {
       // R67：ui 的模态框/toast 由渲染进程的 uiStore 渲染，main 没有 UI 渲染能力 ⇒ 归 B3b 的
@@ -569,7 +570,8 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     python: python.api,
     // EH-B3a：secrets 3 项（main 侧仍走 safeStorage，宿主只管把 extId+key 送过去）
     secrets: hostMain.secrets,
-    views: { registerTreeProvider: stubSync('views.registerTreeProvider') },
+    // EH-B3b-1：provider 留在宿主，渲染侧树组件经 `ui.treeChildren` 问回来
+    views: plane.views,
     log
   }
 
@@ -582,6 +584,9 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
       disposed = true
       // 顺序有意：先停"还在产生事件"的东西（通道/子进程/事件订阅），再关被动句柄。
       // 四条都幂等，且都各自负责自己的 `unref`（不拖住宿主退出）。
+      // 数据面先发 dispose 事件（要趁 host-renderer 端口还活着，渲染侧才能撤掉本扩展的
+      // 状态栏项/命令/卡片/设置页），再停别的。
+      plane.dispose()
       ipc.dispose()
       python.dispose()
       sqlite.dispose()

@@ -20,7 +20,11 @@
  */
 import { randomUUID } from 'node:crypto'
 import { toErrorMessage } from './errors'
-import { createHostPortFromParentPort, type ParentPortLike } from './port'
+import {
+  createHostPortsFromParentPort,
+  type HostRendererPortLike,
+  type ParentPortLike
+} from './port'
 import { ExtensionHostRuntime } from './runtime'
 
 /**
@@ -54,8 +58,13 @@ function start(): void {
     return
   }
 
+  // 两条端口一次建好（EH-B3b-1）：`main` 收发信封，`renderer` 是随 `init` 的 transfer 到达的
+  // `host-renderer` port1。`renderer` 用 getter 惰性读——构造这一刻它还没到。
+  const ports = createHostPortsFromParentPort(parentPort)
+
   const runtime = new ExtensionHostRuntime({
-    port: createHostPortFromParentPort(parentPort),
+    port: ports.main,
+    rendererPort: (): HostRendererPortLike | null => ports.renderer,
     hostId: randomUUID(),
     pid: process.pid,
     appInfo: readAppInfo(),
