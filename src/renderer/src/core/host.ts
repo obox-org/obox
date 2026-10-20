@@ -1087,10 +1087,11 @@ class ExtensionHost {
 
     for (const ext of all) this.extensions.set(ext.id, ext)
 
-    // ---- 扩展宿主交接（EH-A4）----
-    // 回退开关 `OBOX_EXTENSION_HOST`：**关（默认）⇒ 什么都不做**（一个 IPC 都不发，用户扩展照旧
-    // 在本进程激活）；开 ⇒ 把用户扩展清单交给 main，由它 start() 宿主，渲染侧跳过这些扩展的激活
-    // （贡献点仍在阶段一注册，导航/状态栏/命令照旧可用）。
+    // ---- 扩展宿主交接（EH-A4 / EH-D2a）----
+    // 开关判定统一走 `readExtensionHostFlag()`：**回退标记 > 设置项 > 环境变量 > 默认开**
+    // （2.0.0 起默认开，见 `core/extensionHostBridge.ts`）。关 ⇒ 这里什么都不做（一个 IPC 都不发，
+    // 用户扩展照旧在本进程激活）；开 ⇒ 把用户扩展清单交给 main，由它 start() 宿主，渲染侧跳过这些
+    // 扩展的激活（贡献点仍在阶段一注册，导航/状态栏/命令照旧可用）。
     // 子窗口（activateExtensions === false）一律传 null：扩展宿主只服务主窗口；子窗口也起宿主会把
     // 同一批扩展再跑一遍（子窗口本来就只注册贡献点）。
     const handover = handOverToExtensionHost({

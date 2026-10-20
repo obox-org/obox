@@ -1,18 +1,30 @@
 # Obox
 
-基于 Electron + Vue + TypeScript 的桌面程序宿主。以布局框架为骨架，通过**基于 Cordis 的扩展系统**（仿照 VS Code 扩展模型）向应用贡献功能。
+基于 Electron + Vue + TypeScript 的桌面程序宿主。以布局框架为骨架，通过**扩展系统**（仿照 VS Code 扩展模型；内置扩展的宿主是 Cordis）向应用贡献功能；**用户扩展的代码跑在独立的 Extension Host Process 里**（完整 Node，不在渲染进程）。
 
 - 布局：无边框自定义标题栏 + 图标导航栏 + 内容栏（keep-alive）+ 状态栏
-- 扩展：声明式贡献点（导航项/状态栏项/命令），两阶段启动，依赖拓扑排序，清单校验
+- 扩展：声明式贡献点（导航项/状态栏项/命令），用户扩展按 `activationEvents` 懒激活（4 类 + 缺省 `*`），依赖拓扑排序，清单校验（宿主当前 `apiVersion: 3`）
+- 进程隔离：**2.0.0 起用户扩展默认在独立进程执行**（设置 → 通用 → 「在独立进程中运行扩展」，需重启生效）；扩展崩溃/卡死不带走 UI，宿主启动失败会自动回退渲染进程并提示
 - 内置扩展：**扩展管理器**（Grid 展示/详情/禁用/卸载）、**应用**（插件卡片注册 + 独立子窗口 iframe 渲染）
 
 ## 核心架构
 
+**三端分工**（详见 [ADR-0026](docs/adr/0026-extension-host-process.md)）：
+
+| 进程                       | 职责                                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **main**                   | 外壳：窗口 / 托盘 / 菜单 / `app://` 协议 / 更新 / 密钥 / 通知等系统能力；负责拉起并守护扩展宿主进程                                                  |
+| **renderer**               | UI + **内置扩展** + 渲染侧运行时（Cordis 宿主、贡献点注册表、命令面板/状态栏）；用户扩展的贡献点仍在这里注册，UI 也由这里渲染                        |
+| **Extension Host Process** | **用户扩展**（`.oix`）的执行环境：完整 Node、**无 DOM/localStorage**，可 `require` 内置模块、装任意 npm 包                                            |
+
+**为什么**：隔离——扩展崩溃或死循环不会带走 UI（不同进程），宿主进程还能单独重启；能力直接以 Node 提供，不必为每个新能力在渲染进程上加一条 IPC。
+
 ```
 src/
 ├── api/             # 扩展 API 类型（面向扩展作者；聚合出口 index.ts，扩展经相对路径导入）
-├── main/            # Electron 主进程
+├── main/            # Electron 主进程（窗口/系统能力；下列扩展能力服务**内置扩展与回退路径**，用户扩展默认由 src/extension-host/capabilities/ 实现）
 │   ├── index.ts     # 入口：窗口创建、协议、IPC 注册
+│   ├── extensionHostStarter.ts # Extension Host Process 启动器：utilityProcess.fork、随主窗口同生共死、崩溃重启与启动失败回退（ADR-0026）
 │   ├── window.ts    # 无边框窗口 + 窗口控制 IPC（最小化/最大化/关闭/状态推送）
 │   ├── appWindow.ts # App 子窗口管理（单开聚焦/多开序号/主机关闭全关）+ **overlay 窗体**（api.overlay 三方法的 IPC 与窗体实现：无边框/可透明/可置顶/不占任务栏的固定小窗，按扩展 id 限定作用域）
 │   ├── tray.ts      # 系统托盘（仅 Windows）：菜单 打开/设置/关于/退出，左键无行为、双击打开、右键菜单（ADR-0019）
@@ -50,29 +62,40 @@ src/
 │   ├── python.ts    # 扩展自带 Python 运行时的薄壳（api.python.run：环境准备/启动/通道注册/进程树清理）
 │   ├── pythonCore.ts # Python 接入核心（声明校验/路径/环境白名单与注入/cmd 转义/通道名/进程树命令；可单测）
 │   ├── pythonRun.ts # 解释器脚本启动与收尾（shell 调用 + 进程树终止 + 输出上限；真实子进程测试）
-│   └── protocol.ts  # app:// 自定义协议（用户扩展 ESM 加载 + 静态资源 + app://debug）
-├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）
-├── shared/          # 三端共享类型（IPC 契约）
-└── renderer/        # Vue 渲染进程（扩展宿主所在地）
+│   └── protocol.ts  # app:// 自定义协议（扩展清单与静态资源 + 回退时的用户扩展 ESM + app://debug）
+├── extension-host/  # **Extension Host Process**：用户扩展的执行环境（ADR-0026）
+│   ├── index.ts     # 进程入口：process.parentPort → HostPort、组装运行时、进程级兜底（uncaughtException 等）
+│   ├── runtime.ts   # 运行时编排：ready/init 握手、激活/停用、崩溃重启计数
+│   ├── port.ts / rpc.ts # 与渲染进程的消息桥：MessagePort 适配 + 请求/应答配对、超时、错误码、取消
+│   ├── loader.ts    # 用户扩展入口 file:// 动态 import()（纯 ESM，模块顶层副作用也会执行）
+│   ├── activator.ts # activationEvents 匹配与激活触发（* / onStartupFinished / onCommand: / onView:）
+│   ├── apiFactory.ts # 按 extId 现场构造 plugin(api) 的 api（99 项能力全部在宿主进程落地）
+│   ├── capabilities/ # 宿主侧能力：fs / 子进程 / sqlite / timer / net / ipc / python + 仍需回 main 的 UI 面
+│   └── safety.ts / status.ts / timers.ts / log.ts / errors.ts # 错误隔离、状态快照、全局定时器、日志、错误文案
+├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）+ window.eh（扩展宿主通道）
+├── shared/          # 三端共享类型（IPC 契约；extensionHostProtocol.ts 是 main ↔ 宿主进程 ↔ 渲染进程的协议）
+└── renderer/        # Vue 渲染进程（UI + 内置扩展 + 渲染侧运行时）
     └── src/
-        ├── main.ts        # 入口：启动扩展宿主 → 按 URL 参数渲染主布局或 AppWindow
+        ├── main.ts        # 入口：启动渲染侧运行时并接上扩展宿主 → 按 URL 参数渲染主布局或 AppWindow
         ├── App.vue        # 主布局（标题栏/导航栏/内容栏/状态栏 + 命令面板）
         ├── AppWindow.vue  # App 子窗口 / overlay 窗体的**共用外壳**（?obox-window=app：TitleBar + iframe 内容 + postMessage 窗口控制桥；=overlay：不渲染标题栏、背景全透明的固定小窗）
         ├── components/    # TitleBar / NavBar / ContentArea / StatusBar / CommandPalette
-        ├── core/          # 扩展系统核心（见下）
+        ├── core/          # 渲染侧扩展运行时（内置扩展宿主 + 用户扩展桥，见下）
         └── extensions/    # 内置扩展目录（每个扩展 = manifest.json + index.ts + 视图组件）
 extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix 分发；如 todo/）
 ```
 
-### 扩展系统核心（`renderer/src/core/`）
+### 渲染侧扩展运行时（`renderer/src/core/`）
 
 | 文件                   | 职责                                                                                                                                                                                                   |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `types.ts`             | 历史兼容入口：再导出 `src/api/`（扩展 API 类型已迁至 `src/api/`：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable；新代码直接 import `src/api`） |
-| `host.ts`              | 扩展宿主：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效                                                                                                 |
-| `manifest.ts`          | 清单校验（name/version/main 必填、semver、**apiVersion 门槛**、依赖检测）+ 错误收集                                                                                                                    |
+| `host.ts`              | **渲染侧**扩展宿主（内置扩展）：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效；用户扩展的贡献点在这里注册，**激活交给宿主进程**（关掉独立进程时才在本进程激活） |
+| `manifest.ts`          | 清单校验（name/version/main 必填、semver、**apiVersion 门槛**、`activationEvents` 合法性、依赖检测）+ 错误收集                                                                                         |
 | `registry.ts`          | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive）                                                                                                                                        |
-| `loader.ts`            | 内置扩展 Vite 静态收集 + 用户扩展 app:// 运行时加载 + 调试扩展 app://debug 加载                                                                                                                        |
+| `loader.ts`            | 内置扩展 Vite 静态收集 + 用户扩展 app:// 加载（**仅关掉独立进程时的回退路径**）+ 调试扩展 app://debug 加载                                                                                            |
+| `extensionHostBridge.ts` | 渲染侧接宿主进程的开关判定与通道：**设置 > 环境变量 `OBOX_EXTENSION_HOST` > 默认开**、启动失败回退、请求超时与错误文案                                                                              |
+| `extensionHostConsumer.ts` | 宿主数据面消费者：把宿主上报的贡献点/状态接回渲染侧注册表，并把用户操作转成对宿主的激活请求                                                                                                          |
 | `state.ts`             | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）**                                                                                                   |
 | `appStore.ts`          | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理）                                                                                                                                              |
 | `theme.ts`             | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题                                                                                                                                      |
@@ -92,6 +115,7 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ### 内置扩展（`renderer/src/extensions/`）
 
+- **跑在渲染进程**、**立即激活**（不参与 `activationEvents`）：可以直接贡献 Vue 视图组件、使用 DOM/localStorage；随应用打包，只读
 - `ext-manager/`：扩展管理器——Grid 展示已安装扩展，详情页（Identifier/Source/Last Updated/校验信息），安装（.oix 按钮/拖拽，**热生效**）、禁用/卸载（未激活热移除，已激活弹"立即重启"）、默认隐藏内置扩展（"显示内置"开关）
 - `app/`：应用（App）——其他扩展经 `api.app.register` 注册插件卡片，Grid 展示，点击弹出独立子窗口（URL 或 HTML srcdoc + iframe + postMessage 窗口控制桥，**srcdoc 自动注入主题变量**）
 - `settings/`：设置——左侧树（外观/通用/语言/快捷键/更新/网络/**AI**/通知/扩展）+ 右侧配置表单；主题下拉（主题扩展贡献）、语言下拉、快捷键修改、扩展设置项；**AI 选项（OpenAI 兼容参数 + 测试连接）**——baseUrl / apiKey（页内掩码，默认不渲染明文）/ model / contextLen / 每日限额（留空 = 不限），「测试连接」在主进程走 `netSession()`（继承「网络」里的代理），见 [ADR-0025](docs/adr/0025-host-ai-options.md)
@@ -99,9 +123,10 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ### 用户扩展（`extensions/`）
 
+- **跑在 Extension Host Process**（完整 Node、**无 DOM/localStorage**）：入口仍是 `export default (api) => {}`，由宿主经 `file://` 动态 `import()`；清单用 `apiVersion: 3` 声明所需 API 版本（宿主当前 = 3）+ `activationEvents`（缺省 `*`）
 - 独立项目，仅依赖扩展 API；以 **.oix**（zip）分发，扩展管理器安装（**热生效**）
 - **源码独立仓库托管**：每个扩展在 `github.com/obox-org/<扩展id>` 独立仓库维护（如 [obox-org/todo](https://github.com/obox-org/todo)），obox 仓库不持有扩展源码（`extensions/` 已 gitignore，本地保留副本供开发/打包）
-- `todo/`：待办扩展（作者 chenzhi）——App 卡片打开独立子窗口，内含 Vue 子应用（左侧边栏：我的一天/全部待办/日历/标签 CRUD + 内容栏：快速添加/勾选/行内编辑/优先级），数据 localStorage 持久化（app:// 源）
+- `todo/`：待办扩展（作者 chenzhi）——App 卡片打开独立子窗口，内含 Vue 子应用（左侧边栏：我的一天/全部待办/日历/标签 CRUD + 内容栏：快速添加/勾选/行内编辑/优先级）；**待迁移**：其数据目前存在 localStorage（app:// 源），宿主进程里没有 localStorage，改造为 `apiVersion: 3` 时须改用扩展 API 存储
 
 ## 常用命令
 
@@ -140,8 +165,8 @@ git push origin v1.0.0
 1. **读本文件**：了解项目概览与架构（上文）
 2. **读约定**：`AGENTS.md`（开发约定 + 强制提交流程）、`CONTEXT.md`（术语表）
 3. **运行**：`npm run dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
-4. **改扩展**：先判定扩展类型（内置扩展 / 用户扩展），扩展 API 与 manifest 贡献点查 `docs/extension-api/`——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装**热生效**（禁用/卸载对已激活扩展需重启，见 `docs/adr/0014`）。**调试扩展**：`obox --debug-extension <id>@<本地目录> --remote-debugging-port=9333` 在 VS Code 里断点调试（不安装）
-5. **改架构**：改动 `core/`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `docs/extension-api/` 与受影响的 `skills/obox-ext-*`（见 AGENTS.md 约定）和本文件
+4. **改扩展**：先判定扩展类型（内置扩展 / 用户扩展），扩展 API 与 manifest 贡献点查 `docs/extension-api/`——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装**热生效**（禁用/卸载对已激活扩展需重启，见 `docs/adr/0014`）；**跑在宿主进程**（无 DOM/localStorage，清单 `apiVersion: 3`）。**调试扩展**：`obox --debug-extension <id>@<本地目录> --remote-debugging-port=9333` 在 VS Code 里断点调试（不安装）
+5. **改架构**：改动 `src/renderer/src/core/*`、`src/extension-host/*`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `docs/extension-api/` 与受影响的 `skills/obox-ext-*`（见 AGENTS.md 约定）和本文件
 
 ## 文档导航
 
@@ -150,15 +175,17 @@ git push origin v1.0.0
 | [README.md](README.md)                                                             | 本文件：项目概览 / 快速上手（导航入口，不重复细节）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | [CONTEXT.md](CONTEXT.md)                                                           | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | [AGENTS.md](AGENTS.md)                                                             | 开发者约定：提问约定 + 扩展文档同步要求 + 强制提交流程（**分支 + PR**）+ 质量门槛                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| [docs/extension-api/](docs/extension-api/)                                         | 扩展 API 与 manifest 贡献点文档（`api-reference.md` / `manifest-reference.md` / `themes-settings.md` / `troubleshooting.md`）：扩展开发文档的公共位置与唯一真相，不在别处保留副本                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| [docs/extension-api/](docs/extension-api/)                                         | 扩展 API 与 manifest 贡献点文档（`api-reference.md` / `manifest-reference.md` / `themes-settings.md` / `troubleshooting.md`）：按**扩展宿主进程模型**重写（宿主进程能力面、`apiVersion: 3`、`activationEvents`），扩展开发文档的公共位置与唯一真相，不在别处保留副本 |
+| [docs/extension-host-migration.md](docs/extension-host-migration.md)               | 扩展宿主进程迁移计划：阶段与任务卡、并行组、风险与回退、**技术债登记（23 条）**                                                                                                                                                                                        |
 | [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| [docs/adr/](docs/adr/)                                                             | 架构决策记录：0001–0004 宿主与贡献点/启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009–0014 调试扩展·API 版本·扩展能力·热安装 / **0015 扩展信任模型与身份守卫** / 0016 IPC 传输与协议 / 0017 决策提问格式 / 0018 Python 运行时 / **0019 托盘常驻与关闭行为** / **0020 扩展开发流程与文档分层** / **0021 扩展数据升级保留与 JS 助手运行时** / **0022 宿主向 `url` 型 App 子窗口下发主题 token** / **0023 扩展开发九步链与 OpenSpec 产物范式** / **0024 `overlay` 窗体能力（apiVersion 2）** / **0025 宿主 AI 选项（OpenAI 兼容参数 + 掩码 + 主进程测试连接）** |
+| [docs/adr/](docs/adr/)                                                             | 架构决策记录：0001–0004 宿主与贡献点/启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009–0014 调试扩展·API 版本·扩展能力·热安装 / **0015 扩展信任模型与身份守卫** / 0016 IPC 传输与协议 / 0017 决策提问格式 / 0018 Python 运行时 / **0019 托盘常驻与关闭行为** / **0020 扩展开发流程与文档分层** / **0021 扩展数据升级保留与 JS 助手运行时** / **0022 宿主向 `url` 型 App 子窗口下发主题 token** / **0023 扩展开发九步链与 OpenSpec 产物范式** / **0024 `overlay` 窗体能力（apiVersion 2）** / **0025 宿主 AI 选项（OpenAI 兼容参数 + 掩码 + 主进程测试连接）** / **0026 Extension Host Process（用户扩展移入 `utilityProcess`；取代 0001、0004）** |
 | [docs/spec/](docs/spec/)                                                           | 需求 spec 与设计文档归档（与 ADR 同源：ADR 记**决策**，spec 记**需求与验收**；扩展类需求归档到该扩展目录的 `docs/`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ## 技术栈
 
 - **Electron** 44 + **Vue** 3.5 + **TypeScript** 5.9（electron-vite 5 构建）
-- **@cordisjs/core** 3.18（扩展宿主插件框架，运行在渲染进程）
+- **@cordisjs/core** 3.18（**渲染侧**扩展宿主的插件框架：内置扩展与回退路径；用户扩展改由 Extension Host Process 执行）
+- **Node 运行时**：Electron `utilityProcess` 承载用户扩展（产物 `out/main/extension-host.js`；完整 Node，无 DOM/localStorage）
 - 无 UI 组件库：手写 CSS 暗色主题（VS Code 风格）
 
 ## License
