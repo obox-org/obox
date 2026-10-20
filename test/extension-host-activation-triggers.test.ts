@@ -993,8 +993,9 @@ describe('host.executeCommand：onCommand 的激活前置', () => {
     assert.deepEqual(activated, ['builtin.ext'])
   })
 
-  test('回退开关关闭 ⇒ 用户扩展照旧在渲染侧激活，零激活请求', async () => {
-    installWindow(null)
+  test('回退开关显式关闭 ⇒ 用户扩展照旧在渲染侧激活，零激活请求', async () => {
+    // 2.0.0 起「未设置」= 默认开（EH-D2a），这里用显式关闭来驱动"渲染侧既有路径"。
+    installWindow('0')
     const activated: string[] = []
     const fake = makeActivationHost()
     const user = hostEntry({

@@ -13,6 +13,13 @@ import { keybindingStore } from '../../core/keybindings'
 import { stateStore } from '../../core/state'
 import { extensionSettingsStore } from '../../core/extensionSettings'
 import { host } from '../../core/host'
+import {
+  EXTENSION_HOST_SOURCE_TEXT,
+  clearRendererFallback,
+  extensionHostFallbackNotice,
+  readExtensionHostSwitch,
+  type ExtensionHostSwitchDecision
+} from '../../core/extensionHostBridge'
 import { LOCALES, setLocale, type LocaleCode } from '../../i18n'
 import type { RegisteredSettingsPage } from '../../core/extensionSettings'
 import type { SettingField } from '../../../../api/contributions'
@@ -451,6 +458,52 @@ function toggleNotif(id: string, disabled: boolean): void {
   notificationRevision.value++
 }
 
+// ---- 通用：扩展执行位置（EH-D2a） ----
+/**
+ * 「在独立进程中运行扩展」开关（2.0.0 起**默认开**）。
+ *
+ * 判定本体只有一处：`core/extensionHostBridge.ts` 的 `readExtensionHostSwitch()`
+ * （设置项 > 环境变量 `OBOX_EXTENSION_HOST` > 默认开；本窗口启动失败过 ⇒ 临时回退）。
+ * 本页只做两件事：**显示当前生效值 + 来源**，以及把用户的选择写进设置。
+ *
+ * ⚠️ **不做热切换**：宿主已经启动、扩展已经在跑，换执行位置只能重启应用。保存后只提示
+ * "重启 Obox 后生效"（与「关闭行为」「开机自启」这类需要系统/进程级生效的项同一取舍）。
+ * 依赖 `settingsRevision` 的理由同本文件其它读 `stateStore` 的取值（state 是普通对象，读不被追踪）。
+ */
+function extensionHostDecision(): ExtensionHostSwitchDecision {
+  void settingsRevision.value
+  return readExtensionHostSwitch()
+}
+
+/** 开关显示值 = **当前生效**值（env 显式关 / 已回退时显示关，避免"勾着却没生效"） */
+function extensionHostOn(): boolean {
+  return extensionHostDecision().enabled
+}
+
+/** 当前生效值的来源说明（设置项 / 环境变量 / 默认 / 启动失败回退） */
+function extensionHostSourceText(): string {
+  return EXTENSION_HOST_SOURCE_TEXT[extensionHostDecision().source]
+}
+
+/** 保存后要提示"重启生效"（只在用户真的动过开关之后显示；进页面不乱弹） */
+const extensionHostRestartHint = ref(false)
+
+/**
+ * 写开关。**先清回退标记再落库**：回退标记优先级高于设置项（防崩溃循环），不清掉的话
+ * 用户点开关会看起来毫无反应。
+ */
+function onExtensionHostToggle(enabled: boolean): void {
+  clearRendererFallback()
+  stateStore.setExtensionHostEnabled(enabled)
+  extensionHostRestartHint.value = true
+}
+
+/** 上次启动失败的回退提示（跨 reload 保留在 sessionStorage 里；没有则空串，整行不渲染） */
+function extensionHostFallbackText(): string {
+  void settingsRevision.value
+  return extensionHostFallbackNotice() ?? ''
+}
+
 // ---- 通用：关闭行为（偏好存主进程 userData/app-preferences.json；仅 Windows 有托盘，见 ADR-0019） ----
 const isWindows = window.api.env.platform === 'win32'
 const closeBehavior = ref<CloseBehavior>('ask')
@@ -837,6 +890,31 @@ onUnmounted(() => {
       <!-- 通用：关闭行为（仅 Windows 有系统托盘，非 Windows 显示说明） -->
       <div v-if="active === 'general'" class="config-block">
         <h2>{{ t('settings.general.title') }}</h2>
+        <!--
+          扩展执行位置（EH-D2a）：2.0.0 起默认在 Extension Host 进程里跑用户扩展。
+          开关写的是**设置项**（`extensionHost.enabled`），判定与回退都在
+          `core/extensionHostBridge.ts`；这里**不做热切换**，只提示重启生效。
+          放在平台相关项之前：它不是 Windows 专属设置（macOS/Linux 同样生效）。
+        -->
+        <div class="config-row">
+          <label>
+            <input
+              type="checkbox"
+              :checked="extensionHostOn()"
+              @change="onExtensionHostToggle(($event.target as HTMLInputElement).checked)"
+            />
+            在独立进程中运行扩展
+          </label>
+          <p class="config-desc">
+            扩展在独立的 Extension Host 进程中执行，单个扩展卡死或崩溃不会带走主界面。 需重启 Obox
+            后生效；关闭后扩展回到主界面进程执行，兼容旧行为。
+          </p>
+          <p class="config-desc">当前生效：{{ extensionHostSourceText() }}</p>
+          <p v-if="extensionHostRestartHint" class="config-info">已保存，重启 Obox 后生效。</p>
+          <p v-if="extensionHostFallbackText()" class="config-error">
+            {{ extensionHostFallbackText() }}
+          </p>
+        </div>
         <div v-if="isWindows" class="config-row">
           <label>{{ t('settings.general.closeBehavior') }}</label>
           <select :value="closeBehavior" @change="onCloseBehaviorChange">
