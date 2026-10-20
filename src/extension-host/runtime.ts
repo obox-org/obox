@@ -22,6 +22,7 @@
  *    其余扩展照常激活与响应 RPC。
  */
 import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import {
   EH_ERROR_TEXT,
   FIRST_REQUEST_ID,
@@ -377,6 +378,9 @@ export class ExtensionHostRuntime {
         createExtensionApi({
           ext: extension.info,
           extensionDataDir: loader.dataDirFor(extension.info.id),
+          // R63：POSIX 套接字目录显式给成 `<init.dataDir>/ipc`（与 main 的 `ipcSocketDir()` 逐字一致）。
+          // 不在这里给，apiFactory 就只能从 extensionDataDir 反推 userData（隐式约定，布局一换就算错）。
+          socketDir: join(this.dataDir, 'ipc'),
           appInfo: this.appInfo,
           locale: this.locale,
           log: this.logger,

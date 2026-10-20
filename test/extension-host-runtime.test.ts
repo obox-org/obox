@@ -526,8 +526,9 @@ test('运行时验收：在宿主里加载测试扩展并完成一次 fs 读写�
   assert.equal(harness.runtime.statusOf('roundtrip')?.state, 'active')
   assert.equal(state.fsRoundTrip, 'hello from host', '扩展经 api.fs 读到的内容应与写入一致')
 
-  // 落点必须是 `<dataDir>/<extId>/`（扩展自己的数据目录，不是宿主 dataDir 根）
-  const onDisk = await readFile(path.join(dataDir, 'roundtrip', 'hello.txt'), 'utf8')
+  // 落点必须是 `<dataDir>/<extId>/data/`——R62 起与 main 的 `dataDirFor` 逐字一致
+  // （此前宿主写的是 `<dataDir>/<extId>/`，升级后老扩展的 fs 数据会"看不见"）
+  const onDisk = await readFile(path.join(dataDir, 'roundtrip', 'data', 'hello.txt'), 'utf8')
   assert.equal(onDisk, 'hello from host')
 
   harness.host.receive(createTerminateEnvelope(1000))
@@ -1007,7 +1008,13 @@ test('畸形信封不崩：可配对的 req 回 EH_INTERNAL，其它只记日志
 /* 7. fs / timer / 对照表                                                                         */
 /* -------------------------------------------------------------------------------------------- */
 
-/** 造一个直连 apiFactory 的扩展 api（不经运行时） */
+/**
+ * 造一个直连 apiFactory 的扩展 api（不经运行时）。
+ *
+ * `extensionDataDir` 参数现在是**扩展目录**（R62 起 data 目录恒等于 `<扩展目录>/data`，
+ * 由 `apiFactory.extensionDataDirOf()` 统一计算，见 `test/extension-host-python-sqlite.test.ts`
+ * 的路径钉死用例）。
+ */
 function createApi(
   extensionDataDir: string,
   extId = 'fs-ext'
@@ -1025,7 +1032,7 @@ function createApi(
     ext: {
       id: extId,
       version: '1.0.0',
-      path: path.dirname(extensionDataDir),
+      path: extensionDataDir,
       activationEvents: [],
       apiVersion: 3
     },
@@ -1045,7 +1052,8 @@ test('fs 能力：真的能读写扩展 data 目录，越界路径拒绝', async
   const fsApi = built.api.fs
 
   await fsApi.writeFile('sub/note.txt', '你好 obox')
-  const onDisk = await readFile(path.join(extensionDataDir, 'sub', 'note.txt'), 'utf8')
+  // R62：data 目录 = `<扩展目录>/data`（与 main 的 `dataDirFor` 逐字一致）
+  const onDisk = await readFile(path.join(extensionDataDir, 'data', 'sub', 'note.txt'), 'utf8')
   assert.equal(onDisk, '你好 obox', 'writeFile 必须真的落盘（自动建目录）')
   assert.equal(await fsApi.readFile('sub/note.txt'), '你好 obox')
 
@@ -1157,8 +1165,25 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'fs.watch',
     'fs.writeFile',
     'i18n.locale',
+    // EH-B2：ipc 全量 14 项 + python.run + sqlite.open（进程与存储族）
+    'ipc.broadcast',
+    'ipc.channels',
+    'ipc.close',
+    'ipc.connect',
+    'ipc.listen',
+    'ipc.notify',
+    'ipc.onClose',
+    'ipc.onConnection',
+    'ipc.onDisconnect',
+    'ipc.onNotification',
+    'ipc.onReconnect',
+    'ipc.onRequest',
+    'ipc.onStderr',
+    'ipc.request',
     'log',
     'net.fetch',
+    'python.run',
+    'sqlite.open',
     'timer.clearInterval',
     'timer.clearTimeout',
     'timer.setInterval',
@@ -1167,8 +1192,8 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
 
   const stubs = rows.filter((row) => row.status === 'stub')
   // 行数与分布锁死：阶段 B 把某个桩落地时这里会失败，提醒同步对照表（而不是悄悄少一行）
-  assert.equal(rows.length, 99, '对照表共 99 项（22 已实现 + 77 桩）')
-  assert.equal(stubs.length, 77, '桩 77 项（阶段 B 待迁移；EH-B1 已带走 5 项）')
+  assert.equal(rows.length, 99, '对照表共 99 项（38 已实现 + 61 桩）')
+  assert.equal(stubs.length, 61, '桩 61 项（阶段 B 待迁移；EH-B1 已带走 5 项、EH-B2 带走 16 项）')
   assert.equal(
     rows.length,
     implemented.length + stubs.length,

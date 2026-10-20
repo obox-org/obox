@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
+import { access, mkdir } from 'node:fs/promises'
 import { join } from 'path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createWindow, getMainWindow, registerWindowIpc } from './window'
@@ -51,6 +52,15 @@ import {
 // EH-B1：这两条是**宿主内部 RPC**（宿主进程 → main），不进扩展 API 面——扩展看到的是
 // `api.net.fetch` / `api.clipboard`，这里只是宿主实现它们时向 main 借的两样东西。
 import { CLIPBOARD_METHOD, PROXY_CONFIG_METHOD } from '../extension-host/capabilities/io'
+// EH-B2：`host.pythonRuntime` —— 宿主拿不到 Python 运行时（exe/env/cwd 由 main 解析），
+// 形状与类型定义都在宿主能力文件里（单一口径，防两边漂移）。
+import {
+  PYTHON_RUNTIME_METHOD,
+  type PythonRuntimeResponse
+} from '../extension-host/capabilities/python'
+import { extensionSourceDir } from './paths'
+import { buildPythonEnv, pythonExecutablePath, pythonUserSiteDir } from './pythonCore'
+import { resolveProgramInExtension } from './ipcTransport'
 import type {
   ExtensionHostStartOutcome,
   ExtensionHostStatusSnapshot,
@@ -79,6 +89,19 @@ export const EH_STATUS_IPC = 'eh:get-status'
 
 /** 状态迁移的广播 channel（渲染侧 `window.eh.onStatus` 与 `window.events` 都听它） */
 export const EH_STATUS_CHANNEL = 'eh:status'
+
+/**
+ * 文件是否存在（EH-B2 的 `host.pythonRuntime` 用：解释器与脚本都要先自证存在，
+ * 好让宿主拿到稳定错误码 `python-missing` / `invalid-declaration` 而不是一个 spawn 失败）。
+ */
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await access(target)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /** 把宿主状态迁移广播给所有窗口（单个窗口抛错不得打断其它窗口） */
 function broadcastExtensionHostStatus(status: ExtensionHostStatusSnapshot): void {
@@ -301,6 +324,69 @@ app.whenReady().then(() => {
       }
     }
   })
+
+  // ---- EH-B2：宿主内部的第三条 RPC —— Python 运行时（形状见 src/extension-host/capabilities/python.ts） ----
+  // 为什么必需：`api.python.run` 的执行方是宿主进程（进程与流都归宿主），但**运行时在哪、用哪份环境**
+  // 只有 main 知道（`app.getPath('userData')` + 扩展目录解析 + 用户库目录）。宿主拿不到这些，所以
+  // 由这条 RPC 把 exePath / scriptPath / env / cwd 交出去，宿主自己 spawn 与收流。
+  // 这里**复用既有解析函数**（pythonCore 的 pythonExecutablePath / buildPythonEnv / pythonUserSiteDir、
+  // ipcTransport 的 resolveProgramInExtension），不复制任何路径规则。
+  starter.registerMethod(
+    PYTHON_RUNTIME_METHOD,
+    async (params: unknown): Promise<PythonRuntimeResponse> => {
+      const record: { extId?: unknown; script?: unknown } =
+        typeof params === 'object' && params !== null
+          ? (params as { extId?: unknown; script?: unknown })
+          : {}
+      if (typeof record.extId !== 'string' || record.extId.trim() === '') {
+        return { ok: false, code: 'invalid-declaration', error: '无效的扩展 id' }
+      }
+      const extId = record.extId
+      const script = typeof record.script === 'string' ? record.script : ''
+      const extensionDir = extensionSourceDir(extId)
+      const exePath = pythonExecutablePath(extensionDir)
+      if (!(await pathExists(exePath))) {
+        return {
+          ok: false,
+          code: 'python-missing',
+          error: `扩展未自带该架构的 Python 运行时：${exePath}`
+        }
+      }
+      if (script.trim() === '') {
+        return { ok: false, code: 'invalid-declaration', error: '脚本路径不能为空' }
+      }
+      let scriptPath: string
+      try {
+        // 越界（绝对路径 / `..`）一律拒绝（声明校验之外的第二道包含检查）
+        scriptPath = resolveProgramInExtension(extensionDir, script)
+      } catch (error) {
+        return {
+          ok: false,
+          code: 'invalid-declaration',
+          error: error instanceof Error ? error.message : String(error)
+        }
+      }
+      if (!(await pathExists(scriptPath))) {
+        return {
+          ok: false,
+          code: 'invalid-declaration',
+          error: `脚本不存在：${script}`
+        }
+      }
+      // data 目录：与 `src/main/python.ts` 的 `dataDirFor` 同一约定
+      // （userData/extensions/<id>/data）——宿主侧的 `<扩展目录>/data` 指向同一处（R62）
+      const dataDir = join(app.getPath('userData'), 'extensions', extId, 'data')
+      // 用户库目录（随扩展升级保留；见 ADR-0018）：注入 PYTHONPATH 前确保存在
+      await mkdir(pythonUserSiteDir(dataDir), { recursive: true })
+      return {
+        ok: true,
+        exePath,
+        scriptPath,
+        cwd: dataDir,
+        env: buildPythonEnv({ baseEnv: process.env, extensionDir, dataDir })
+      }
+    }
+  )
 
   // 系统托盘（仅 Windows）：右键 打开/设置/关于/退出，双击打开（ADR-0019 决策 3/4）
   const SETTINGS_NAV_ID = 'settings.main' // 内置 settings 扩展声明的导航项 id

@@ -898,7 +898,7 @@ test('env：5 个成员与 src/api/types.ts 的声明一一对应（语言来自
 /* 6. apiFactory 装配与「已实现 / 桩」对照表                                                        */
 /* -------------------------------------------------------------------------------------------- */
 
-test('对照表：EH-B1 把 fs.watch/unwatch、net.fetch、clipboard 两项变成实现（22 已实现 + 77 桩 = 99）', async (): Promise<void> => {
+test('对照表：EH-B2 之后 38 已实现 + 61 桩 = 99（B1 的 5 项与 B2 的 16 项都不再是桩）', async (): Promise<void> => {
   const root = await makeTempDir()
   const built = createExtensionApi({
     ext: {
@@ -939,16 +939,33 @@ test('对照表：EH-B1 把 fs.watch/unwatch、net.fetch、clipboard 两项变�
     'fs.watch',
     'fs.writeFile',
     'i18n.locale',
+    // EH-B2：ipc 14 项 + python.run + sqlite.open
+    'ipc.broadcast',
+    'ipc.channels',
+    'ipc.close',
+    'ipc.connect',
+    'ipc.listen',
+    'ipc.notify',
+    'ipc.onClose',
+    'ipc.onConnection',
+    'ipc.onDisconnect',
+    'ipc.onNotification',
+    'ipc.onReconnect',
+    'ipc.onRequest',
+    'ipc.onStderr',
+    'ipc.request',
     'log',
     'net.fetch',
+    'python.run',
+    'sqlite.open',
     'timer.clearInterval',
     'timer.clearTimeout',
     'timer.setInterval',
     'timer.setTimeout'
   ])
   assert.equal(rows.length, 99, '对照表共 99 项')
-  assert.equal(implemented.length, 22, '已实现 22 项（EH-A3 的 17 + EH-B1 的 5）')
-  assert.equal(stubs.length, 77, '桩 77 项（阶段 B 剩余）')
+  assert.equal(implemented.length, 38, '已实现 38 项（EH-A3 的 17 + EH-B1 的 5 + EH-B2 的 16）')
+  assert.equal(stubs.length, 61, '桩 61 项（阶段 B 剩余）')
   assert.equal(rows.length, implemented.length + stubs.length, '不得出现第三类')
 
   // 5 项新实现不能再抛「阶段 B」：调用它们应当是形状/网络错误，而不是迁移提示
@@ -963,9 +980,23 @@ test('对照表：EH-B1 把 fs.watch/unwatch、net.fetch、clipboard 两项变�
   assert.equal(netResult.ok, false)
   assert.doesNotMatch(netResult.error ?? '', /尚未迁移/)
 
+  // B2 的 16 项同样不能再抛迁移提示（这里挑三项形状错误，全部止步于参数/桥校验）
+  await assert.rejects(built.api.ipc.request('nope', 'ping'), (error: unknown): boolean => {
+    assert.doesNotMatch(String((error as Error).message), /尚未迁移/)
+    return true
+  })
+  await assert.rejects(built.api.python.run(''), (error: unknown): boolean => {
+    assert.doesNotMatch(String((error as Error).message), /尚未迁移/)
+    return true
+  })
+  await assert.rejects(built.api.sqlite.open('../escape.db'), (error: unknown): boolean => {
+    assert.doesNotMatch(String((error as Error).message), /尚未迁移/)
+    return true
+  })
+
   // 剩余桩仍然当场抛「尚未迁移」
   assert.throws((): void => built.api.statusBar.setText('a', 'b'), /尚未迁移/)
-  await assert.rejects(async (): Promise<unknown> => built.api.sqlite.open('a.db'), /尚未迁移/)
+  await assert.rejects(async (): Promise<unknown> => built.api.secrets.get('k'), /尚未迁移/)
   built.dispose()
 })
 
