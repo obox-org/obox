@@ -8,6 +8,9 @@
  *   `./capabilities/io.ts`（`env` 也搬过去，5 个成员在一处定义）；
  * - **EH-B2**：进程与存储族补齐——`ipc.*`（14 项，`./capabilities/ipc.ts`）、`python.run`
  *   （`./capabilities/python.ts`）、`sqlite.open`（`./capabilities/sqlite.ts`）；
+ * - **EH-B3a**：主进程类能力族——`window`(7) / `overlay`(4) / `dialog`(3) / `shell`(2) /
+ *   `notification`(1) / `secrets`(3) / `update.getVersion` / `update.onEvent` / `proxy.get`，
+ *   实现落在 `./capabilities/host-main.ts`（全部经宿主内部 RPC 回 main）；
  * - 其余仍是**显式桩**：抛 `EH_INTERNAL` + 「该能力尚未迁移，见 docs/extension-host-migration.md 阶段 B」。
  *
  * ## 扩展 data 目录（R62）：唯一计算点
@@ -35,7 +38,12 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Memento } from '../api/shared'
 import type { ExtensionActivationApi } from '../api/types'
-import type { HostedExtensionInfo, LogLevel } from '../shared/extensionHostProtocol'
+import {
+  EhProtocolError,
+  type HostedExtensionInfo,
+  type LogLevel
+} from '../shared/extensionHostProtocol'
+import { createHostMainCapabilities } from './capabilities/host-main'
 import { createIoCapabilities, resolveInsideDataDir, type HostMainBridge } from './capabilities/io'
 import { createIpcCapabilities } from './capabilities/ipc'
 import { createPythonCapabilities } from './capabilities/python'
@@ -87,6 +95,58 @@ function stubAsync(capability: string): StubAsync {
   Object.defineProperty(fn, STUB_MARK, { value: capability, enumerable: false })
   return fn
 }
+
+/**
+ * 造"原因已查清"的异步桩（EH-B3a 的 4 条 `update` 门控方法用）。
+ *
+ * 为什么不是普通桩：这 4 条不是"还没轮到"，而是**在宿主架构下无法在本卡实现**——门控是
+ * "当前生效的更新提供者"，该选择只存在于渲染进程（`stateStore` 的 `update.provider`，
+ * 见 `updaterStore.isActive()`），main 与宿主都拿不到（裁定 R64）。
+ *
+ * 文案仍必须同时含「尚未迁移」与「阶段 B」：那是 `test/extension-host-runtime.test.ts` 对
+ * **每一个桩**的统一断言，也是扩展作者查 `docs/extension-host-migration.md` 的入口；
+ * 额外补上"该等哪个卡"，避免作者以为是自己的配置问题。
+ */
+function stubWithReason(capability: string, reason: string): StubAsync {
+  const fn = async (): Promise<never> => {
+    throw new EhProtocolError('EH_INTERNAL', reason, `api.${capability} 在扩展宿主进程里只有桩`)
+  }
+  Object.defineProperty(fn, STUB_MARK, { value: capability, enumerable: false })
+  return fn
+}
+
+/** 同 {@link stubWithReason}，但保持**同步**形状（`ui.showMessage` / `output.createChannel` 在 v1 是同步返回） */
+function stubSyncWithReason(capability: string, reason: string): StubSync {
+  const fn = (): never => {
+    throw new EhProtocolError('EH_INTERNAL', reason, `api.${capability} 在扩展宿主进程里只有桩`)
+  }
+  Object.defineProperty(fn, STUB_MARK, { value: capability, enumerable: false })
+  return fn
+}
+
+/**
+ * `update` 的 4 条门控方法在宿主里的统一文案（裁定 R64：留桩，不做 fail-closed）。
+ *
+ * 为什么不 fail-closed（"能调但永远失败"）：那会把它们记成"已实现"，对照表与文档都失真；
+ * 扩展作者看到 `EH_INTERNAL`+「尚未迁移」会去查迁移计划，看到「无法确认提供者」会以为是自己
+ * 配错了。**语义诚实优先于形状真实。**
+ */
+const UPDATE_PROVIDER_GATE_REASON =
+  'update 的这条方法尚未迁移：它的门控是"当前生效的更新提供者"，而该选择只存在于渲染进程' +
+  '（设置-更新的 update.provider），main 与宿主进程都读不到。按裁定 R64 留待 EH-B3b ' +
+  '由渲染侧权威判定（真相在哪就在哪判定），见 docs/extension-host-migration.md 阶段 B'
+
+/**
+ * `ui` / `output` 在宿主里的统一文案（裁定 R67：归 EH-B3b 的 host-renderer 通道）。
+ *
+ * 事实：`ui` 的模态框/toast 由渲染进程的 `uiStore` 渲染，`output` 的通道与底部面板由
+ * `outputStore` 持有；`src/main/ui.ts` 只会把请求转发给 App 子窗口或回 `{local:true}` 让
+ * 渲染侧自己渲染，**main 自己没有任何 UI 渲染能力**。所以宿主扩展要用这两族，必须等
+ * 宿主→渲染侧的数据面通道（ADR-0026 的 `host-renderer`，EH-B5 / B3b）落地。
+ */
+const HOST_RENDERER_DATA_PLANE_REASON =
+  '该能力尚未迁移：它属于宿主 → 渲染侧的 UI 数据面（状态栏/面板/toast 等由渲染进程渲染），' +
+  '需要 host-renderer 通道，本卡（EH-B3a）只动 main 侧 RPC，按裁定 R67 归阶段 B 的 EH-B3b'
 
 /** 该函数是否是桩（是则返回其能力名） */
 function stubMarkerOf(value: unknown): string | undefined {
@@ -313,6 +373,19 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
   })
   const sqlite = createSqliteCapabilities({ extId, extensionDataDir: root, log: options.log })
 
+  /* ------------------------- 已实现：主进程类能力族（EH-B3a） ------------------------- */
+
+  // EH-B3a：window / overlay / dialog / shell / notification / secrets /
+  // update.getVersion / update.onEvent / proxy.get 的实现全部在 capabilities/host-main.ts。
+  // 这些能力只在 main 有实现（宿主进程没有 Electron 模块），所以统一走宿主内部 RPC；
+  // `extId` 在这里绑定（overlay / secrets / notification 的作用域就靠它，扩展侧拿不到该参数）。
+  const hostMain = createHostMainCapabilities({
+    extId,
+    log: options.log,
+    hostMain: options.hostMain,
+    runSafely: options.runSafely
+  })
+
   /* ---------------------------------- 已实现：fs ---------------------------------- */
 
   const fsApi: ExtensionActivationApi['fs'] = {
@@ -429,26 +502,15 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     globalState: mementoStub('globalState'),
     on: stubSync('on'),
     emit: stubSync('emit'),
-    window: {
-      minimize: stubAsync('window.minimize'),
-      toggleMaximize: stubAsync('window.toggleMaximize'),
-      close: stubAsync('window.close'),
-      isMaximized: stubAsync('window.isMaximized'),
-      setProgressBar: stubAsync('window.setProgressBar'),
-      isFocused: stubAsync('window.isFocused'),
-      onFocusChanged: stubSync('window.onFocusChanged')
-    },
+    // EH-B3a：window 全量 7 项（6 条 RPC + `onFocusChanged` 走 main 的聚焦事件）
+    window: hostMain.window,
     appInfo,
     app: {
       register: stubSync('app.register'),
       onMessage: stubSync('app.onMessage')
     },
-    overlay: {
-      create: stubAsync('overlay.create'),
-      destroy: stubAsync('overlay.destroy'),
-      setMouseThrough: stubAsync('overlay.setMouseThrough'),
-      setPosition: stubAsync('overlay.setPosition')
-    },
+    // EH-B3a：overlay 4 项（`extId` 由宿主绑定，越权判定在 main 里复用既有那一份）
+    overlay: hostMain.overlay,
     i18n: {
       t: stubSync('i18n.t'),
       // `locale` 是只读常量，不是能力调用：直接给真实值（读它不该抛错），
@@ -466,27 +528,23 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
       onChanged: stubSync('settings.onChanged')
     },
     update: {
-      getVersion: stubAsync('update.getVersion'),
-      resolveFeed: stubAsync('update.resolveFeed'),
-      check: stubAsync('update.check'),
-      download: stubAsync('update.download'),
-      install: stubAsync('update.install'),
-      onEvent: stubSync('update.onEvent')
+      // EH-B3a：v1 里这两项**没有**提供者门控（`getVersion` 直接读 app 版本；`onEvent` 只订阅），
+      // 因此可以照原样搬过来。剩下 4 条带门控的见下面的显式桩（裁定 R64）。
+      getVersion: hostMain.update.getVersion,
+      resolveFeed: stubWithReason('update.resolveFeed', UPDATE_PROVIDER_GATE_REASON),
+      check: stubWithReason('update.check', UPDATE_PROVIDER_GATE_REASON),
+      download: stubWithReason('update.download', UPDATE_PROVIDER_GATE_REASON),
+      install: stubWithReason('update.install', UPDATE_PROVIDER_GATE_REASON),
+      onEvent: hostMain.update.onEvent
     },
-    proxy: { get: stubSync('proxy.get') },
+    // EH-B3a：同步读缓存快照（构造预热 + 读时刷新，语义见 capabilities/host-main.ts）
+    proxy: hostMain.proxy,
     timer: timerApi,
     sqlite: sqlite.api,
-    notification: { show: stubAsync('notification.show') },
+    notification: hostMain.notification,
     net: io.net,
-    dialog: {
-      showOpenDialog: stubAsync('dialog.showOpenDialog'),
-      showSaveDialog: stubAsync('dialog.showSaveDialog'),
-      showMessageBox: stubAsync('dialog.showMessageBox')
-    },
-    shell: {
-      openExternal: stubAsync('shell.openExternal'),
-      openPath: stubAsync('shell.openPath')
-    },
+    dialog: hostMain.dialog,
+    shell: hostMain.shell,
     clipboard: io.clipboard,
     env,
     theme: {
@@ -495,20 +553,22 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     },
     fs: fsApi,
     ui: {
-      showQuickPick: stubAsync('ui.showQuickPick'),
-      showInputBox: stubAsync('ui.showInputBox'),
-      showMessage: stubSync('ui.showMessage'),
-      showForm: stubAsync('ui.showForm'),
-      withProgress: stubAsync('ui.withProgress')
+      // R67：ui 的模态框/toast 由渲染进程的 uiStore 渲染，main 没有 UI 渲染能力 ⇒ 归 B3b 的
+      // host-renderer 通道。四条异步 + 一条同步形状各自保持（v1 的 showMessage 是同步 void）。
+      showQuickPick: stubWithReason('ui.showQuickPick', HOST_RENDERER_DATA_PLANE_REASON),
+      showInputBox: stubWithReason('ui.showInputBox', HOST_RENDERER_DATA_PLANE_REASON),
+      showMessage: stubSyncWithReason('ui.showMessage', HOST_RENDERER_DATA_PLANE_REASON),
+      showForm: stubWithReason('ui.showForm', HOST_RENDERER_DATA_PLANE_REASON),
+      withProgress: stubWithReason('ui.withProgress', HOST_RENDERER_DATA_PLANE_REASON)
     },
     ipc: ipc.api,
-    output: { createChannel: stubSync('output.createChannel') },
-    python: python.api,
-    secrets: {
-      get: stubAsync('secrets.get'),
-      set: stubAsync('secrets.set'),
-      delete: stubAsync('secrets.delete')
+    output: {
+      // R67：输出通道与底部面板都在渲染侧 outputStore ⇒ 同上
+      createChannel: stubSyncWithReason('output.createChannel', HOST_RENDERER_DATA_PLANE_REASON)
     },
+    python: python.api,
+    // EH-B3a：secrets 3 项（main 侧仍走 safeStorage，宿主只管把 extId+key 送过去）
+    secrets: hostMain.secrets,
     views: { registerTreeProvider: stubSync('views.registerTreeProvider') },
     log
   }
@@ -520,11 +580,13 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     dispose(): void {
       if (disposed) return
       disposed = true
-      // 顺序有意：先停"还在产生事件"的东西（通道/子进程），再关被动句柄。
-      // 三条都幂等，且都各自负责自己的 `unref`（不拖住宿主退出）。
+      // 顺序有意：先停"还在产生事件"的东西（通道/子进程/事件订阅），再关被动句柄。
+      // 四条都幂等，且都各自负责自己的 `unref`（不拖住宿主退出）。
       ipc.dispose()
       python.dispose()
       sqlite.dispose()
+      // 停 main 事件轮询 + 回收本扩展创建过的 overlay（v1：停用即销毁窗体）
+      hostMain.dispose()
       // 监听句柄必须真的关掉：漏一个 inotify/FSEvents 句柄会让宿主退出时被拖住
       io.dispose()
       for (const id of [...timers.keys()]) clearTimer(id)

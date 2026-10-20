@@ -1,5 +1,16 @@
-import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  nativeImage,
+  Notification,
+  safeStorage,
+  shell
+} from 'electron'
 import { access, mkdir } from 'node:fs/promises'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createWindow, getMainWindow, registerWindowIpc } from './window'
@@ -21,8 +32,16 @@ import { registerExtensionProtocol } from './protocol'
 import {
   registerAppWindowIpc,
   closeAllAppWindowsOnMainClose,
-  registerOverlayIpc
+  registerOverlayIpc,
+  // EH-B3a：overlay 四方法的**真实实现**（含越权判定与 workArea 钳位）。本卡只给它们加了
+  // `export`（裁定 R66），函数体一行未动——宿主 RPC 因此复用同一份安全校验，不抄第二份。
+  createOverlayWindow,
+  destroyOverlay,
+  setOverlayMouseThrough,
+  setOverlayPosition
 } from './appWindow'
+// EH-B3a：dialog 的两个**纯函数**（属性归一 / 目录模式判定）是既有的，复用而不是重写规则
+import { isDirectoryProperties, normalizeDialogProperties } from './ext'
 import { registerOixIpc } from './oix'
 import { registerUpdateIpc, onUpdateEvent } from './updater'
 import { parseDebugExtensions, registerDebugIpc } from './debug'
@@ -58,10 +77,19 @@ import {
   PYTHON_RUNTIME_METHOD,
   type PythonRuntimeResponse
 } from '../extension-host/capabilities/python'
+// EH-B3a：主进程类能力族（window / overlay / dialog / shell / notification / secrets /
+// update.getVersion / proxy.get）的宿主内部 RPC。方法名与事件 channel 都从宿主能力文件
+// import——两边同一个常量对象，名字不可能漂；`test/extension-host-host-main.test.ts` 还有
+// 一条源码门禁逐个 key 断言这里确实注册了它。
+import {
+  HOST_MAIN_EVENT_CHANNELS,
+  HOST_MAIN_METHODS
+} from '../extension-host/capabilities/host-main'
 import { extensionSourceDir } from './paths'
 import { buildPythonEnv, pythonExecutablePath, pythonUserSiteDir } from './pythonCore'
 import { resolveProgramInExtension } from './ipcTransport'
 import type {
+  DialogOpenOptions,
   ExtensionHostStartOutcome,
   ExtensionHostStatusSnapshot,
   ProxyConfig
@@ -89,6 +117,172 @@ export const EH_STATUS_IPC = 'eh:get-status'
 
 /** 状态迁移的广播 channel（渲染侧 `window.eh.onStatus` 与 `window.events` 都听它） */
 export const EH_STATUS_CHANNEL = 'eh:status'
+
+/* -------------------------------------------------------------------------------------------- */
+/* EH-B3a：main → 宿主的**事件队列**（推送的降级实现，见 capabilities/host-main.ts 文件头）            */
+/* -------------------------------------------------------------------------------------------- */
+
+/** 一条待宿主拉取的事件 */
+interface HostEventEntry {
+  /** 单调递增序号（宿主的游标；0 保留给"还没取过"） */
+  seq: number
+  channel: string
+  payload: unknown
+  /** 定向扩展 id；`undefined` = 广播类事件（窗口聚焦 / 更新事件） */
+  extId?: string
+}
+
+/**
+ * 队列容量。宿主按 250ms 轮询，正常只会有 1~2 条在队列里；这个上限只是"没人轮询时不许无限涨"
+ * 的兜底（宿主没启动 / 扩展已停用期间的事件会被丢弃——那些事件本来也没人接）。
+ */
+const HOST_EVENT_QUEUE_LIMIT = 512
+
+let hostEventSeq = 0
+const hostEventQueue: HostEventEntry[] = []
+
+/**
+ * 记一条 main 侧事件，等宿主经 `host.event.poll` 取走。
+ *
+ * 为什么是队列 + 游标而不是直接推送：main → 宿主需要一个协议信封，本卡不动协议
+ * （`runtime.ts` 明确丢弃 `event` 信封），所以按裁定 R65 用**游标轮询**降级——
+ * 宿主侧被隔离在 `HostEventSource` 窄接口后面，将来换推送只改那一层。
+ */
+function enqueueHostEvent(channel: string, payload: unknown, extId?: string): void {
+  hostEventSeq += 1
+  const entry: HostEventEntry = { seq: hostEventSeq, channel, payload }
+  if (extId !== undefined) entry.extId = extId
+  hostEventQueue.push(entry)
+  while (hostEventQueue.length > HOST_EVENT_QUEUE_LIMIT) hostEventQueue.shift()
+}
+
+/** 取一个参数对象（宿主 RPC 的 `params` 允许任意形状；坏形状当空对象处理，由各 handler 自己报错） */
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+/** 错误 → 一行文本（与 `skills`/既有 IPC handler 的 `err instanceof Error ? err.message : String(err)` 同口径） */
+function describeThrown(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** 宿主窗口能力的**目标窗口**：与 v1 的 `window:action` 同口径（焦点窗口优先，否则主窗口） */
+function hostTargetWindow(): BrowserWindow | null {
+  const focused = BrowserWindow.getFocusedWindow()
+  if (focused && !focused.isDestroyed()) return focused
+  const main = getMainWindow()
+  return main && !main.isDestroyed() ? main : null
+}
+
+/** 主窗口（任务栏进度、通知点击聚焦、事件源都只认它） */
+function hostMainWindow(): BrowserWindow | null {
+  const main = getMainWindow()
+  return main && !main.isDestroyed() ? main : null
+}
+
+/* -------------------------------------------------------------------------------------------- */
+/* EH-B3a：宿主通知与密钥的私有实现                                                               */
+/* -------------------------------------------------------------------------------------------- */
+
+/**
+ * 宿主发起的系统通知（`api.notification.show` 走宿主 → main）。
+ *
+ * 与 `registerNotificationIpc()` 的区别只有"点击事件的去处"：那边的点击 `broadcast` 给渲染进程
+ * （渲染侧宿主分发 `onClick`），这边进 {@link enqueueHostEvent} 的队列等宿主的轮询取走
+ * ——回调函数过不了 RPC，只能用 `notifId` 关联。
+ *
+ * 存活引用表必须持有强引用（同 `src/main/notification.ts` 的两条理由）：对象被 GC 会让点击
+ * 回调丢失；扩展停用时也要能关掉它的通知。{@link closeHostNotifications} 由既有的
+ * `extension:cleanup` 一起调用。
+ */
+const hostNotifications = new Map<number, { notification: Notification; extId: string }>()
+let hostNotificationSeq = 0
+
+/** 关闭并清理某扩展经宿主发出的全部通知（扩展停用/卸载时调用） */
+function closeHostNotifications(extId: string): void {
+  for (const [id, entry] of [...hostNotifications]) {
+    if (entry.extId !== extId) continue
+    entry.notification.close()
+    hostNotifications.delete(id)
+  }
+}
+
+/**
+ * 通知图标解析（与 `src/main/notification.ts` 的 `resolveIcon` 同源）。
+ *
+ * ⚠️ 本卡的**文件所有权**只允许改 `index.ts`，因此这里逐字保留同一套解析规则
+ * （`data:` / `app://` / `http(s)` / 本地路径 + 解析失败则忽略图标）；改一处必须改两处。
+ */
+async function resolveHostNotificationIcon(
+  icon?: string
+): Promise<Electron.NativeImage | undefined> {
+  if (!icon) return undefined
+  try {
+    if (icon.startsWith('data:')) {
+      const image = nativeImage.createFromDataURL(icon)
+      return image.isEmpty() ? undefined : image
+    }
+    if (icon.startsWith('app://') || icon.startsWith('http:') || icon.startsWith('https:')) {
+      const response = await fetch(icon)
+      const buffer = Buffer.from(await response.arrayBuffer())
+      const image = nativeImage.createFromBuffer(buffer)
+      return image.isEmpty() ? undefined : image
+    }
+    const image = nativeImage.createFromPath(icon)
+    return image.isEmpty() ? undefined : image
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 密钥文件（`<userData>/secrets.json`，key = `<扩展id>:<键>`，值是 safeStorage 加密后的 base64）。
+ *
+ * ⚠️ 与 `src/main/secrets.ts` **同一份文件格式**：宿主与渲染侧扩展共用同一个密钥库是**有意**的
+ * （迁移期同一扩展可能在两边跑，切换宿主后不能"密钥全丢"）。同样受文件所有权限制只能在本文件
+ * 里重写，规则保持逐字一致；`test/extension-host-host-main.test.ts` 有一条源码门禁断言
+ * 两处都走 `safeStorage`（防止有人日后把它换成明文实现）。
+ */
+function hostSecretsPath(): string {
+  return join(app.getPath('userData'), 'secrets.json')
+}
+
+function loadHostSecrets(): Record<string, string> {
+  try {
+    return JSON.parse(readFileSync(hostSecretsPath(), 'utf8')) as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+function saveHostSecrets(data: Record<string, string>): void {
+  writeFileSync(hostSecretsPath(), JSON.stringify(data, null, 2), 'utf8')
+}
+
+function hostSecretsKeyOf(extId: string, key: string): string {
+  return `${extId}:${key}`
+}
+
+/**
+ * 系统加密是否**真**可用（同 `src/main/secrets.ts` 的 fail-closed 判定）：
+ * Linux 上 `isEncryptionAvailable()` 可能为 true 而后端回落 `basic_text`（明文存储），
+ * 因此额外看 `getSelectedStorageBackend()`；查到 `basic_text` 视为不可用。
+ */
+function hostEncryptionUsable(): boolean {
+  if (!safeStorage.isEncryptionAvailable()) return false
+  const backend = (safeStorage as unknown as { getSelectedStorageBackend?: () => string })
+    .getSelectedStorageBackend
+  if (typeof backend === 'function') {
+    try {
+      if (backend.call(safeStorage) === 'basic_text') return false
+    } catch {
+      // 非 Linux 平台无此 API 或调用失败：按 isEncryptionAvailable 的结果处理
+    }
+  }
+  return true
+}
 
 /**
  * 文件是否存在（EH-B2 的 `host.pythonRuntime` 用：解释器与脚本都要先自证存在，
@@ -199,6 +393,9 @@ app.whenReady().then(() => {
   // 扩展停用/卸载/重载时清理其主进程资源（定时器 + 数据库连接 + 文件监听 + 系统通知 + IPC 通道 + Python 进程）
   ipcMain.handle('extension:cleanup', (_e, extId: string): void => {
     cleanupExtensionResources(String(extId))
+    // EH-B3a：宿主经 RPC 发出的通知不在 `notification.ts` 的引用表里，得单独关
+    // （否则扩展停用后旧通知被点击仍会往已停用的扩展投事件）
+    closeHostNotifications(String(extId))
   })
 
   // 更新事件广播到所有窗口（渲染进程扩展订阅）
@@ -220,6 +417,10 @@ app.whenReady().then(() => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('update:event', payload)
     }
+    // EH-B3a：同一份载荷也进宿主事件队列（`api.update.onEvent` 的订阅者经轮询取走）。
+    // 更新事件是**进程级**的，不带 extId（广播给所有订阅了 onEvent 的扩展）——与 v1 的
+    // `window.events.on('update:event')` 语义一致。
+    enqueueHostEvent(HOST_MAIN_EVENT_CHANNELS.updateEvent, payload)
   })
 
   app.on('browser-window-created', (_, window) => {
@@ -387,6 +588,324 @@ app.whenReady().then(() => {
       }
     }
   )
+
+  /* ------------------------------------------------------------------------------------------ */
+  /* EH-B3a：主进程类能力族（宿主 → main）。每条能力一个 handler，实现复用既有 main 模块。          */
+  /*                                                                                            */
+  /* 约定（与主机能力文件一致）：`res.result` 就是扩展 API 的返回形状——`{ok:false}` 型能力保持         */
+  /* `{ok, error?}`，`window`/`secrets` 这类按值/按抛错的能力用 `{ok, value?}`。宿主负责翻译成         */
+  /* v1 的语义（见 `src/renderer/src/core/host.ts` 的既有分类），main 不做二次判断。                  */
+  /* ------------------------------------------------------------------------------------------ */
+
+  // ---- window(7)：窗口动作 / 状态 / 任务栏进度。目标窗口口径与 `window:action` 一致 ----
+  starter.registerMethod(HOST_MAIN_METHODS.windowMinimize, () => {
+    const win = hostTargetWindow()
+    if (!win)
+      return { ok: false, error: 'window.minimize 未执行：没有可用窗口（主窗口可能正在关闭）' }
+    // 与 `window:action` 同规则：主窗口不在任务栏显示，有托盘就静默收进托盘（ADR-0019 决策 5）
+    if (isTrayActive()) win.hide()
+    else win.minimize()
+    return { ok: true }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.windowToggleMaximize, () => {
+    const win = hostTargetWindow()
+    if (!win) {
+      return {
+        ok: false,
+        error: 'window.toggleMaximize 未执行：没有可用窗口（主窗口可能正在关闭）'
+      }
+    }
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+    return { ok: true }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.windowClose, () => {
+    const win = hostTargetWindow()
+    if (!win) return { ok: false, error: 'window.close 未执行：没有可用窗口（主窗口可能正在关闭）' }
+    win.close()
+    return { ok: true }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.windowIsMaximized, () => {
+    const win = hostTargetWindow()
+    if (!win)
+      return { ok: false, error: 'window.isMaximized 失败：没有可用窗口（主窗口可能正在关闭）' }
+    return { ok: true, value: win.isMaximized() }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.windowIsFocused, () => {
+    const win = hostTargetWindow()
+    if (!win)
+      return { ok: false, error: 'window.isFocused 失败：没有可用窗口（主窗口可能正在关闭）' }
+    return { ok: true, value: win.isFocused() }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.windowSetProgressBar, (params: unknown) => {
+    const progress = asRecord(params).progress
+    // 合法数字越界按 v1 钳到 0~1；`NaN`/`Infinity`/非数字直接拒绝（v1 会把 NaN 交给 Electron，
+    // 行为随平台不同——那属于静默的未定义行为，明确报错更好排查）
+    if (progress !== null && (typeof progress !== 'number' || !Number.isFinite(progress))) {
+      return {
+        ok: false,
+        error: 'window.setProgressBar 的 progress 必须是 0~1 的有限数字或 null'
+      }
+    }
+    const win = hostMainWindow()
+    if (!win) {
+      return { ok: false, error: 'window.setProgressBar 未执行：主窗口不存在（可能正在关闭）' }
+    }
+    if (progress === null) win.setProgressBar(-1)
+    else win.setProgressBar(Math.min(1, Math.max(0, progress)))
+    return { ok: true }
+  })
+
+  // ---- overlay(4)：**复用** appWindow.ts 的真实实现（越权判定 / app:// 校验 / 钳位都在里面）----
+  starter.registerMethod(HOST_MAIN_METHODS.overlayCreate, (params: unknown) => {
+    const record = asRecord(params)
+    return createOverlayWindow(record.extId, record.request)
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.overlayDestroy, (params: unknown) => {
+    const record = asRecord(params)
+    return destroyOverlay(record.extId, record.id)
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.overlaySetMouseThrough, (params: unknown) => {
+    const record = asRecord(params)
+    return setOverlayMouseThrough(record.extId, record.id, record.through)
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.overlaySetPosition, (params: unknown) => {
+    const record = asRecord(params)
+    return setOverlayPosition(record.extId, record.id, record.x, record.y)
+  })
+
+  // ---- dialog(3)：与 `registerExtIpc()` 的 dialog:* 同源（属性归一/目录模式复用同一对纯函数）----
+  starter.registerMethod(HOST_MAIN_METHODS.dialogOpen, async (params: unknown) => {
+    const opts = asRecord(params).opts as DialogOpenOptions | undefined
+    try {
+      const properties = normalizeDialogProperties(opts)
+      // 目录模式下丢弃 filters：Electron 不对目录应用过滤器
+      const filters = isDirectoryProperties(properties) ? undefined : opts?.filters
+      const win = BrowserWindow.getFocusedWindow()
+      const result = win
+        ? await dialog.showOpenDialog(win, { title: opts?.title, filters, properties })
+        : await dialog.showOpenDialog({ title: opts?.title, filters, properties })
+      return { ok: true, filePaths: result.filePaths, canceled: result.canceled }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.dialogSave, async (params: unknown) => {
+    const opts = asRecord(params).opts as
+      | {
+          title?: string
+          defaultName?: string
+          filters?: Array<{ name: string; extensions: string[] }>
+        }
+      | undefined
+    try {
+      const win = BrowserWindow.getFocusedWindow()
+      const result = win
+        ? await dialog.showSaveDialog(win, {
+            title: opts?.title,
+            defaultPath: opts?.defaultName,
+            filters: opts?.filters
+          })
+        : await dialog.showSaveDialog({
+            title: opts?.title,
+            defaultPath: opts?.defaultName,
+            filters: opts?.filters
+          })
+      return { ok: true, filePath: result.filePath ?? undefined, canceled: result.canceled }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.dialogMessage, async (params: unknown) => {
+    const opts = asRecord(params).opts as
+      | {
+          type?: 'info' | 'warning' | 'error' | 'question'
+          title?: string
+          message?: string
+          detail?: string
+          buttons?: string[]
+        }
+      | undefined
+    try {
+      const win = BrowserWindow.getFocusedWindow()
+      const options = {
+        type: opts?.type ?? 'info',
+        title: opts?.title,
+        message: opts?.message ?? '',
+        detail: opts?.detail,
+        buttons: opts?.buttons && opts.buttons.length > 0 ? opts.buttons : undefined
+      }
+      const result = win
+        ? await dialog.showMessageBox(win, options)
+        : await dialog.showMessageBox(options)
+      return { ok: true, response: result.response }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+
+  // ---- shell(2)：与 `registerExtIpc()` 的 shell:* 同源（http/https 白名单在 main 里）----
+  starter.registerMethod(HOST_MAIN_METHODS.shellOpenExternal, async (params: unknown) => {
+    const url = asRecord(params).url
+    try {
+      if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+        return { ok: false, error: 'openExternal 仅支持 http/https 链接' }
+      }
+      await shell.openExternal(url)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.shellOpenPath, async (params: unknown) => {
+    const target = asRecord(params).path
+    try {
+      if (typeof target !== 'string' || !target) return { ok: false, error: 'path 必填' }
+      const errorMessage = await shell.openPath(target)
+      return errorMessage ? { ok: false, error: errorMessage } : { ok: true }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+
+  // ---- notification(1)：`onClick` 留在宿主，main 只把 notifId 发进事件队列 ----
+  starter.registerMethod(HOST_MAIN_METHODS.notificationShow, async (params: unknown) => {
+    const record = asRecord(params)
+    const extId = typeof record.extId === 'string' ? record.extId : ''
+    const opts = asRecord(record.opts)
+    try {
+      if (extId === '') {
+        return { ok: false, error: '缺少扩展 id（宿主接线错误：通知必须由宿主绑定扩展 id 调用）' }
+      }
+      if (typeof opts.title !== 'string' || opts.title.trim() === '') {
+        return { ok: false, error: '通知 title 必填' }
+      }
+      const icon = await resolveHostNotificationIcon(
+        typeof opts.icon === 'string' ? opts.icon : undefined
+      )
+      const notification = new Notification({
+        title: opts.title,
+        body: typeof opts.body === 'string' ? opts.body : '',
+        icon
+      })
+      const notifId = ++hostNotificationSeq
+      notification.on('click', () => {
+        // 已被清理（扩展停用/卸载）→ 忽略点击，不再往已停用的扩展投事件
+        if (!hostNotifications.has(notifId)) return
+        // 与 `registerNotificationIpc()` 一致：点击先聚焦主窗口，再把事件交给扩展
+        const main = hostMainWindow()
+        if (main) {
+          if (main.isMinimized()) main.restore()
+          main.focus()
+        }
+        enqueueHostEvent(
+          HOST_MAIN_EVENT_CHANNELS.notificationClick,
+          { notifId, title: opts.title },
+          extId
+        )
+      })
+      notification.on('close', () => {
+        hostNotifications.delete(notifId)
+      })
+      notification.show()
+      hostNotifications.set(notifId, { notification, extId })
+      return { ok: true, id: notifId }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+
+  // ---- secrets(3)：仍然**只经 safeStorage**（fail-closed：加密不可用就报错，绝不落明文）----
+  starter.registerMethod(HOST_MAIN_METHODS.secretsGet, (params: unknown) => {
+    const record = asRecord(params)
+    const extId = typeof record.extId === 'string' ? record.extId : ''
+    const key = typeof record.key === 'string' ? record.key : ''
+    try {
+      if (extId === '' || key === '') return { ok: false, error: 'secrets.get 需要 extId 与 key' }
+      if (!hostEncryptionUsable()) return { ok: false, error: '系统加密不可用（safeStorage）' }
+      const encrypted = loadHostSecrets()[hostSecretsKeyOf(extId, key)]
+      if (encrypted === undefined) return { ok: true, value: undefined }
+      return {
+        ok: true,
+        value: safeStorage.decryptString(Buffer.from(encrypted, 'base64'))
+      }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.secretsSet, (params: unknown) => {
+    const record = asRecord(params)
+    const extId = typeof record.extId === 'string' ? record.extId : ''
+    const key = typeof record.key === 'string' ? record.key : ''
+    const value = record.value
+    try {
+      if (extId === '' || key === '') return { ok: false, error: 'secrets.set 需要 extId 与 key' }
+      if (typeof value !== 'string')
+        return { ok: false, error: 'secrets.set 的 value 必须是字符串' }
+      if (!hostEncryptionUsable()) return { ok: false, error: '系统加密不可用（safeStorage）' }
+      const data = loadHostSecrets()
+      data[hostSecretsKeyOf(extId, key)] = safeStorage.encryptString(value).toString('base64')
+      saveHostSecrets(data)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.secretsDelete, (params: unknown) => {
+    const record = asRecord(params)
+    const extId = typeof record.extId === 'string' ? record.extId : ''
+    const key = typeof record.key === 'string' ? record.key : ''
+    try {
+      if (extId === '' || key === '')
+        return { ok: false, error: 'secrets.delete 需要 extId 与 key' }
+      const data = loadHostSecrets()
+      delete data[hostSecretsKeyOf(extId, key)]
+      saveHostSecrets(data)
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: describeThrown(error) }
+    }
+  })
+
+  // ---- update：只有 v1 里**没有**提供者门控的两项可搬（`getVersion` / 事件）----
+  // 带门控的 resolveFeed/check/download/install 在宿主里是显式桩（裁定 R64），这里不注册方法。
+  starter.registerMethod(HOST_MAIN_METHODS.updateVersion, () => ({
+    ok: true,
+    value: app.getVersion()
+  }))
+
+  // ---- proxy.get：与 v1 同源（渲染侧 `network.proxy` 经 `proxy:apply` 推入 main 的镜像）----
+  starter.registerMethod(HOST_MAIN_METHODS.proxyGet, () => ({
+    ok: true,
+    value: currentProxy() ?? null
+  }))
+
+  // ---- 事件轮询（R65 的降级通道）：cursor=null 只回当前游标，不回放历史 ----
+  starter.registerMethod(HOST_MAIN_METHODS.eventsPoll, (params: unknown) => {
+    const record = asRecord(params)
+    const extId = typeof record.extId === 'string' ? record.extId : ''
+    const rawCursor = record.cursor
+    const cursor =
+      typeof rawCursor === 'number' && Number.isInteger(rawCursor) && rawCursor >= 0
+        ? rawCursor
+        : null
+    if (cursor === null) return { cursor: hostEventSeq, events: [] }
+    // 广播事件（extId 缺省）所有订阅者都收；定向事件只给对应扩展（通知点击）
+    const events = hostEventQueue
+      .filter((entry) => entry.seq > cursor && (entry.extId === undefined || entry.extId === extId))
+      .map((entry) => ({ channel: entry.channel, payload: entry.payload }))
+    return { cursor: hostEventSeq, events }
+  })
+
+  // ---- 聚焦事件源：主窗口的聚焦/失焦（子窗口、overlay 的聚焦不算 `api.window` 的语义）----
+  app.on('browser-window-focus', (_event, win) => {
+    if (win !== getMainWindow()) return
+    enqueueHostEvent(HOST_MAIN_EVENT_CHANNELS.windowFocus, { focused: true })
+  })
+  app.on('browser-window-blur', (_event, win) => {
+    if (win !== getMainWindow()) return
+    enqueueHostEvent(HOST_MAIN_EVENT_CHANNELS.windowFocus, { focused: false })
+  })
 
   // 系统托盘（仅 Windows）：右键 打开/设置/关于/退出，双击打开（ADR-0019 决策 3/4）
   const SETTINGS_NAV_ID = 'settings.main' // 内置 settings 扩展声明的导航项 id

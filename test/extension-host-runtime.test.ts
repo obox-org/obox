@@ -1152,6 +1152,11 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'appInfo.get',
     'clipboard.readText',
     'clipboard.writeText',
+    // EH-B3a：主进程类能力族（dialog 3 / notification 1 / overlay 4 / proxy.get /
+    // secrets 3 / shell 2 / update 2 / window 7）
+    'dialog.showMessageBox',
+    'dialog.showOpenDialog',
+    'dialog.showSaveDialog',
     'env.arch',
     'env.getOboxVersion',
     'env.language',
@@ -1182,18 +1187,42 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'ipc.request',
     'log',
     'net.fetch',
+    'notification.show',
+    'overlay.create',
+    'overlay.destroy',
+    'overlay.setMouseThrough',
+    'overlay.setPosition',
+    'proxy.get',
     'python.run',
+    'secrets.delete',
+    'secrets.get',
+    'secrets.set',
+    'shell.openExternal',
+    'shell.openPath',
     'sqlite.open',
     'timer.clearInterval',
     'timer.clearTimeout',
     'timer.setInterval',
-    'timer.setTimeout'
+    'timer.setTimeout',
+    'update.getVersion',
+    'update.onEvent',
+    'window.close',
+    'window.isFocused',
+    'window.isMaximized',
+    'window.minimize',
+    'window.onFocusChanged',
+    'window.setProgressBar',
+    'window.toggleMaximize'
   ])
 
   const stubs = rows.filter((row) => row.status === 'stub')
   // 行数与分布锁死：阶段 B 把某个桩落地时这里会失败，提醒同步对照表（而不是悄悄少一行）
-  assert.equal(rows.length, 99, '对照表共 99 项（38 已实现 + 61 桩）')
-  assert.equal(stubs.length, 61, '桩 61 项（阶段 B 待迁移；EH-B1 已带走 5 项、EH-B2 带走 16 项）')
+  assert.equal(rows.length, 99, '对照表共 99 项（61 已实现 + 38 桩）')
+  assert.equal(
+    stubs.length,
+    38,
+    '桩 38 项（阶段 B 待迁移；EH-B1 带走 5 项、EH-B2 带走 16 项、EH-B3a 带走 23 项）'
+  )
   assert.equal(
     rows.length,
     implemented.length + stubs.length,
@@ -1221,7 +1250,9 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
 
   // 同步桩也当场抛（不是返回假值）
   assert.throws(() => built.api.statusBar.setText('a', 'b'), /尚未迁移/)
-  assert.throws(() => built.api.window.onFocusChanged(() => {}), /尚未迁移/)
+  // EH-B3a 之后 `window.onFocusChanged` 已是真实现（订阅类 API 不抛错，只是没有事件源）
+  assert.doesNotThrow(() => built.api.window.onFocusChanged(() => {}).dispose())
+  assert.throws(() => built.api.output.createChannel('x'), /尚未迁移/)
 })
 
 /** 按点分路径从 api 对象取成员 */
