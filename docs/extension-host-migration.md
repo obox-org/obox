@@ -80,18 +80,22 @@
 | A | A1 协议 / A2 启动器与通道 / A3 宿主运行时 / A4 渲染侧桥 + 回退开关 | ✅ 已合并 | 17 / 82 |
 | B | B1 IO 族（fs.watch、net.fetch、env、clipboard） | ✅ 已合并 | 22 / 77 |
 | B | B2 进程与存储族（ipc、python、sqlite） | ✅ 已合并 | 38 / 61 |
-| B | B3a 主进程类（window/overlay/dialog/shell/notification/secrets/update/proxy） | ✅ 已合并 | **61 / 38** |
-| B | B3b 渲染侧数据面（statusBar/commands/views/settings/theme/i18n/app/stores/on·emit + ui/output + update 门控） | ⏳ 待做 | — |
+| B | B3a 主进程类（window/overlay/dialog/shell/notification/secrets/update/proxy） | ✅ 已合并 | 61 / 38 |
+| B | B3b-1 注册面数据面（statusBar/commands/views/settings/theme/i18n/app/memento/on·emit）+ **修端口接缝缺陷** | ✅ 已合并 | 89 / 10 |
+| B | B3b-2 状态与 UI 面（`ui`×5、`output`、`update` 门控×4）+ **修桥接缝缺陷** + R69 env 注入 + R70 update 主进程注册 | ✅ 已合并 | **99 / 0** |
 | C | C1 manifest（`activationEvents` + apiVersion 3）/ C2 激活与热装卸 | ⏳ 待做 | — |
 | D | D1 文档全量重写 / D2 README / D3–D7 五个扩展 / D8 实机验证 / D9 obox 2.0.0 | ⏳ 待做 | — |
+
+> **阶段 A + B 已全部完成：`api` 的 99 项能力全部在宿主进程落地（0 桩）。**
+> 但**用户扩展仍跑在渲染进程**——回退开关 `OBOX_EXTENSION_HOST` 默认关，真正的"搬进去"要等 C（激活事件与清单门槛）与 D（扩展改造与发版）。
 
 ## 技术债登记（显式记录，避免"降级实现"悄悄变成长期方案）
 
 | # | 债 | 来源 | 退场条件 |
 | --- | --- | --- | --- |
 | 1 | **main→宿主用轮询代替推送**（`host.event.poll`，250ms 游标轮询） | R65 / B3a：协议没有 main→host 的信封，`runtime.ts` 会丢弃 `event` | 给协议加 `mainEvent` 信封（`PROTOCOL_VERSION` 1→2）后换成真推送；宿主侧已隔离在 `HostEventSource` 窄接口后，换实现只动一处 |
-| 2 | **`update` 的 4 条能力仍是桩**（`resolveFeed`/`check`/`download`/`install`） | R64 / B3a：门控真相 `update.provider` 只在渲染侧 | EH-B3b 由渲染侧权威判定（不把选择状态搬到 main） |
-| 3 | **`ui`(5) + `output.createChannel`(1) 是桩** | R67 / B3a：`uiStore`/`outputStore` 在渲染侧，main 不会渲染 UI | EH-B3b 的 host-renderer 数据面 |
+| 2 | ~~**`update` 的 4 条能力仍是桩**~~ **已退场（B3b-2）**：由渲染侧 `updaterStore.isActive` 权威判定（`ui.updateGate`），放行后宿主真调 main 的 `host.update.*`（R70 把 `updater.ts` 的内联 handler 抽成具名导出，渲染侧与宿主共用一份逻辑） | R64 / B3a → B3b-2 退场 | —（已关闭） |
+| 3 | ~~**`ui`(5) + `output.createChannel`(1) 是桩**~~ **已退场（B3b-2）**：渲染侧 `RpcServer` + 宿主 `RpcClient`（同一 host-renderer 端口），`output` 走事件落 `outputStore` | R67 / B3a → B3b-2 退场 | —（已关闭） |
 | 4 | **`ext.ts`/`secrets.ts`/`notification.ts` 的 handler 内联未导出** ⇒ B3a 在 `index.ts` 逐字重写四段（含 `safeStorage` 判定） | B3a 越界约束 | 做一次"main 能力函数导出化"重构，两处共用一份（现有门禁只防"明文回归"，防不了逻辑漂移） |
 | 5 | **`proxy.get` 改为 1 秒 TTL 缓存**（v1 是每次读最新） | B3a：该 API 是同步签名 × 异步 RPC | 协议支持同步快照或把 `proxy.get` 改成异步（属扩展 API 面变更，需升 apiVersion） |
 | 6 | **宿主发起的通知不遵循「设置-通知」的逐扩展开关** | B3a：`stateStore.isNotificationDisabled` 在渲染侧 | B3b/settings 卡把开关状态交给宿主（或由渲染侧代发） |
@@ -100,10 +104,12 @@
 | 9 | **sidecar 分帧按字节计 `Content-Length`**（不是字符数） | B2（测试脚本踩过） | 写进扩展作者文档的注意事项（D1） |
 | 10 | **`ExtensionApiOptions.extensionDataDir` 已成纯未读字段** | B2 / R63 | 下次动 `runtime.ts` 时连同实参一起删（各 1 行） |
 | 11 | **`api-reference.md:576/:667` 的代理表述过时**（"环境变量无效"、"代理是 session 级"） | B1（宿主侧改为 main 优先 + env 兜底 + 宿主内自应用） | D1 文档重写时改 |
-| 12 | **宿主 fork 时没传 `OBOX_LOCALE`/`OBOX_APP_NAME`/`OBOX_APP_VERSION`** ⇒ 宿主侧 `api.env.language` 恒 `zh`、`api.appInfo` 恒 `obox 0.0.0`（B3b-1 只在 settings 快照到达后校准 i18n 语言） | B3b-1 残留 | 主进程 fork 时注入 env（或把 app 版本加进 `init` 信封 —— 那要升 `PROTOCOL_VERSION`）。**必须在 D 阶段发版前修** |
+| 12 | ~~**宿主 fork 时没传 `OBOX_LOCALE`/`OBOX_APP_NAME`/`OBOX_APP_VERSION`**~~ **已退场（B3b-2 / R69）**：main fork 时注入三项 env（覆盖宿主机器同名 env），宿主 `api.appInfo`/`api.env.language` 一开始就正确，不再依赖 settings 快照校准 | B3b-1 → B3b-2 退场 | —（已关闭） |
 | 13 | **宿主扩展创建的 overlay 收不到 `app.onMessage`**（`overlayOwners` 由渲染侧 `api.overlay.create` 回填，宿主模式创建走 `capabilities/host-main.ts`） | B3a + B3b-1（原 #7 的具体化） | B3b-2 或 D：`host.overlay.create` 成功后把 `(overlayId → extId)` 同步给渲染侧 |
 | 14 | **`api.executeCommand` 无法执行内置扩展的命令**（内置扩展仍在渲染侧，宿主命令表只有用户扩展） | B3b-1 残留（双运行时后的必然结果） | 若要支持，命令表需双向（渲染侧命令注册也同步给宿主一份） |
 | 15 | **`on`/`emit` 不再跨运行时**：内置扩展（渲染侧）与用户扩展（宿主）之间不再互通 | B3b-1 | 若确有跨运行时事件需求，做一条 host-renderer 事件桥 |
 | 16 | **`workspaceState` 与 `globalState` 现在是真隔离**（v1 两者指向同一 store） | B3b-1（**有意修正**的语义差异） | 无需退场，但要写进 D1 迁移说明：依赖"两者其实同一份"的扩展会感知到差异 |
 | 17 | **接缝缺陷的教训（已修，防复发）**：A2 把 `port1` 放进 `init` 的 transfer 列表、A3 的端口适配器只读 `event.data` ⇒ **真机上 host-renderer 端口从未到达宿主**，而两侧单测各自用假件全绿 | B3b-1 发现（R68 修复） | 已补 7 条接缝测试（含"端口为空 ⇒ `EH_NOT_READY`"与真实 runtime 端到端）。**后续每张跨侧卡都必须带接缝测试** |
+| 18 | **桥接缝（已修，防复发）**：A4 的 `extensionHostBridge` 对宿主发来的 `req` **一律回 `EH_INTERNAL`**（"A4 不支持宿主发起的 RPC"）⇒ 宿主的每条 `ui.*`/`updateGate` 在真机上都会拿到 `EH_INTERNAL` 或与正确 `res` 竞速 | B3b-2 发现（R71 修复：`setHostRequestHandler()` 接管，未注册时行为不变；只挂一条路径防同 id 双回包，附 3 条测试） | 同 #17：**双向 RPC 必须各有一条"真回环"用例**，不能只测单向 |
+| 19 | `output` channel 尚未并入 `EH_EVENT_CHANNELS` 常量（协议不设白名单，故不影响运行） | B3b-2 | D1 顺手补齐一行 |
 

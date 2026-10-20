@@ -31,14 +31,56 @@
  * 未知 channel / 未知子操作 / 畸形信封 / 载荷形状不对：**记日志 + 丢弃**，绝不抛错——消费者是
  * 宿主的对端，一条脏数据不该把整个界面的事件循环打断（`test/extension-host-ui-plane.test.ts`
  * 有专门的容错用例）。
+ *
+ * ---
+ *
+ * # EH-B3b-2 · 状态与 UI 面（本卡追加）
+ *
+ * 本卡让渲染侧从"只收数据"变成**也当服务端**：`ui`(5) / `output.createChannel`(1) / `update` 门控(4)
+ * 的渲染与判定都在这里，宿主只是发起方（宿主侧见 `capabilities/ui-plane.ts` 的 `RpcClient`）。
+ *
+ * ## 新增的两件事
+ *
+ * 1. **一个渲染侧 `RpcServer`**（复用 `src/extension-host/rpc.ts`：纯模块、无 Node 依赖，main 早已
+ *    复用同一份）。它挂在**同一个** `host-renderer` 端口上，收宿主发来的 `req`/`cancel`，回
+ *    `res`/`err`。method 见 {@link HOSTED_RENDERER_RPC}（与宿主侧 `UI_RENDERER_RPC` 逐字一致）。
+ *    **方向与前三个 `ui.*` 相反**：那三条是"渲染侧问宿主"（走 A4 的桥），这八条是"宿主问渲染侧"。
+ * 2. **`output` 事件通道**（{@link HOSTED_UI_EVENT_CHANNELS}）：宿主 `createChannel` 之后把
+ *    通道 id/名称推过来，这里落到 `outputStore`；`append`/`appendLine`/`show`/`clear`/`dispose`
+ *    也走同一条通道。通道 id 由宿主生成，本文件维护"宿主 id ↔ 渲染侧句柄"的映射
+ *    （与 B3b-1 的 `runtimeStatusBarItems` 同一手法）。
+ *
+ * ## 语义**照抄 v1**（`core/host.ts` 的 `showUiModal` / `uiStore` / `updaterStore`）
+ *
+ * - 模态框取消 ⇒ `{value:null}`（宿主翻成 `undefined`）；**超时由宿主侧计时**（60s，v1 在 main 里）；
+ * - `showMessage` ⇒ `uiStore.showToast`（v1 逐字同一个调用）；
+ * - `withProgress` ⇒ `uiStore.showProgress/hideProgress`（v1 是同一个单槽，所以新进度会**顶掉**旧
+ *   的并把旧的判为取消——这是 v1 "单槽"语义的显式化，见 `cancelProgress`）；
+ * - `updateGate` ⇒ `updaterStore.isActive(extId)`（**唯一真相**），拒绝文案照抄 v1。
+ *
+ * ## 窗口不在时**响亮**
+ *
+ * 渲染侧每个 UI handler 进来先过 {@link HOSTED_UI_WINDOW_MISSING} 的判定（`hasWindow()`，
+ * 缺省看 `window`/`document` 是否存在，单测可注入）。没有窗口 ⇒ 回 `EH_NOT_READY` + 中文错误，
+ * 宿主侧当场抛，不会让扩展的 Promise 永远挂着。
  */
 import {
   EH_EVENT_CHANNELS,
+  EhProtocolError,
   createEventEnvelope,
   validateEnvelope,
-  type Envelope
+  type Envelope,
+  type RequestEnvelope
 } from '../../../shared/extensionHostProtocol'
-import type { AppRegistration, SettingsPage, TreeItem, TreeViewProvider } from '../../../api'
+import type {
+  AppRegistration,
+  FormField,
+  QuickPickItem,
+  SettingsPage,
+  TreeItem,
+  TreeViewProvider
+} from '../../../api'
+import { RpcServer } from '../../../extension-host/rpc'
 import { appStore } from './appStore'
 import { extensionSettingsStore } from './extensionSettings'
 import {
@@ -46,10 +88,13 @@ import {
   isExtensionHostEnabled,
   readExtensionHostFlag
 } from './extensionHostBridge'
+import { outputStore } from './outputStore'
 import { registry, type RegisteredStatusBarItem } from './registry'
 import { STORAGE_KEY, parsePersistedState, stateStore } from './state'
 import { themeStore } from './theme'
 import { treeStore } from './treeStore'
+import { uiStore } from './uiStore'
+import { updaterStore } from './updaterStore'
 import { i18n } from '../i18n'
 
 /* -------------------------------------------------------------------------------------------- */
@@ -68,8 +113,49 @@ export const HOSTED_UI_PAYLOAD_VERSION = 1
 export const HOSTED_UI_RPC = {
   executeCommand: 'ui.executeCommand',
   treeChildren: 'ui.treeChildren',
-  appMessage: 'ui.appMessage'
+  appMessage: 'ui.appMessage',
+  /** EH-B3b-2：取消宿主侧的 `ui.withProgress`（宿主把它结算成 `EH_CANCELLED`） */
+  progressCancel: 'ui.progressCancel'
 } as const
+
+/**
+ * **宿主 → 渲染侧**的 RPC method（本卡新增，方向相反）。与宿主侧 `UI_RENDERER_RPC` 逐字一致，
+ * 由 `test/extension-host-ui-plane2.test.ts` 断言（跨侧 import 会把 `node:fs` 带进渲染包）。
+ */
+export const HOSTED_RENDERER_RPC = {
+  showMessage: 'ui.showMessage',
+  showQuickPick: 'ui.showQuickPick',
+  showInputBox: 'ui.showInputBox',
+  showForm: 'ui.showForm',
+  withProgress: 'ui.withProgress',
+  progressUpdate: 'ui.progressUpdate',
+  progressEnd: 'ui.progressEnd',
+  updateGate: 'ui.updateGate'
+} as const
+
+/** 本卡新增的 `event` channel（与宿主侧 `UI_PLANE_EVENT_CHANNELS` 逐字一致） */
+export const HOSTED_UI_EVENT_CHANNELS = {
+  output: 'output'
+} as const
+
+/** 渲染侧**没有窗口**时的中文错误（与宿主侧 `UI_WINDOW_MISSING` 同一句） */
+export const HOSTED_UI_WINDOW_MISSING =
+  '界面窗口不在：该 UI（quickPick / inputBox / form / withProgress / toast）必须由渲染进程的 ' +
+  'uiStore 渲染，但当前渲染侧没有可用窗口（主窗口正在销毁或页面已卸载）。请等主窗口恢复后重试；' +
+  '宿主模式下没有 v1 的"本地渲染"兜底，所以这里明确报错而不是静默等待。'
+
+/** 更新门控拒绝文案（与 v1 `core/host.ts` 的 `isProvider()` 逐字一致） */
+export const HOSTED_UPDATE_NOT_PROVIDER = '当前扩展不是生效的更新提供者（需在设置-更新中选择）'
+
+/** `outputStore.createChannel` 的返回句柄（结构类型：不为一个别名去改 store 的导出面） */
+type OutputChannelHandle = ReturnType<typeof outputStore.createChannel>
+
+/** 未知值 → 普通对象（宿主发来的 params 一定是纯数据，这里只做形状兜底） */
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+    ? (value as Record<string, unknown>)
+    : ({} as Record<string, unknown>)
+}
 
 /* -------------------------------------------------------------------------------------------- */
 /* 依赖接口（可注入，单测用假实现）                                                                */
@@ -98,6 +184,15 @@ export interface HostedUiTransport {
   request<T = unknown>(method: string, params?: unknown): Promise<T>
   /** 端口到达通知（可选：默认实现接 preload 的 `eh.onPort`；缺省时只在启动推一次快照） */
   onPort?(listener: () => void): () => void
+  /**
+   * 接管**宿主发起的反向 RPC**（EH-B3b-2；可选，返回注销函数）。
+   *
+   * 默认实现（`createWindowUiTransport`）接到 `core/extensionHostBridge` 的同名入口上——A4 的桥
+   * 收到 `req` 本来只会回 `EH_INTERNAL`，必须由本消费者的 `RpcServer` 接手，否则宿主的
+   * `ui.*` / `ui.updateGate` 在真机上永远拿不到结果。**单测的假通道不实现它**，于是
+   * `req` 走 `onEnvelope` 的原始信封路径（两条路径的语义一致，见 `handleEnvelope`）。
+   */
+  onHostRequest?(handler: (envelope: RequestEnvelope) => boolean): () => void
 }
 
 /**
@@ -130,6 +225,14 @@ export interface ExtensionHostConsumerOptions {
   readLocale?(): string
   /** 读当前主题 id（缺省 `themeStore.currentId`） */
   readThemeId?(): string
+  /**
+   * 渲染侧是否有可用窗口（EH-B3b-2）。
+   *
+   * 缺省看 `window` 与 `document` 是否存在。宿主问过来的 UI 请求（quickPick/inputBox/form/
+   * withProgress/toast）必须先过它：没有窗口时**回 `EH_NOT_READY` + 中文错误**，而不是让宿主
+   * 的 Promise 永远挂着（宿主侧没有 v1 的 `localFn` 本地兜底）。单测注入 `() => false` 即可覆盖。
+   */
+  hasWindow?(): boolean
 }
 
 /** 消费者的观察面 */
@@ -142,6 +245,14 @@ export interface ExtensionHostConsumer {
   pushSnapshot(): void
   /** 处理一条原始信封（入口也走它；测试直接调） */
   handleEnvelope(raw: unknown): void
+  /**
+   * 取消当前（或指定）进度任务（EH-B3b-2）：拆掉进度条并告诉宿主"这个 `ui.withProgress` 被放弃"，
+   * 宿主侧对应的 Promise 会以 `EH_CANCELLED` 失败。
+   *
+   * 谁会调它：进度 UI 的取消按钮（本卡不动 Vue 组件，先把它作为消费者 API 暴露）、窗口即将销毁、
+   * 以及"新的进度任务顶掉旧的"（`uiStore.progress` 在 v1 里就是单槽）。返回是否真的取消了一个。
+   */
+  cancelProgress(progressId?: string): boolean
   /** 诊断/测试：当前已落地的条目数 */
   stats(): {
     runtimeStatusBarItems: number
@@ -149,6 +260,16 @@ export interface ExtensionHostConsumer {
     treeProviders: number
     appMessageHandlers: number
   }
+  /**
+   * 诊断/测试：EH-B3b-2 的运行期计数（`stats()` 保持 B3b-1 的四个键不变——既有用例对它有
+   * `deepEqual`，不为新能力去改旧断言）。
+   */
+  uiRuntime(): {
+    outputChannels: number
+    progressActive: number
+  }
+  /** 诊断/测试：渲染侧 `RpcServer` 已注册的 method（排序） */
+  rendererRpcMethods(): string[]
 }
 
 /* -------------------------------------------------------------------------------------------- */
@@ -198,6 +319,16 @@ export interface HostedSettingsSnapshot {
   themeId: string
 }
 
+/** `output` 通道的统一信封体（EH-B3b-2；与宿主侧 `OutputPayload` 结构一致） */
+type OutputPayload =
+  | { v: 1; op: 'create'; extId: string; id: string; name: string }
+  | { v: 1; op: 'append'; extId: string; id: string; text: string }
+  | { v: 1; op: 'appendLine'; extId: string; id: string; text: string }
+  | { v: 1; op: 'show'; extId: string; id: string }
+  | { v: 1; op: 'clear'; extId: string; id: string }
+  | { v: 1; op: 'dispose'; extId: string; id: string }
+  | { v: 1; op: 'disposeExtension'; extId: string }
+
 /* -------------------------------------------------------------------------------------------- */
 /* 默认实现                                                                                      */
 /* -------------------------------------------------------------------------------------------- */
@@ -219,7 +350,11 @@ export function createWindowUiTransport(): HostedUiTransport {
       surface()?.onMessage(listener) ?? noop,
     request: <T = unknown>(method: string, params?: unknown): Promise<T> =>
       getExtensionHostBridge().request<T>(method, params),
-    onPort: (listener: () => void): (() => void) => surface()?.onPort(() => listener()) ?? noop
+    onPort: (listener: () => void): (() => void) => surface()?.onPort(() => listener()) ?? noop,
+    // 宿主发起的 `req` 默认会被 A4 的桥回 EH_INTERNAL（它没有这个方向）：把它接到桥的接管口上。
+    // 端口不在时桥同样不碰它（消费者根本没起来），不会留半条链路。
+    onHostRequest: (handler: (envelope: RequestEnvelope) => boolean): (() => void) =>
+      getExtensionHostBridge().setHostRequestHandler(handler)
   }
 }
 
@@ -258,12 +393,15 @@ function disabledConsumer(): ExtensionHostConsumer {
     stop: (): void => undefined,
     pushSnapshot: (): void => undefined,
     handleEnvelope: (): void => undefined,
+    cancelProgress: (): boolean => false,
     stats: () => ({
       runtimeStatusBarItems: 0,
       commands: 0,
       treeProviders: 0,
       appMessageHandlers: 0
-    })
+    }),
+    uiRuntime: () => ({ outputChannels: 0, progressActive: 0 }),
+    rendererRpcMethods: (): string[] => []
   }
 }
 
@@ -283,9 +421,16 @@ export function createExtensionHostConsumer(
   const readSettings = options.readSettings ?? readPersistedSettings
   const readLocale = options.readLocale ?? ((): string => String(i18n.global.locale.value ?? 'zh'))
   const readThemeId = options.readThemeId ?? ((): string => themeStore.currentId)
+  const hasWindow =
+    options.hasWindow ??
+    ((): boolean => typeof window !== 'undefined' && typeof document !== 'undefined')
 
   /** 宿主侧运行时状态栏项 id → 渲染侧注册表里的那条项 */
   const runtimeStatusBarItems = new Map<string, RegisteredStatusBarItem>()
+  /** 宿主侧输出通道 id → 渲染侧 `outputStore` 的句柄（EH-B3b-2） */
+  const outputChannels = new Map<string, { extId: string; handle: OutputChannelHandle }>()
+  /** 当前在显示的进度任务（`uiStore.progress` 是单槽，所以这里也只有一个） */
+  let activeProgress: { progressId: string; title: string } | null = null
   const traces = new Map<string, ExtensionTraces>()
   const offs: Array<() => void> = []
   let stopped = false
@@ -302,6 +447,32 @@ export function createExtensionHostConsumer(
     traces.set(extId, created)
     return created
   }
+
+  /**
+   * **渲染侧 RPC 服务端**（EH-B3b-2）：收宿主发来的 `req`/`cancel`，回 `res`/`err`。
+   *
+   * 与宿主侧 `ui-plane.ts` 的 `RpcServer` 是同一份实现（`src/extension-host/rpc.ts` 纯模块，
+   * main 早已复用）；`send` 走同一条 `host-renderer` 端口（`transport.post`）。
+   */
+  const uiServer = new RpcServer({
+    send: (envelope): void => {
+      // 端口没到时 `post` 返回 false：这是一条回包，丢了就丢了（宿主侧会有自己的超时），不能抛
+      const delivered = transport.post(envelope)
+      if (!delivered) logger.debug(`渲染侧回包 ${envelope.t} 没有发出去（端口未到）`)
+    },
+    log: (level, message, detail): void => {
+      logger[level](detail === undefined ? message : `${message}（${detail}）`)
+    }
+  })
+
+  /**
+   * 宿主发起的 `req` 是否由**桥的接管口**送进来（生产）还是由 `onEnvelope` 送来（单测假通道）。
+   *
+   * 两条路径都通向同一个 `uiServer`，但必须**只挂一条**：真机上 `window.eh.onMessage` 的每个
+   * 订阅者都会收到同一条 `req`，桥与消费者同时处理会造成"同一 id 两次回包"（宿主侧表现为
+   * `EH_INTERNAL` 与正确结果随机其一，比彻底不支持更难查）。
+   */
+  const usesHostRequestHook = typeof transport.onHostRequest === 'function'
 
   /* --------------------------------- 发给宿主：快照 --------------------------------- */
 
@@ -323,6 +494,200 @@ export function createExtensionHostConsumer(
     const delivered = transport.post(createEventEnvelope(EH_EVENT_CHANNELS.settings, payload))
     if (!delivered) {
       logger.debug('设置快照没有发出去（host-renderer 端口未到），等端口到达后再推')
+    }
+  }
+
+  /* ------------------------ 宿主 → 渲染侧请求（EH-B3b-2） ------------------------ */
+
+  /**
+   * UI 请求先过窗口判定：没有窗口 ⇒ `EH_NOT_READY` + 中文错误。
+   *
+   * 为什么必须在这里判（而不是让宿主的请求超时）：宿主侧没有 v1 的 `localFn` 本地兜底，
+   * 静默等待只会让扩展的 Promise 永远挂着（`EH_TIMEOUT` 要等 60 秒才到），排查成本极高。
+   */
+  const assertUiWindow = (): void => {
+    if (hasWindow()) return
+    throw new EhProtocolError(
+      'EH_NOT_READY',
+      HOSTED_UI_WINDOW_MISSING,
+      '渲染侧没有可用的 window/document：ui 请求无处渲染'
+    )
+  }
+
+  /** 进度任务取消：拆掉进度条 + 告诉宿主那条 `ui.withProgress` 已被放弃（宿主结算成 EH_CANCELLED） */
+  const cancelProgressNow = (reason: string): boolean => {
+    const progress = activeProgress
+    if (!progress) return false
+    activeProgress = null
+    uiStore.hideProgress()
+    logger.info(`进度任务被取消（${progress.progressId}）：${reason}`)
+    void transport
+      .request(HOSTED_UI_RPC.progressCancel, { progressId: progress.progressId })
+      .catch((error: unknown): void => {
+        logger.debug(
+          `取消进度没有送到宿主（${progress.progressId}）：${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      })
+    return true
+  }
+
+  uiServer.register(HOSTED_RENDERER_RPC.showMessage, (params) => {
+    assertUiWindow()
+    const record = asRecord(params)
+    const message = typeof record.message === 'string' ? record.message : ''
+    const type =
+      record.type === 'warning' || record.type === 'error' || record.type === 'success'
+        ? record.type
+        : 'info'
+    // v1：`showMessage: (message, type = 'info') => uiStore.showToast(message, type)`（逐字同一调用）
+    uiStore.showToast(message, type)
+    return { ok: true }
+  })
+
+  uiServer.register(HOSTED_RENDERER_RPC.showQuickPick, async (params) => {
+    assertUiWindow()
+    const record = asRecord(params)
+    const items = Array.isArray(record.items) ? (record.items as QuickPickItem[]) : []
+    const opts = record.opts
+    const value = await uiStore.showQuickPick(
+      items,
+      typeof opts === 'object' && opts !== null
+        ? (opts as { title?: string; placeHolder?: string; closeOnClickOutside?: boolean })
+        : undefined
+    )
+    // `null` 而不是 `undefined`：回包要能过帧与 JSON（取消就是 `null`）
+    return { value: value ?? null }
+  })
+
+  uiServer.register(HOSTED_RENDERER_RPC.showInputBox, async (params) => {
+    assertUiWindow()
+    const record = asRecord(params)
+    const value = await uiStore.showInputBox({
+      title: typeof record.title === 'string' ? record.title : undefined,
+      value: typeof record.value === 'string' ? record.value : undefined,
+      placeHolder: typeof record.placeHolder === 'string' ? record.placeHolder : undefined,
+      password: record.password === true,
+      closeOnClickOutside:
+        typeof record.closeOnClickOutside === 'boolean' ? record.closeOnClickOutside : undefined
+    })
+    return { value: value ?? null }
+  })
+
+  uiServer.register(HOSTED_RENDERER_RPC.showForm, async (params) => {
+    assertUiWindow()
+    const record = asRecord(params)
+    const fields = Array.isArray(record.fields) ? (record.fields as FormField[]) : []
+    const value = await uiStore.showForm({
+      title: typeof record.title === 'string' ? record.title : undefined,
+      fields,
+      closeOnClickOutside:
+        typeof record.closeOnClickOutside === 'boolean' ? record.closeOnClickOutside : undefined
+    })
+    return { value: value ?? null }
+  })
+
+  uiServer.register(HOSTED_RENDERER_RPC.withProgress, (params) => {
+    assertUiWindow()
+    const record = asRecord(params)
+    const progressId = typeof record.progressId === 'string' ? record.progressId : ''
+    if (progressId === '') {
+      throw new EhProtocolError('EH_INTERNAL', 'ui.withProgress 需要字符串 progressId')
+    }
+    const title = typeof record.title === 'string' ? record.title : ''
+    // 单槽语义（v1 的 `uiState.progress` 就是一个槽）：新的进度顶掉旧的，旧的按取消结算
+    cancelProgressNow('被新的进度任务顶替')
+    activeProgress = { progressId, title }
+    uiStore.showProgress(title, null)
+    return { ok: true }
+  })
+
+  uiServer.register(HOSTED_RENDERER_RPC.progressUpdate, (params) => {
+    const record = asRecord(params)
+    const progressId = typeof record.progressId === 'string' ? record.progressId : ''
+    if (!activeProgress || activeProgress.progressId !== progressId) return { ok: false }
+    const percent =
+      typeof record.percent === 'number' && Number.isFinite(record.percent) ? record.percent : null
+    uiStore.showProgress(activeProgress.title, percent)
+    return { ok: true }
+  })
+
+  uiServer.register(HOSTED_RENDERER_RPC.progressEnd, (params) => {
+    const record = asRecord(params)
+    const progressId = typeof record.progressId === 'string' ? record.progressId : ''
+    if (!activeProgress || activeProgress.progressId !== progressId) return { ok: false }
+    activeProgress = null
+    uiStore.hideProgress()
+    return { ok: true }
+  })
+
+  uiServer.register(HOSTED_RENDERER_RPC.updateGate, (params) => {
+    const record = asRecord(params)
+    const extId = typeof record.extId === 'string' ? record.extId : ''
+    // **门控权威在这里**（技术债 #2）：`update.provider` 的选择只存在于渲染侧设置，
+    // 宿主与 main 都读不到；`updaterStore.isActive` 是 v1 的同一个判定函数。
+    if (extId === '' || !updaterStore.isActive(extId)) {
+      return { ok: false, code: 'not-provider', error: HOSTED_UPDATE_NOT_PROVIDER }
+    }
+    const feedUrl = updaterStore.active?.feedUrl
+    return typeof feedUrl === 'string' && feedUrl !== '' ? { ok: true, feedUrl } : { ok: true }
+  })
+
+  /* --------------------------------- 输出通道 --------------------------------- */
+
+  /**
+   * `output` 通道（宿主 → 渲染侧）：落到 `outputStore`。
+   *
+   * 宿主侧的 `createChannel` 是同步返回句柄的，所以通道 id 由宿主生成、这里只维护映射；
+   * 与 v1 的区别仅在"谁生成 id"（v1 是渲染进程内的 `out-N`），**落点仍是同一个 store**。
+   */
+  const applyOutput = (payload: OutputPayload): void => {
+    if (payload.op === 'create') {
+      const existing = outputChannels.get(payload.id)
+      if (existing) {
+        logger.warn(`输出通道 ${payload.id} 重复创建，已先拆掉旧的那个`)
+        existing.handle.dispose()
+        outputChannels.delete(payload.id)
+      }
+      outputChannels.set(payload.id, {
+        extId: payload.extId,
+        handle: outputStore.createChannel(payload.name)
+      })
+      return
+    }
+    if (payload.op === 'disposeExtension') {
+      for (const [id, entry] of [...outputChannels]) {
+        if (entry.extId !== payload.extId) continue
+        outputChannels.delete(id)
+        entry.handle.dispose()
+      }
+      return
+    }
+    const entry = outputChannels.get(payload.id)
+    if (!entry) {
+      logger.debug(`输出通道 ${payload.id} 不在本地映射里（${payload.op} 被忽略）`)
+      return
+    }
+    switch (payload.op) {
+      case 'append':
+        entry.handle.append(payload.text)
+        return
+      case 'appendLine':
+        entry.handle.appendLine(payload.text)
+        return
+      case 'show':
+        entry.handle.show()
+        return
+      case 'clear':
+        entry.handle.clear()
+        return
+      case 'dispose':
+        outputChannels.delete(payload.id)
+        entry.handle.dispose()
+        return
+      default:
+        logger.warn(`未知的 output 子操作 ${String((payload as { op?: unknown }).op)}`)
     }
   }
 
@@ -512,6 +877,12 @@ export function createExtensionHostConsumer(
     for (const [hostId, item] of [...runtimeStatusBarItems]) {
       if (item.extensionId === extId) runtimeStatusBarItems.delete(hostId)
     }
+    // EH-B3b-2：输出通道也归本扩展（停用即整批拆掉）
+    for (const [channelId, entry] of [...outputChannels]) {
+      if (entry.extId !== extId) continue
+      outputChannels.delete(channelId)
+      entry.handle.dispose()
+    }
     if (trace) {
       for (const dispose of trace.commands.values()) dispose()
       for (const dispose of trace.treeProviders.values()) dispose()
@@ -546,6 +917,10 @@ export function createExtensionHostConsumer(
       case EH_EVENT_CHANNELS.settings:
         applySettings(payload as SettingsHostPayload)
         return
+      case HOSTED_UI_EVENT_CHANNELS.output:
+        // EH-B3b-2：输出通道（协议常量里没有 output 语义的通道，本卡用局部常量声明，见文件头）
+        applyOutput(payload as OutputPayload)
+        return
       case EH_EVENT_CHANNELS.theme:
       case EH_EVENT_CHANNELS.bubble:
       case EH_EVENT_CHANNELS.cardIcon:
@@ -570,16 +945,40 @@ export function createExtensionHostConsumer(
       handleEventEnvelope(envelope.channel, envelope.payload)
       return
     }
+    if (envelope.t === 'req') {
+      // EH-B3b-2：宿主 → 渲染侧的请求（ui.* / update 门控）由渲染侧 RpcServer 应答。
+      //
+      // 两条路径只会走一条：装了桥的接管口（生产）时 `req` 由桥交给 `uiServer`，消费者**不再**
+      // 处理（否则同一个 id 会被处理两次 → 宿主收到重复回包）；没有接管口（单测假通道）时走这里。
+      if (usesHostRequestHook) return
+      uiServer.handleRequest(envelope)
+      return
+    }
+    if (envelope.t === 'cancel') {
+      // 宿主放弃了它自己发出的请求（RpcClient 超时）：按协议语义标记为取消
+      uiServer.handleCancel(envelope)
+      return
+    }
     if (envelope.t === 'log') {
       // 宿主日志已由桥转发到 console；这里不重复打印（桥的 `onLog` 是另一条订阅）
       return
     }
-    // res / err / req / cancel 由桥自己配对处理；握手类信封与本消费者无关
+    // res / err 由桥自己配对处理（那是渲染侧 → 宿主的请求的回包）；握手类信封与本消费者无关
     logger.debug(`消费者忽略信封 t=${envelope.t}`)
   }
 
   /* --------------------------------- 启动 --------------------------------- */
 
+  // 生产路径：桥把宿主发起的 `req` 交到这里（A4 的桥原本只会回 EH_INTERNAL）
+  if (transport.onHostRequest) {
+    offs.push(
+      transport.onHostRequest((envelope) => {
+        if (stopped) return false
+        uiServer.handleRequest(envelope)
+        return true
+      })
+    )
+  }
   offs.push(transport.onEnvelope(handleEnvelope))
   // 设置一变化就把新快照推给宿主（宿主的 settings.get / theme.getCurrent / i18n 都靠它校准）
   offs.push(
@@ -603,6 +1002,8 @@ export function createExtensionHostConsumer(
     stop(): void {
       if (stopped) return
       stopped = true
+      // EH-B3b-2：先拆进度（端口此刻可能还在，宿主借此知道任务被放弃），再退订
+      cancelProgressNow('渲染侧消费者已停止')
       for (const off of offs.splice(0)) {
         try {
           off()
@@ -612,16 +1013,28 @@ export function createExtensionHostConsumer(
       }
       for (const extId of [...traces.keys()]) cleanupExtension(extId)
       runtimeStatusBarItems.clear()
+      for (const entry of outputChannels.values()) entry.handle.dispose()
+      outputChannels.clear()
+      uiServer.dispose('渲染侧消费者已停止')
     },
     pushSnapshot,
     handleEnvelope,
+    cancelProgress: (progressId?: string): boolean => {
+      if (progressId !== undefined && activeProgress?.progressId !== progressId) return false
+      return cancelProgressNow(progressId === undefined ? '界面取消' : `界面取消（${progressId}）`)
+    },
     stats: () => ({
       runtimeStatusBarItems: runtimeStatusBarItems.size,
       commands: [...traces.values()].reduce((sum, trace) => sum + trace.commands.size, 0),
       treeProviders: [...traces.values()].reduce((sum, trace) => sum + trace.treeProviders.size, 0),
       appMessageHandlers: [...traces.values()].filter((trace) => trace.appMessageHandler !== null)
         .length
-    })
+    }),
+    uiRuntime: () => ({
+      outputChannels: outputChannels.size,
+      progressActive: activeProgress === null ? 0 : 1
+    }),
+    rendererRpcMethods: (): string[] => uiServer.registeredMethods()
   }
 }
 

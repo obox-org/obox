@@ -45,6 +45,7 @@ import {
   type Envelope,
   type HostedExtensionInfo,
   type LogLevel,
+  type RequestEnvelope,
   type UnserializableKind
 } from '../../../shared/extensionHostProtocol'
 import type {
@@ -229,6 +230,14 @@ export interface ExtensionHostBridge {
   getPortStatus(): Promise<ExtensionHostPortStatus | null>
   /** 在途请求数（诊断与测试用） */
   pendingRequestCount(): number
+  /**
+   * 注册「宿主发起 RPC」的接管者（EH-B3b-2；返回注销函数）。
+   *
+   * 为什么必须有这条：A4 的桥只做「渲染侧 → 宿主」的请求，收到宿主的 `req` 时只能回
+   * `EH_INTERNAL`。B3b-2 的 `ui.*` / `ui.updateGate` 方向相反，必须由渲染侧消费者的 `RpcServer`
+   * 接管；未注册时保持原行为（回 `EH_INTERNAL`），A4 的语义不变。
+   */
+  setHostRequestHandler(handler: ((envelope: RequestEnvelope) => boolean) | null): () => void
   /** 退订全部订阅 + 以 `EH_CANCELLED` 拒绝在途请求（页面卸载时调用；幂等） */
   dispose(): void
 }
@@ -297,6 +306,16 @@ class ExtensionHostBridgeImpl implements ExtensionHostBridge {
   private readonly logListeners = new Set<(level: LogLevel, message: string) => void>()
   private readonly statusListeners = new Set<(status: ExtensionHostStatusSnapshot) => void>()
   private status: ExtensionHostStatusSnapshot = idleStatus()
+  /**
+   * 宿主发起的反向 RPC 的接管者（EH-B3b-2）。
+   *
+   * A4 的桥只有「宿主 → 渲染」的 `event` / `log` 方向，收到 `req` 会回 `EH_INTERNAL`。B3b-2 起
+   * 渲染侧消费者在同一端口上跑一个 `RpcServer`（`ui.showMessage` / `ui.updateGate` 等），必须由它
+   * 接管这些 `req`——**否则宿主永远只会收到「渲染侧桥暂不支持」**（这正是本卡真机上唯一的死点）。
+   *
+   * 未注册时保持原行为（回 `EH_INTERNAL` + 告警），所以 A4 的既有语义与用例不受影响。
+   */
+  private hostRequestHandler: ((envelope: RequestEnvelope) => boolean) | null = null
 
   private readonly offEnvelope: () => void
   private readonly offStatus: () => void
@@ -452,6 +471,19 @@ class ExtensionHostBridgeImpl implements ExtensionHostBridge {
     return this.pending.size
   }
 
+  /**
+   * 注册/注销「宿主发起 RPC」的接管者（EH-B3b-2，返回注销函数）。
+   *
+   * 交接约定：接管者收到信封后**自己回帧**（`res`/`err`），返回 `true` 表示"我接了"；
+   * 返回 `false` 则落回 A4 的 `EH_INTERNAL` 回包（没人在听的时候宿主也不会挂死）。
+   */
+  setHostRequestHandler(handler: ((envelope: RequestEnvelope) => boolean) | null): () => void {
+    this.hostRequestHandler = handler
+    return (): void => {
+      if (this.hostRequestHandler === handler) this.hostRequestHandler = null
+    }
+  }
+
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
@@ -531,20 +563,23 @@ class ExtensionHostBridgeImpl implements ExtensionHostBridge {
       case 'log':
         this.dispatchLog(envelope.level, envelope.message)
         return
-      case 'req':
-        // 宿主发起的反向 RPC：A4 的渲染侧桥只有"宿主 → 渲染"的 event / log 方向。
-        // 必须回一个 err，否则宿主那边会一直挂着等响应。
+      case 'req': {
+        // 宿主发起的反向 RPC（EH-B3b-2）：先交给渲染侧消费者注册的 `RpcServer`；
+        // 没人接（未注册 / 该 handler 不认）才落回 A4 的"不支持"回包——不能沉默，否则宿主挂死。
+        const handler = this.hostRequestHandler
+        if (handler && handler(envelope)) return
         this.logger.warn(
-          `宿主发起 RPC ${envelope.method}#${envelope.id}：A4 渲染侧桥不支持，已回 EH_INTERNAL`
+          `宿主发起 RPC ${envelope.method}#${envelope.id}：渲染侧没有接管者，已回 EH_INTERNAL`
         )
         this.channel.send(
           createErrorEnvelope(
             envelope.id,
             'EH_INTERNAL',
-            '渲染侧桥暂不支持宿主发起的 RPC（EH-A4 只有 event / log 方向）。请改走事件，或把该能力放到宿主侧实现。'
+            '渲染侧没有接管宿主发起的 RPC（消费者未启动或已停止）。若这是 UI 能力，请确认扩展宿主开关与主窗口都在。'
           )
         )
         return
+      }
       case 'ready':
       case 'initialized':
       case 'activate':

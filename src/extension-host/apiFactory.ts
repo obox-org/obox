@@ -15,8 +15,10 @@
  *   `executeCommand` / `views.registerTreeProvider` / `settings`(4) / `theme`(2) / `i18n`(3) /
  *   `app`(2) / `on`·`emit`(2) / `workspaceState`(3) / `globalState`(3)，实现落在
  *   `./capabilities/ui-plane.ts`（宿主 ↔ 渲染侧的 `host-renderer` 通道 + 宿主本地 memento）；
- * - 其余仍是**显式桩**：`ui`(5) / `output.createChannel` / `update` 的 4 条门控方法——都属
- *   EH-B3b-2（它们要"渲染侧权威判定"或"渲染侧渲染 UI"，与本卡的注册面数据面不是同一条缝）。
+ * - **EH-B3b-2**：**状态与 UI 面**——`ui`(5) / `output.createChannel`(1) / `update` 的 4 条门控方法，
+ *   同样落在 `./capabilities/ui-plane.ts`（宿主建 `RpcClient` → 渲染侧 `RpcServer`：UI 由渲染侧
+ *   `uiStore` 渲染、通道落到 `outputStore`、更新门控由渲染侧 `updaterStore` 权威判定）。
+ *   **到这里对照表 99 实现 + 0 桩**——本文件不再有桩，`STUB_MARK` 仅作为"将来若再加桩"的推导口径保留。
  *
  * ## 扩展 data 目录（R62）：唯一计算点
  *
@@ -29,24 +31,17 @@
  * `ExtensionApiOptions.extensionDataDir` 因此**不再参与计算**（保留在签名里是为了不改
  * `runtime.ts` 的调用点，见该字段的注释）。
  *
- * 为什么桩也要显式写出来，而不是「先不提供这些命名空间」：
- * - 形状必须与 `src/api/types.ts` 的 `ExtensionActivationApi` 对齐——扩展代码是按那个类型写的，
- *   缺命名空间会让 `api.statusBar` 变成 `undefined`，报错点在扩展里（`Cannot read properties of
- *   undefined`），排查成本远高于「能力尚未迁移」这句人话；
- * - 桩**当场抛**而不是返回假值：假的成功返回会让扩展以为写进去了，属于静默失败（ADR-0026
- *   明确要避免的降级风格）；
- * - 桩携带统一标记（`STUB_MARK`），因此「已实现 / 桩」对照表是**从 api 对象本身推导**出来的
- *   （`listApiImplementation`），不会与实现漂移。
+ * ## 对照表为什么从 api 对象**推导**（而不是手写）
+ *
+ * 「已实现 / 桩」必须与真实实现一致，手写清单一定会漂。`listApiImplementation` 递归遍历注入给
+ * 扩展的那个对象：函数看 {@link STUB_MARK} 标记、常量（`env.platform` / `i18n.locale`）算已实现。
+ * 于是"漏挂一个命名空间"或"把桩换成实现"都会**当场**反映在对照表上（三处测试各锁一次数字）。
  */
 import { mkdirSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { ExtensionActivationApi } from '../api/types'
-import {
-  EhProtocolError,
-  type HostedExtensionInfo,
-  type LogLevel
-} from '../shared/extensionHostProtocol'
+import type { HostedExtensionInfo, LogLevel } from '../shared/extensionHostProtocol'
 import { createHostMainCapabilities } from './capabilities/host-main'
 import { createIoCapabilities, resolveInsideDataDir, type HostMainBridge } from './capabilities/io'
 import { createIpcCapabilities } from './capabilities/ipc'
@@ -80,66 +75,11 @@ export interface ApiImplementationRow {
 /**
  * 桩函数上的标记（能力名）。用字符串键而不是 Symbol：`Object.getOwnPropertySymbols` 在
  * 调试/日志里不可读，且函数对象上的自定义字符串属性不会被 `postMessage`/JSON 带到对端。
+ *
+ * **EH-B3b-2 起没有任何能力再打这个标记**（99/99 全实现），但推导口径保留：将来若某条能力
+ * 需要先占形状后补实现，打上标记就会被三处对照表测试当场看见，而不是"看起来能用"。
  */
 const STUB_MARK = '__oboxExtensionHostStub'
-
-/** 桩函数（同步）：**零参数**——少参数函数可赋给任意签名，避免为每个桩写一遍参数表 */
-type StubSync = () => never
-
-/** 桩函数（异步）：返回永远 reject 的 Promise，`await api.net.fetch()` 能被 try/catch 捕到 */
-type StubAsync = () => Promise<never>
-
-/**
- * 造"原因已查清"的异步桩（EH-B3a 的 4 条 `update` 门控方法用）。
- *
- * 为什么不是普通桩：这 4 条不是"还没轮到"，而是**在宿主架构下无法在本卡实现**——门控是
- * "当前生效的更新提供者"，该选择只存在于渲染进程（`stateStore` 的 `update.provider`，
- * 见 `updaterStore.isActive()`），main 与宿主都拿不到（裁定 R64）。
- *
- * 文案仍必须同时含「尚未迁移」与「阶段 B」：那是 `test/extension-host-runtime.test.ts` 对
- * **每一个桩**的统一断言，也是扩展作者查 `docs/extension-host-migration.md` 的入口；
- * 额外补上"该等哪个卡"，避免作者以为是自己的配置问题。
- */
-function stubWithReason(capability: string, reason: string): StubAsync {
-  const fn = async (): Promise<never> => {
-    throw new EhProtocolError('EH_INTERNAL', reason, `api.${capability} 在扩展宿主进程里只有桩`)
-  }
-  Object.defineProperty(fn, STUB_MARK, { value: capability, enumerable: false })
-  return fn
-}
-
-/** 同 {@link stubWithReason}，但保持**同步**形状（`ui.showMessage` / `output.createChannel` 在 v1 是同步返回） */
-function stubSyncWithReason(capability: string, reason: string): StubSync {
-  const fn = (): never => {
-    throw new EhProtocolError('EH_INTERNAL', reason, `api.${capability} 在扩展宿主进程里只有桩`)
-  }
-  Object.defineProperty(fn, STUB_MARK, { value: capability, enumerable: false })
-  return fn
-}
-
-/**
- * `update` 的 4 条门控方法在宿主里的统一文案（裁定 R64：留桩，不做 fail-closed）。
- *
- * 为什么不 fail-closed（"能调但永远失败"）：那会把它们记成"已实现"，对照表与文档都失真；
- * 扩展作者看到 `EH_INTERNAL`+「尚未迁移」会去查迁移计划，看到「无法确认提供者」会以为是自己
- * 配错了。**语义诚实优先于形状真实。**
- */
-const UPDATE_PROVIDER_GATE_REASON =
-  'update 的这条方法尚未迁移：它的门控是"当前生效的更新提供者"，而该选择只存在于渲染进程' +
-  '（设置-更新的 update.provider），main 与宿主进程都读不到。按裁定 R64 留待 EH-B3b ' +
-  '由渲染侧权威判定（真相在哪就在哪判定），见 docs/extension-host-migration.md 阶段 B'
-
-/**
- * `ui` / `output` 在宿主里的统一文案（裁定 R67：归 EH-B3b 的 host-renderer 通道）。
- *
- * 事实：`ui` 的模态框/toast 由渲染进程的 `uiStore` 渲染，`output` 的通道与底部面板由
- * `outputStore` 持有；`src/main/ui.ts` 只会把请求转发给 App 子窗口或回 `{local:true}` 让
- * 渲染侧自己渲染，**main 自己没有任何 UI 渲染能力**。所以宿主扩展要用这两族，必须等
- * 宿主→渲染侧的数据面通道（ADR-0026 的 `host-renderer`，EH-B5 / B3b）落地。
- */
-const HOST_RENDERER_DATA_PLANE_REASON =
-  '该能力尚未迁移：它属于宿主 → 渲染侧的 UI 数据面（状态栏/面板/toast 等由渲染进程渲染），' +
-  '需要 host-renderer 通道，本卡（EH-B3a）只动 main 侧 RPC，按裁定 R67 归阶段 B 的 EH-B3b'
 
 /** 该函数是否是桩（是则返回其能力名） */
 function stubMarkerOf(value: unknown): string | undefined {
@@ -500,7 +440,11 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     extId,
     extensionDir,
     locale: options.locale,
-    log: options.log
+    log: options.log,
+    // EH-B3b-2：门控放行后 update.* 要回 main；代理配置沿用宿主侧缓存（来自 main 的 host.proxy.get）。
+    // 两条都由本函数注入，ui-plane 自身不认识 Electron，也不认识 `ProxyConfig` 的形状。
+    ...(options.hostMain === undefined ? {} : { hostMain: options.hostMain }),
+    readProxyConfig: (): unknown => hostMain.proxy.get()
   })
 
   // memento（workspaceState / globalState，6 项）：**不过桥**——数据所有权跟着执行方（宿主），
@@ -509,7 +453,7 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
   const workspaceState = createMementoStore(path.join(stateDir, 'workspace.json'))
   const globalState = createMementoStore(path.join(stateDir, 'global.json'))
 
-  /* ------------------------------------ 桩部分 ------------------------------------ */
+  /* ------------------------------------ 装配 ------------------------------------ */
 
   const api: HostedExtensionApi = {
     registerCommand: plane.registerCommand,
@@ -532,12 +476,13 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     settings: plane.settings,
     update: {
       // EH-B3a：v1 里这两项**没有**提供者门控（`getVersion` 直接读 app 版本；`onEvent` 只订阅），
-      // 因此可以照原样搬过来。剩下 4 条带门控的见下面的显式桩（裁定 R64）。
+      // 因此可以照原样搬过来。
       getVersion: hostMain.update.getVersion,
-      resolveFeed: stubWithReason('update.resolveFeed', UPDATE_PROVIDER_GATE_REASON),
-      check: stubWithReason('update.check', UPDATE_PROVIDER_GATE_REASON),
-      download: stubWithReason('update.download', UPDATE_PROVIDER_GATE_REASON),
-      install: stubWithReason('update.install', UPDATE_PROVIDER_GATE_REASON),
+      // EH-B3b-2：门控在渲染侧（`ui.updateGate`），放行后回 main（R70：main 已注册 host.update.*）
+      resolveFeed: plane.update.resolveFeed,
+      check: plane.update.check,
+      download: plane.update.download,
+      install: plane.update.install,
       onEvent: hostMain.update.onEvent
     },
     // EH-B3a：同步读缓存快照（构造预热 + 读时刷新，语义见 capabilities/host-main.ts）
@@ -553,20 +498,11 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     // EH-B3b-1：只读缓存（渲染侧 themeStore 推当前主题 id；真正的 token 应用在渲染侧）
     theme: plane.theme,
     fs: fsApi,
-    ui: {
-      // R67：ui 的模态框/toast 由渲染进程的 uiStore 渲染，main 没有 UI 渲染能力 ⇒ 归 B3b 的
-      // host-renderer 通道。四条异步 + 一条同步形状各自保持（v1 的 showMessage 是同步 void）。
-      showQuickPick: stubWithReason('ui.showQuickPick', HOST_RENDERER_DATA_PLANE_REASON),
-      showInputBox: stubWithReason('ui.showInputBox', HOST_RENDERER_DATA_PLANE_REASON),
-      showMessage: stubSyncWithReason('ui.showMessage', HOST_RENDERER_DATA_PLANE_REASON),
-      showForm: stubWithReason('ui.showForm', HOST_RENDERER_DATA_PLANE_REASON),
-      withProgress: stubWithReason('ui.withProgress', HOST_RENDERER_DATA_PLANE_REASON)
-    },
+    // EH-B3b-2：四模态 + toast 由渲染侧 uiStore 渲染（宿主经 RpcClient 发请求等应答）
+    ui: plane.ui,
     ipc: ipc.api,
-    output: {
-      // R67：输出通道与底部面板都在渲染侧 outputStore ⇒ 同上
-      createChannel: stubSyncWithReason('output.createChannel', HOST_RENDERER_DATA_PLANE_REASON)
-    },
+    // EH-B3b-2：输出通道由渲染侧 outputStore 持有（宿主只发 output 通道事件）
+    output: plane.output,
     python: python.api,
     // EH-B3a：secrets 3 项（main 侧仍走 safeStorage，宿主只管把 extId+key 送过去）
     secrets: hostMain.secrets,

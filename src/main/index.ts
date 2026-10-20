@@ -43,7 +43,15 @@ import {
 // EH-B3a：dialog 的两个**纯函数**（属性归一 / 目录模式判定）是既有的，复用而不是重写规则
 import { isDirectoryProperties, normalizeDialogProperties } from './ext'
 import { registerOixIpc } from './oix'
-import { registerUpdateIpc, onUpdateEvent } from './updater'
+import {
+  checkUpdateForHost,
+  downloadUpdateForHost,
+  forceInstallForHost,
+  installUpdateForHost,
+  registerUpdateIpc,
+  resolveFeedForHost,
+  onUpdateEvent
+} from './updater'
 import { parseDebugExtensions, registerDebugIpc } from './debug'
 import { registerDebugExtensionDirs } from './extensionDirs'
 import { registerSqliteIpc } from './sqlite'
@@ -86,6 +94,7 @@ import {
   HOST_MAIN_METHODS
 } from '../extension-host/capabilities/host-main'
 import { extensionSourceDir } from './paths'
+import { pickLocale } from './windowBehaviorCore'
 import { buildPythonEnv, pythonExecutablePath, pythonUserSiteDir } from './pythonCore'
 import { resolveProgramInExtension } from './ipcTransport'
 import type {
@@ -166,6 +175,35 @@ function asRecord(value: unknown): Record<string, unknown> {
 /** 错误 → 一行文本（与 `skills`/既有 IPC handler 的 `err instanceof Error ? err.message : String(err)` 同口径） */
 function describeThrown(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 从宿主 RPC 参数里取代理配置（EH-B3b-2 的 `host.update.*`）。
+ *
+ * 为什么不当成"必需"：缺失时的语义与 v1 一致——`applyUpdaterProxy(undefined)` 会**回落到当前配置**
+ * （渲染侧经 `proxy:apply` 推入 main 的那个），而不是把 session 重置为直连（见 `updater.ts` 注释）。
+ * 因此这里只做形状兜底：不是普通对象就当"没传"。
+ */
+function readProxyParam(record: Record<string, unknown>): ProxyConfig | undefined {
+  const proxy = record.proxy
+  return typeof proxy === 'object' && proxy !== null && !Array.isArray(proxy)
+    ? (proxy as ProxyConfig)
+    : undefined
+}
+
+/**
+ * 注入给宿主进程的界面语言（R69 / 技术债 #12）。
+ *
+ * 主进程没有渲染进程的 i18n（`app.getLocale()` 是唯一来源，见 `windowBehaviorCore.ts` 的说明），
+ * 所以按同一个 `pickLocale()` 归一成 `zh` / `en`；读不到（极少数平台/测试环境）就回 `zh`
+ * ——与宿主入口 `process.env.OBOX_LOCALE ?? 'zh'` 的缺省一致。
+ */
+function hostLocaleEnv(): string {
+  try {
+    return pickLocale(app.getLocale())
+  } catch {
+    return 'zh'
+  }
 }
 
 /** 宿主窗口能力的**目标窗口**：与 v1 的 `window:action` 同口径（焦点窗口优先，否则主窗口） */
@@ -436,7 +474,19 @@ app.whenReady().then(() => {
   // （closed ⇒ terminate/kill，宽限后强杀）。本卡不启动宿主，现有行为不变。
   const starter = createExtensionHostStarter({
     entryPoint: join(__dirname, 'extension-host.js'),
-    dataDir: app.getPath('userData')
+    dataDir: app.getPath('userData'),
+    // ---- R69：修技术债 #12（宿主 fork 时补齐 OBOX_* 环境变量） ----
+    // 宿主入口（`src/extension-host/index.ts`）的 `readAppInfo()` / `locale` 只读这三个 env，缺它们
+    // 时 `api.appInfo` 恒为 `obox 0.0.0`、`api.env.language` 恒为 `zh`（B3b-1 只能靠渲染侧 settings
+    // 快照事后校准 i18n 语言，appInfo 无法校准——它不在快照里）。`init` 信封没有版本字段，而加字段
+    // 要升 `PROTOCOL_VERSION`，所以 env 是成本最低且与现有入口约定一致的做法。
+    env: {
+      OBOX_APP_NAME: app.getName(),
+      OBOX_APP_VERSION: app.getVersion(),
+      // 主进程唯一的语言来源是 `app.getLocale()`（见 `windowBehaviorCore` 的 `pickLocale`）；
+      // 渲染侧随后会用 settings 快照覆盖成用户实际选择的语言。
+      OBOX_LOCALE: hostLocaleEnv()
+    }
   })
   starter.registerIpc()
   starter.bindWindow(mainWindow)
@@ -867,12 +917,53 @@ app.whenReady().then(() => {
     }
   })
 
-  // ---- update：只有 v1 里**没有**提供者门控的两项可搬（`getVersion` / 事件）----
-  // 带门控的 resolveFeed/check/download/install 在宿主里是显式桩（裁定 R64），这里不注册方法。
+  // ---- update：`getVersion` / 事件（v1 里没有门控的两项）+ EH-B3b-2 的 4 条门控方法 ----
+  // 门控本身**不在 main**：真相是渲染侧的 `updaterStore.isActive`，宿主先问 `ui.updateGate`，
+  // 只有放行后才会发这四条过来（R70）。实现全部复用 `./updater` 的具名导出（既有 IPC handler
+  // 也调用同一批函数），因此宿主路径与渲染路径是同一份逻辑，不存在第二套。
   starter.registerMethod(HOST_MAIN_METHODS.updateVersion, () => ({
     ok: true,
     value: app.getVersion()
   }))
+  starter.registerMethod(
+    HOST_MAIN_METHODS.updateResolveFeed,
+    async (params: unknown): Promise<unknown> => {
+      const record = asRecord(params)
+      return await resolveFeedForHost(
+        typeof record.repo === 'string' ? record.repo : '',
+        readProxyParam(record)
+      )
+    }
+  )
+  starter.registerMethod(
+    HOST_MAIN_METHODS.updateCheck,
+    async (params: unknown): Promise<unknown> => {
+      const record = asRecord(params)
+      return await checkUpdateForHost({
+        feedUrl: typeof record.feedUrl === 'string' ? record.feedUrl : undefined,
+        proxy: readProxyParam(record)
+      })
+    }
+  )
+  starter.registerMethod(HOST_MAIN_METHODS.updateDownload, async (): Promise<unknown> => {
+    return await downloadUpdateForHost()
+  })
+  starter.registerMethod(
+    HOST_MAIN_METHODS.updateInstall,
+    async (params: unknown): Promise<unknown> => {
+      const record = asRecord(params)
+      if (record.force === true) {
+        return await forceInstallForHost({
+          feedUrl: typeof record.feedUrl === 'string' ? record.feedUrl : undefined,
+          proxy: readProxyParam(record),
+          reason: 'user'
+        })
+      }
+      // 非 force：v1 的 `install()` 只等 `installUpdate()`，回值固定 `{ok:true}`（`quitAndInstall` 不再回头）
+      installUpdateForHost()
+      return { ok: true }
+    }
+  )
 
   // ---- proxy.get：与 v1 同源（渲染侧 `network.proxy` 经 `proxy:apply` 推入 main 的镜像）----
   starter.registerMethod(HOST_MAIN_METHODS.proxyGet, () => ({

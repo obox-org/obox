@@ -32,6 +32,10 @@
  * | `host.secrets.set` | `{ extId, key, value }` | `{ ok, error? }` |
  * | `host.secrets.delete` | `{ extId, key }` | `{ ok, error? }` |
  * | `host.update.version` | 无 | `{ ok, value?, error? }` |
+ * | `host.update.resolve-feed` | `{ repo, proxy? }` | `{ ok, tag?, feedUrl?, publishedAt?, error? }`（EH-B3b-2，门控后） |
+ * | `host.update.check` | `{ feedUrl?, proxy? }` | `{ ok, available?, error? }`（EH-B3b-2，门控后） |
+ * | `host.update.download` | `{ proxy? }` | `{ ok, error? }`（EH-B3b-2，门控后） |
+ * | `host.update.install` | `{ force?, feedUrl?, proxy?, reason? }` | `{ ok, version?, filePath?, error? }`（EH-B3b-2，门控后；`force` ⇒ 强制重装/降级） |
  * | `host.proxy.get` | 无 | `{ ok, value?, error? }` |
  * | `host.event.poll` | `{ extId, cursor: number \| null }` | `{ cursor, events: [{ channel, payload }] }` |
  *
@@ -74,9 +78,13 @@
  *
  * - `update.resolveFeed` / `check` / `download` / `install`：门控是"当前生效的更新提供者"，
  *   该选择只存在于渲染进程（`stateStore` 的 `update.provider`，见 `updaterStore.isActive`），
- *   main 拿不到；按 R64 **留显式桩**（不 fail-closed，语义更诚实），等 EH-B3b 由渲染侧判定。
+ *   main 拿不到；按 R64 **留显式桩**（不 fail-closed，语义更诚实）。
+ *   **EH-B3b-2 已收口**：门控由渲染侧 `ui.updateGate` 判定（`ui-plane.ts`），放行后宿主发
+ *   `HOST_MAIN_METHODS.update*` 回 main（R70 在 `src/main/index.ts` 注册、复用 `src/main/updater.ts`
+ *   的同一份逻辑）。本文件只保留方法名常量，不实现请求。
  * - `ui.*` / `output.createChannel`：渲染在**渲染进程**（`uiStore` / `outputStore`），main 没有
- *   UI 渲染能力；按 R67 归 B3b 的 host-renderer 通道。
+ *   UI 渲染能力；按 R67 归 B3b 的 host-renderer 通道。**EH-B3b-2 已收口**（`ui-plane.ts` 的宿主侧
+ *   `RpcClient` + 渲染侧 `RpcServer`）。
  */
 import type { Disposable } from '../../api/runtime'
 import type { UpdateEvent } from '../../api/shared'
@@ -129,6 +137,18 @@ export const HOST_MAIN_METHODS = {
   secretsSet: 'host.secrets.set',
   secretsDelete: 'host.secrets.delete',
   updateVersion: 'host.update.version',
+  /**
+   * `update` 的 4 条门控方法（EH-B3b-2 / R70）。
+   *
+   * 门控（"当前生效的更新提供者"）**不在 main**：真相是渲染侧的 `updaterStore.isActive`，所以宿主
+   * 先问渲染侧 `ui.updateGate`（见 `ui-plane.ts` 的 `UI_RENDERER_RPC`），**只有放行后**才发这四条
+   * 回 main。main 侧的实现复用 `src/main/updater.ts` 的同一份逻辑（R70 把内联 handler 抽成具名导出），
+   * 不复制第二份。
+   */
+  updateResolveFeed: 'host.update.resolve-feed',
+  updateCheck: 'host.update.check',
+  updateDownload: 'host.update.download',
+  updateInstall: 'host.update.install',
   proxyGet: 'host.proxy.get',
   eventsPoll: 'host.event.poll'
 } as const

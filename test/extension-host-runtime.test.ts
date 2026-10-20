@@ -1202,6 +1202,8 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'net.fetch',
     'notification.show',
     'on',
+    // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
+    'output.createChannel',
     'overlay.create',
     'overlay.destroy',
     'overlay.setMouseThrough',
@@ -1230,8 +1232,19 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'timer.clearTimeout',
     'timer.setInterval',
     'timer.setTimeout',
+    // EH-B3b-2：交互 UI 5 项（渲染侧 uiStore 渲染）
+    'ui.showForm',
+    'ui.showInputBox',
+    'ui.showMessage',
+    'ui.showQuickPick',
+    'ui.withProgress',
+    // EH-B3b-2：更新门控 4 条（渲染侧判定 + 放行后回 main）
+    'update.check',
+    'update.download',
     'update.getVersion',
+    'update.install',
     'update.onEvent',
+    'update.resolveFeed',
     'views.registerTreeProvider',
     'window.close',
     'window.isFocused',
@@ -1247,54 +1260,27 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
 
   const stubs = rows.filter((row) => row.status === 'stub')
   // 行数与分布锁死：阶段 B 把某个桩落地时这里会失败，提醒同步对照表（而不是悄悄少一行）
-  assert.equal(rows.length, 99, '对照表共 99 项（89 已实现 + 10 桩）')
+  assert.equal(rows.length, 99, '对照表共 99 项（99 已实现 + 0 桩）')
   assert.equal(
-    stubs.length,
-    10,
-    '桩 10 项（ui 5 + output.createChannel 1 + update 4，全归 EH-B3b-2）'
+    implemented.length,
+    99,
+    '已实现 99 项（EH-B3b-2 把最后 10 项 ui/output/update 落地）'
   )
+  assert.equal(stubs.length, 0, '桩 0 项（阶段 B 的能力面已全部落地）')
   assert.equal(
     rows.length,
     implemented.length + stubs.length,
     '对照表不得有既非已实现也非桩的第三类'
   )
 
-  // 每个桩都必须：调用即 EH_INTERNAL + 「尚未迁移」+ 指向阶段 B 文档
-  for (const row of stubs) {
-    const member = resolveApiMember(built.api, row.capability)
-    assert.equal(typeof member, 'function', `${row.capability} 应是函数`)
-    const call = member as () => unknown
-    await assert.rejects(
-      async (): Promise<void> => {
-        await call()
-      },
-      (error: unknown): boolean => {
-        assert.ok(error instanceof EhProtocolError, `${row.capability} 应抛 EhProtocolError`)
-        assert.equal(error.code, 'EH_INTERNAL')
-        assert.match(error.message, /尚未迁移/)
-        assert.match(error.message, /阶段 B/)
-        return true
-      }
-    )
-  }
-
-  // 同步桩也当场抛（不是返回假值）
   // EH-B3b-1 之后 `statusBar` 不再是桩：本用例没给 `rendererPort`，抛的是「端口未到」而非「尚未迁移」
   assert.throws(() => built.api.statusBar.setText('a', 'b'), /host-renderer 端口未到/)
   // EH-B3a 之后 `window.onFocusChanged` 已是真实现（订阅类 API 不抛错，只是没有事件源）
   assert.doesNotThrow(() => built.api.window.onFocusChanged(() => {}).dispose())
-  assert.throws(() => built.api.output.createChannel('x'), /尚未迁移/)
+  // EH-B3b-2 之后 `output` / `ui` 也不再是桩：同样止步于「端口未到」
+  assert.throws(() => built.api.output.createChannel('x'), /host-renderer 端口未到/)
+  assert.throws(() => built.api.ui.showMessage('x'), /host-renderer 端口未到/)
 })
-
-/** 按点分路径从 api 对象取成员 */
-function resolveApiMember(api: unknown, capability: string): unknown {
-  let current: unknown = api
-  for (const key of capability.split('.')) {
-    if (typeof current !== 'object' || current === null) return undefined
-    current = (current as Record<string, unknown>)[key]
-  }
-  return current
-}
 
 /* -------------------------------------------------------------------------------------------- */
 /* 8. ENTRY（可选扩展）——运行时日志信封出口                                                        */
