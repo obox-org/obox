@@ -30,7 +30,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { validateManifest } from '../src/renderer/src/core/manifest'
+import { analyzeActivationEvents, validateManifest } from '../src/renderer/src/core/manifest'
 
 /** 仓库根（本文件在 <root>/test/ 下；resolve 会去掉 `..` 带出的尾部路径分隔符） */
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -119,7 +119,30 @@ const requiredFixtures = [
   'bad-themes-shape.json',
   'self-dep.json',
   'high-api-version.json',
-  'missing-main.json'
+  'missing-main.json',
+  // EH-C1：activationEvents 的 5 条规则（4 类合法 + 缺省 `*` / 未知事件 / 空后缀 / 非字符串 / 非数组）
+  'ok-activation-events.json',
+  'ok-activation-default.json',
+  'bad-activation-unknown.json',
+  'bad-activation-empty-suffix.json',
+  'bad-activation-non-string.json',
+  'bad-activation-non-array.json'
+]
+
+/**
+ * EH-C1 的 `activationEvents` 规则 → fixture 对照（差分门禁"逐条规则各一例"的显式清单）：
+ * 合法 4 类 / 缺省 `*` / 未知事件 / 空后缀 / 非字符串（+ 非数组形状）。
+ */
+const activationRuleFixtures: Array<{ rule: string; fixture: string }> = [
+  {
+    rule: '合法 4 类（* / onStartupFinished / onCommand:<id> / onView:<id>）',
+    fixture: 'ok-activation-events.json'
+  },
+  { rule: '缺省 = *（不写 activationEvents）', fixture: 'ok-activation-default.json' },
+  { rule: '未知事件', fixture: 'bad-activation-unknown.json' },
+  { rule: '空后缀（onCommand: / onView:）', fixture: 'bad-activation-empty-suffix.json' },
+  { rule: '非字符串项', fixture: 'bad-activation-non-string.json' },
+  { rule: '非数组（字段形状）', fixture: 'bad-activation-non-array.json' }
 ]
 
 describe('manifest 校验：宿主规则与仓库脚本的差分门禁', () => {
@@ -192,5 +215,125 @@ describe('manifest 校验：宿主规则与仓库脚本的差分门禁', () => {
     const { status, stdout } = runScript(['--all', '--root', fixturesDir, '--json'])
     expect(stdout).toBe('')
     expect(status).toBe(2)
+  })
+})
+
+/* ============================================================================================ */
+/* activationEvents 规则差分（EH-C1 / ADR-0026 决策 6）                                            */
+/* ============================================================================================ */
+
+/** 脚本导出的 analyzeActivationEvents（自包含实现，差分门禁直喂内存夹具比对解析结果） */
+interface ScriptAnalysis {
+  reasons: unknown[]
+  problems: string[]
+}
+
+const scriptModule = (await import('../scripts/validate-manifest.mjs')) as {
+  analyzeActivationEvents: (raw: unknown) => ScriptAnalysis
+}
+
+/** fixture 绝对路径 */
+function fixturePath(name: string): string {
+  return join(fixturesDir, name)
+}
+
+/** 跑一次脚本并取回该 fixture 的 messages（非 0 退出不视为失败，报告里带 messages） */
+function scriptMessages(name: string): Message[] {
+  const { stdout } = runScript([fixturePath(name), '--json'])
+  const report = JSON.parse(stdout) as ScriptReport
+  expect(report.files).toHaveLength(1)
+  return report.files[0].messages
+}
+
+describe('activationEvents 规则（宿主与脚本同规则，EH-C1）', () => {
+  it('5 条规则各有一个 fixture：合法 4 类 / 缺省 * / 未知事件 / 空后缀 / 非字符串（+ 非数组形状）', () => {
+    expect(activationRuleFixtures).toHaveLength(6)
+    for (const { fixture } of activationRuleFixtures) {
+      expect(fixtures, `缺 fixture ${fixture}`).toContain(fixture)
+      expect(requiredFixtures, `requiredFixtures 漏了 ${fixture}`).toContain(fixture)
+    }
+  })
+
+  it('合法 4 类：两侧都 0 error（* / onStartupFinished / onCommand:<id> / onView:<id>）', () => {
+    const name = 'ok-activation-events.json'
+    expect(hostMessages(fixturePath(name))).toEqual([])
+    expect(scriptMessages(name)).toEqual([])
+    expect(runScript([fixturePath(name), '--json']).status).toBe(0)
+  })
+
+  it('缺省 = *：不写 activationEvents 两侧都 0 error（现有 5 个扩展行为不变）', () => {
+    const name = 'ok-activation-default.json'
+    const raw = JSON.parse(readFileSync(fixturePath(name), 'utf8')) as Record<string, unknown>
+    expect('activationEvents' in raw).toBe(false)
+    expect(hostMessages(fixturePath(name))).toEqual([])
+    expect(scriptMessages(name)).toEqual([])
+  })
+
+  it('未知事件：两侧指出非法值与 4 类合法值（中文可执行），且只报那一条', () => {
+    const name = 'bad-activation-unknown.json'
+    const host = hostMessages(fixturePath(name))
+    expect(host).toHaveLength(1)
+    expect(host[0].level).toBe('error')
+    expect(host[0].message).toContain('"onDebug:foo"')
+    expect(host[0].message).toContain('* / onStartupFinished / onCommand:<id> / onView:<id>')
+    // 同一句文案在脚本侧（差分 it.each 已逐字比对，这里锁"可执行文案"这条验收）
+    expect(scriptMessages(name)).toEqual(host)
+  })
+
+  it('空后缀：两侧都报「<id> 不能为空」（含只有空白的 id），且不误报合法项', () => {
+    const name = 'bad-activation-empty-suffix.json'
+    const host = hostMessages(fixturePath(name))
+    expect(host).toHaveLength(2)
+    for (const message of host) {
+      expect(message.level).toBe('error')
+      expect(message.message).toContain('<id> 不能为空')
+      expect(message.message).toContain('* / onStartupFinished / onCommand:<id> / onView:<id>')
+    }
+    expect(scriptMessages(name)).toEqual(host)
+  })
+
+  it('非字符串项：两侧同一句 error（收到 5），脚本 exit 1', () => {
+    const name = 'bad-activation-non-string.json'
+    const host = hostMessages(fixturePath(name))
+    expect(host).toHaveLength(1)
+    expect(host[0].message).toContain('必须是字符串')
+    expect(host[0].message).toContain('收到 5')
+    expect(scriptMessages(name)).toEqual(host)
+    expect(runScript([fixturePath(name), '--json']).status).toBe(1)
+  })
+
+  it('非数组：两侧同一句 error，脚本 exit 1', () => {
+    const name = 'bad-activation-non-array.json'
+    const host = hostMessages(fixturePath(name))
+    expect(host).toHaveLength(1)
+    expect(host[0].message).toContain('activationEvents 必须是字符串数组')
+    expect(scriptMessages(name)).toEqual(host)
+    expect(runScript([fixturePath(name), '--json']).status).toBe(1)
+  })
+
+  it('解析差分：脚本 analyzeActivationEvents 与宿主逐条一致（reasons 与 problems 都相同）', () => {
+    const cases: unknown[] = [
+      undefined,
+      null,
+      [],
+      ['*'],
+      ['onStartupFinished'],
+      ['*', 'onStartupFinished', 'onCommand:demo.hello', 'onView:demo.view'],
+      ['onDebug:foo'],
+      ['onCommand:'],
+      ['onView:   '],
+      'onCommand:demo.hello',
+      'onCommand:',
+      5,
+      {},
+      [5, true, null, {}, 'onCommand:demo.hello'],
+      ['onCommand:demo.hello', 'onDebug:foo', 'onView:   ', 7]
+    ]
+    for (const raw of cases) {
+      const host = analyzeActivationEvents(raw)
+      const script = scriptModule.analyzeActivationEvents(raw)
+      expect(script.reasons, JSON.stringify(raw)).toEqual(host.reasons)
+      expect(script.problems, JSON.stringify(raw)).toEqual(host.problems)
+    }
   })
 })

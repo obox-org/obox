@@ -4,7 +4,17 @@
  * issue #83）/keybindings/contributes/贡献点数组形状（issue #84 的四类补充 + contributesArray 防御）。
  */
 import { describe, expect, it } from 'vitest'
-import { contributesArray, validateManifest } from '../src/renderer/src/core/manifest'
+import {
+  analyzeActivationEvents,
+  contributesArray,
+  makeExtensionInfo,
+  normalizeActivationEvents,
+  validateManifest,
+  withDefaultActivation,
+  ACTIVATION_EVENT_HINT
+} from '../src/renderer/src/core/manifest'
+import { parseActivationEvent } from '../src/shared/extensionHostProtocol'
+import type { ExtensionManifest } from '../src/renderer/src/core/types'
 import { checkIpcChannelList } from '../src/shared/ipcDeclaration'
 
 function errors(raw: unknown): string[] {
@@ -310,6 +320,174 @@ describe('validateManifest 贡献点数组形状（issue #84）', () => {
     for (const value of [{}, 5, true, 'x', null]) {
       expect(() => contributesArray(value), JSON.stringify(value)).not.toThrow()
       expect(contributesArray(value)).toEqual([])
+    }
+  })
+})
+
+/* ============================================================================================ */
+/* activationEvents（EH-C1 / ADR-0026 决策 6）                                                    */
+/* ============================================================================================ */
+
+/** 4 类合法事件（清单里的字符串形态） */
+const LEGAL_ACTIVATION_EVENTS = [
+  '*',
+  'onStartupFinished',
+  'onCommand:my-ext.hello',
+  'onView:my-ext.panel'
+] as const
+
+describe('validateManifest activationEvents（EH-C1：4 类 + 缺省 *）', () => {
+  it('缺省（不写该字段）→ 无 error：现有 5 个扩展都不写，行为必须与今天一致', () => {
+    expect(errors(valid)).toEqual([])
+    expect('activationEvents' in valid).toBe(false)
+  })
+
+  it.each(LEGAL_ACTIVATION_EVENTS)('合法事件 %s → 无 error', (event) => {
+    expect(errors({ ...valid, activationEvents: [event] })).toEqual([])
+  })
+
+  it('4 类混写 → 无 error（顺序不影响结论）', () => {
+    expect(errors({ ...valid, activationEvents: [...LEGAL_ACTIVATION_EVENTS] })).toEqual([])
+  })
+
+  it('未知事件 → error：文案点明非法值与 4 类合法值（中文可执行）', () => {
+    const messages = errors({ ...valid, activationEvents: ['onDebug:foo'] })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('"onDebug:foo"')
+    expect(messages[0]).toContain('不受支持')
+    expect(messages[0]).toContain(ACTIVATION_EVENT_HINT)
+    // 4 类合法值必须逐字出现在文案里（用户照着改就行）
+    expect(messages[0]).toContain('* / onStartupFinished / onCommand:<id> / onView:<id>')
+  })
+
+  it('空后缀 → error：onCommand: / onView: 与只有空白的 id 都报「<id> 不能为空」', () => {
+    const messages = errors({ ...valid, activationEvents: ['onCommand:', 'onView:', 'onView:   '] })
+    expect(messages).toHaveLength(3)
+    for (const message of messages) expect(message).toContain('<id> 不能为空')
+  })
+
+  it.each([
+    ['数字', 5],
+    ['布尔', true],
+    ['对象', {}],
+    ['null', null]
+  ])('非字符串项（%s）→ error，不抛错', (_label, value) => {
+    let messages: string[] = []
+    expect(() => {
+      messages = errors({ ...valid, activationEvents: [value] })
+    }).not.toThrow()
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('必须是字符串')
+    expect(messages[0]).toContain(ACTIVATION_EVENT_HINT)
+  })
+
+  it.each([
+    ['对象', {}],
+    ['字符串', 'onCommand:my-ext.hello'],
+    ['布尔', true],
+    ['数字', 5]
+  ])('activationEvents 是%s（非数组）→ error', (_label, value) => {
+    expect(errors({ ...valid, activationEvents: value })).toEqual([
+      `activationEvents 必须是字符串数组（${ACTIVATION_EVENT_HINT}）`
+    ])
+  })
+
+  it('多个非法项 → 逐项各一条 error（一处错一行，不合并成一句）', () => {
+    const messages = errors({
+      ...valid,
+      activationEvents: ['onDebug:foo', 'onCommand:my-ext.hello', 'onCommand:', 7]
+    })
+    expect(messages).toHaveLength(3)
+    expect(messages.filter((m) => m.includes('不受支持'))).toHaveLength(1)
+    expect(messages.filter((m) => m.includes('<id> 不能为空'))).toHaveLength(1)
+    expect(messages.filter((m) => m.includes('必须是字符串'))).toHaveLength(1)
+  })
+
+  it('清单校验失败 ⇒ ExtensionInfo.isValid=false（扩展被标记无效，loader 因此不收集它）', () => {
+    const bad = {
+      ...valid,
+      activationEvents: ['onDebug:foo']
+    } as unknown as ExtensionManifest
+    const info = makeExtensionInfo('my-ext', bad, 'user', true)
+    expect(info.isValid).toBe(false)
+    expect(info.validations.some((v) => v.severity === 'error')).toBe(true)
+
+    const good = {
+      ...valid,
+      activationEvents: ['onCommand:my-ext.hello']
+    } as unknown as ExtensionManifest
+    expect(makeExtensionInfo('my-ext', good, 'user', true).isValid).toBe(true)
+  })
+})
+
+describe('activationEvents 归一化（normalizeActivationEvents）', () => {
+  it('缺失 / null / 空数组 ⇒ ["*"]（缺省 = 立即激活，现有扩展行为不变）', () => {
+    expect(normalizeActivationEvents(undefined)).toEqual(['*'])
+    expect(normalizeActivationEvents(null)).toEqual(['*'])
+    expect(normalizeActivationEvents([])).toEqual(['*'])
+    // 非数组同样退回 ['*']：清单已判无效，归一化只负责给宿主一个可用的默认值
+    expect(normalizeActivationEvents('onCommand:x')).toEqual(['*'])
+  })
+
+  it('4 类事件 → 结构化原因（字符串两种 / {command} / {view}）', () => {
+    expect(normalizeActivationEvents([...LEGAL_ACTIVATION_EVENTS])).toEqual([
+      '*',
+      'onStartupFinished',
+      { command: 'my-ext.hello' },
+      { view: 'my-ext.panel' }
+    ])
+  })
+
+  it('非法项丢弃、合法项保留；全非法 ⇒ ["*"]', () => {
+    expect(normalizeActivationEvents(['onDebug:x', 'onCommand:my-ext.hello'])).toEqual([
+      { command: 'my-ext.hello' }
+    ])
+    expect(normalizeActivationEvents(['onDebug:x', 'onCommand:', 5])).toEqual(['*'])
+  })
+
+  it('withDefaultActivation：非空原样（拷贝）、空补 *', () => {
+    const input = [{ command: 'my-ext.hello' }] as const
+    const filled = withDefaultActivation(input)
+    expect(filled).toEqual([{ command: 'my-ext.hello' }])
+    expect(filled).not.toBe(input)
+    expect(withDefaultActivation([])).toEqual(['*'])
+  })
+
+  it('与宿主侧 parseActivationEvent 同语义：逐条字符串结论一致（不写第二份解析）', () => {
+    const samples = [
+      '*',
+      'onStartupFinished',
+      'onCommand:my-ext.hello',
+      'onView:my-ext.panel',
+      'onCommand:',
+      'onView:',
+      'onView:   ',
+      'onDebug:foo',
+      'onStartupFinished ',
+      'ONCOMMAND:x',
+      ''
+    ]
+    for (const sample of samples) {
+      const parsed = parseActivationEvent(sample)
+      const analysis = analyzeActivationEvents([sample])
+      // 宿主解析器的结论 → 本层应当给出的结论（唯一额外判据：id 只有空白时本层拦下，
+      // 因为协议侧 validateActivationReason 要求 trim() 非空，否则激活信封会被宿主判 EH_INTERNAL）
+      const target =
+        parsed !== null && typeof parsed === 'object'
+          ? 'command' in parsed
+            ? parsed.command
+            : parsed.view
+          : null
+      const blankId = target !== null && target.trim() === ''
+      if (parsed === null) {
+        expect(analysis.problems, sample).toHaveLength(1)
+      } else if (blankId) {
+        expect(analysis.problems, sample).toHaveLength(1)
+        expect(analysis.problems[0], sample).toContain('<id> 不能为空')
+      } else {
+        expect(analysis.problems, sample).toEqual([])
+        expect(analysis.reasons, sample).toEqual([parsed])
+      }
     }
   })
 })

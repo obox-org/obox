@@ -4,12 +4,131 @@
  */
 import type { ExtensionInfo, ExtensionManifest, ExtensionSource, ValidationMessage } from './types'
 import { checkIpcChannelList } from '../../../shared/ipcDeclaration'
+import {
+  ACTIVATION_EVENT_PREFIXES,
+  parseActivationEvent,
+  type ActivationReason
+} from '../../../shared/extensionHostProtocol'
 import oboxPackage from '../../../../package.json'
 
 // issue #77：此前带 `i`，`MyExt`/`MY-EXT` 这类大写 id 会被接受；现按测试意图收紧为**仅小写**，
 // 大写 id 一律「清单无效」。这是行为变更（已安装的大写 id 用户扩展会变成无效清单）。
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/
 const SEMVER_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
+
+/* -------------------------------------------------------------------------------------------- */
+/* 激活事件（EH-C1 / ADR-0026 决策 6）                                                            */
+/* -------------------------------------------------------------------------------------------- */
+
+/**
+ * 4 类激活事件的**合法取值说明**。每一条激活事件 error 都带上它：用户不必去翻文档就知道该写什么。
+ *
+ * 与 `scripts/validate-manifest.mjs` 的同名常量**逐字一致**（差分门禁
+ * `test/manifest-script-parity.test.ts` 比对整条文案，漂移会红）。
+ */
+export const ACTIVATION_EVENT_HINT = '合法值：* / onStartupFinished / onCommand:<id> / onView:<id>'
+
+/** 清单里能写的 4 类激活事件（字符串形态）；结构化形态见 `ActivationReason` */
+export type ManifestActivationEvent =
+  '*' | 'onStartupFinished' | `onCommand:${string}` | `onView:${string}`
+
+/**
+ * 带 `activationEvents` 的清单类型（字段本身按 `unknown` 防御读取：它来自用户磁盘上的 JSON）。
+ *
+ * `ExtensionManifest`（`src/api/manifest.ts`）**尚未**声明该字段（EH-C1 的改动面被限定在
+ * `core/`；字段进公共类型要连带改扩展脚手架的 d.ts，归 EH-D1 的文档/类型卡）。在补齐之前，
+ * 仓库内读这个字段一律经本类型断言，避免各处各写一份 `as unknown as …`。
+ */
+export type ManifestWithActivationEvents = ExtensionManifest & { activationEvents?: unknown }
+
+/** 错误文案里描述一个非字符串的激活事件值（`5` / `true` / `{}` / `null` …） */
+function describeActivationValue(value: unknown): string {
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (value === undefined) return 'undefined'
+  try {
+    return JSON.stringify(value) ?? String(value)
+  } catch {
+    return String(value)
+  }
+}
+
+/**
+ * 解析清单 `activationEvents`：**校验与归一化共用这一份**（宿主运行期 `loader` 也走它）。
+ *
+ * 返回结构化 `reasons` 与逐条中文问题：
+ * - 缺失（`undefined` / `null`）⇒ 0 条 + 0 个问题（**缺省 = `*`**，由 `withDefaultActivation` 补；
+ *   现有 5 个扩展都不写这个字段，行为必须不变）；
+ * - 非数组 ⇒ 1 个问题；
+ * - 逐项：非字符串 / 认不出的字符串 / `<id>` 为空 ⇒ 各 1 个问题（**一处错一行**，不是整段一句）。
+ *
+ * 合法/非法的判定**只由 `parseActivationEvent()` 决定**（`src/shared/extensionHostProtocol.ts`，
+ * 宿主分派激活用的同一套语义），本文件不写第二份前缀解析——两处解析迟早分叉。
+ * 唯一在本文件追加的判据是「`<id>` 不能只有空白」：`parseActivationEvent('onCommand:  ')` 会解出
+ * `{ command: '  ' }`，而协议侧 `validateActivationReason` 要求 `command.trim()` 非空；不在这里
+ * 拦下的话，清单能过、激活信封却会被宿主判 `EH_INTERNAL`。
+ */
+export function analyzeActivationEvents(raw: unknown): {
+  reasons: ActivationReason[]
+  problems: string[]
+} {
+  const reasons: ActivationReason[] = []
+  const problems: string[] = []
+  if (raw === undefined || raw === null) return { reasons, problems }
+  if (!Array.isArray(raw)) {
+    problems.push(`activationEvents 必须是字符串数组（${ACTIVATION_EVENT_HINT}）`)
+    return { reasons, problems }
+  }
+  for (let i = 0; i < raw.length; i++) {
+    const item: unknown = raw[i]
+    const at = `activationEvents 第 ${i + 1} 项`
+    if (typeof item !== 'string') {
+      problems.push(
+        `${at}必须是字符串（收到 ${describeActivationValue(item)}，${ACTIVATION_EVENT_HINT}）`
+      )
+      continue
+    }
+    const parsed = parseActivationEvent(item)
+    if (!parsed) {
+      // `onCommand:` / `onView:` 这种「前缀对、后缀空」的写法单独给可执行文案：
+      // 用户最常见的错就是写了前缀忘了 id，回「不受支持」会让人以为自己记错了事件名。
+      const barePrefix =
+        item === ACTIVATION_EVENT_PREFIXES.command || item === ACTIVATION_EVENT_PREFIXES.view
+      problems.push(
+        barePrefix
+          ? `${at} ${JSON.stringify(item)} 的 <id> 不能为空（${ACTIVATION_EVENT_HINT}）`
+          : `${at} ${JSON.stringify(item)} 不受支持（${ACTIVATION_EVENT_HINT}）`
+      )
+      continue
+    }
+    if (typeof parsed === 'object') {
+      const target = 'command' in parsed ? parsed.command : parsed.view
+      if (target.trim() === '') {
+        problems.push(`${at} ${JSON.stringify(item)} 的 <id> 不能为空（${ACTIVATION_EVENT_HINT}）`)
+        continue
+      }
+    }
+    reasons.push(parsed)
+  }
+  return { reasons, problems }
+}
+
+/**
+ * `reasons` 为空时补 `*`（缺省 = 立即激活）——**缺省语义的唯一实现**。
+ * 非法项已被 `analyzeActivationEvents` 剔除；全部非法时同样退回 `['*']`：宁可照旧立即激活，
+ * 也不要因为清单写错让扩展永不激活（清单错误本身已让该扩展标红 + 不加载）。
+ */
+export function withDefaultActivation(reasons: readonly ActivationReason[]): ActivationReason[] {
+  return reasons.length > 0 ? [...reasons] : ['*']
+}
+
+/**
+ * 清单 `activationEvents` → 宿主要的结构化 `ActivationReason[]`（纯归一化，不报错）。
+ * 缺失 / 空数组 / 全非法 ⇒ `['*']`。重复声明**不去重**：宿主 `Activator.dispatch()` 对同一扩展
+ * 只激活一次（`active` 表），保留用户原文更便于日志里对照清单。
+ */
+export function normalizeActivationEvents(raw: unknown): ActivationReason[] {
+  return withDefaultActivation(analyzeActivationEvents(raw).reasons)
+}
 
 /** 校验 manifest，返回错误消息列表（空 = 合法） */
 export function validateManifest(raw: unknown): ValidationMessage[] {
@@ -25,6 +144,10 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
   if (typeof m.version !== 'string' || !SEMVER_RE.test(m.version)) {
     messages.push({ severity: 'error', message: 'version 必填且必须是 semver（如 1.0.0）' })
   }
+  // apiVersion 门槛：宿主值**单源**读根 `package.json` 的 `apiVersion`（ADR-0026 决策 8 起为 **3**，
+  // 运行时环境变了：无 DOM/localStorage、能力来自宿主进程）。规则本身不变——清单声明 **高于**宿主值
+  // 才拒绝加载（`2 <= 3` 合法：pet 这类老扩展照常加载）；文案里的"当前 obox 为 vN"也由该字段给出，
+  // 不硬编码版本号，升级时不需要再回来改这一句。
   if (m.apiVersion !== undefined) {
     const apiVersion = m.apiVersion as unknown
     if (typeof apiVersion !== 'number' || !Number.isInteger(apiVersion) || apiVersion < 0) {
@@ -38,6 +161,12 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
   }
   if (typeof m.main !== 'string' || !m.main.trim()) {
     messages.push({ severity: 'error', message: 'main（扩展入口）必填' })
+  }
+  // 激活事件（EH-C1 / ADR-0026 决策 6）：只认 4 类 + 缺省 `*`。未知事件 / `<id>` 空 / 非字符串一律
+  // **error**——扩展被标记无效（isValid=false）且 loader 不再收集它，而不是"静默按 * 立即激活"。
+  // 解析只走 `analyzeActivationEvents`（内部复用宿主侧 `parseActivationEvent`），不写第二份。
+  for (const problem of analyzeActivationEvents(m.activationEvents).problems) {
+    messages.push({ severity: 'error', message: problem })
   }
   if (m.contributes !== undefined && typeof m.contributes !== 'object') {
     messages.push({ severity: 'error', message: 'contributes 必须是对象' })

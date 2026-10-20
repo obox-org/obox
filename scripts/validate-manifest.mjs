@@ -17,10 +17,16 @@
  * 又会连带 import package.json 与 shared/ipcDeclaration。规则因此在这里重写一份，
  * 并用 test/manifest-script-parity.test.ts 的**差分门禁**保证两边逐字一致（同批 fixture 喂两边比对）。
  *
- * 规则镜像三处（报错文案与宿主逐字一致，改宿主必须同步这里）：
- *   - src/renderer/src/core/manifest.ts:15-129       → error
- *   - src/shared/ipcDeclaration.ts                    → contributes.ipcChannels 的 error
- *   - src/renderer/src/core/host.ts:131-230           → warning（仅取可由 manifest 静态判定的）
+ * 规则镜像四处（报错文案与宿主逐字一致，改宿主必须同步这里）：
+ *   - src/renderer/src/core/manifest.ts 的 validateManifest()          → error
+ *   - src/renderer/src/core/manifest.ts 的 analyzeActivationEvents()    → activationEvents 的 error（EH-C1）
+ *   - src/shared/ipcDeclaration.ts                                      → contributes.ipcChannels 的 error
+ *   - src/renderer/src/core/host.ts 的 registerContributions()          → warning（仅取可由 manifest 静态判定的）
+ *
+ * `activationEvents` 的合法/非法判据与宿主同源语义：4 类（`*` / `onStartupFinished` /
+ * `onCommand:<id>` / `onView:<id>`）、缺省 = `*`（不写即立即激活）、未知事件 / `<id>` 为空 /
+ * 非字符串一律 error。宿主侧解析由 shared/extensionHostProtocol.ts 的 parseActivationEvent() 完成，
+ * 本脚本按"自包含"约束重写一份 parseActivationEvent（见下方），差分门禁逐条比对文案。
  *
  * 有两条宿主 warning **故意不实现**（它们依赖运行期状态，静态校验拿不到）：
  *   - `快捷键 X 已被 Y 占用（… 未注册）`：需要宿主 keybindingStore 的全局状态；
@@ -141,6 +147,101 @@ function checkIpcChannelList(raw) {
     seen.add(id)
   }
   return { ok: true }
+}
+
+// ---------------------------------------------------------------- 激活事件（EH-C1）
+
+/**
+ * 4 类激活事件的合法取值说明；与 `core/manifest.ts` 的 `ACTIVATION_EVENT_HINT` **逐字一致**
+ * （每条激活事件 error 都带上它，用户不必翻文档就知道该写什么）。
+ */
+const ACTIVATION_EVENT_HINT = '合法值：* / onStartupFinished / onCommand:<id> / onView:<id>'
+
+/** 镜像 `shared/extensionHostProtocol.ts` 的 `ACTIVATION_EVENT_PREFIXES` */
+const ACTIVATION_EVENT_PREFIXES = { command: 'onCommand:', view: 'onView:' }
+
+/**
+ * 镜像 `shared/extensionHostProtocol.ts` 的 `parseActivationEvent()`（语义逐字一致）：
+ * 清单里的激活事件字符串 → 结构化原因，认不出返回 `null`。
+ *
+ * 这段解析在宿主侧是**唯一**判据（清单校验与宿主分派共用）；脚本因为自包含约束只能复制，
+ * 差分门禁 `test/manifest-script-parity.test.ts` 用同一批 fixture 喂两边比对结论。
+ */
+function parseActivationEvent(event) {
+  if (event === '*') return '*'
+  if (event === 'onStartupFinished') return 'onStartupFinished'
+  if (event.startsWith(ACTIVATION_EVENT_PREFIXES.command)) {
+    const command = event.slice(ACTIVATION_EVENT_PREFIXES.command.length)
+    return command ? { command } : null
+  }
+  if (event.startsWith(ACTIVATION_EVENT_PREFIXES.view)) {
+    const view = event.slice(ACTIVATION_EVENT_PREFIXES.view.length)
+    return view ? { view } : null
+  }
+  return null
+}
+
+/** 镜像 `core/manifest.ts` 的 `describeActivationValue()`（错误文案里描述非字符串值） */
+function describeActivationValue(value) {
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (value === undefined) return 'undefined'
+  try {
+    const text = JSON.stringify(value)
+    return text === undefined ? String(value) : text
+  } catch {
+    return String(value)
+  }
+}
+
+/**
+ * 镜像 `core/manifest.ts` 的 `analyzeActivationEvents()`。
+ *
+ * - 缺失（`undefined` / `null`）⇒ 0 条 + 0 个问题（**缺省 = `*`**，现有扩展都不写这个字段）；
+ * - 非数组 ⇒ 1 个问题；
+ * - 逐项：非字符串 / 认不出 / `<id>` 为空 ⇒ 各 1 个问题。
+ *
+ * 返回 `{ reasons, problems }`；CLI 只用 `problems`，`reasons` 保留是为了与宿主同形，
+ * 差分门禁 `test/manifest-script-parity.test.ts` 直接喂内存夹具比对两侧解析结果。
+ * 导出供测试使用（CLI 只在直接执行时跑，见文件尾的 isMainModule 守卫）。
+ */
+export function analyzeActivationEvents(raw) {
+  const reasons = []
+  const problems = []
+  if (raw === undefined || raw === null) return { reasons, problems }
+  if (!Array.isArray(raw)) {
+    problems.push(`activationEvents 必须是字符串数组（${ACTIVATION_EVENT_HINT}）`)
+    return { reasons, problems }
+  }
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i]
+    const at = `activationEvents 第 ${i + 1} 项`
+    if (typeof item !== 'string') {
+      problems.push(
+        `${at}必须是字符串（收到 ${describeActivationValue(item)}，${ACTIVATION_EVENT_HINT}）`
+      )
+      continue
+    }
+    const parsed = parseActivationEvent(item)
+    if (!parsed) {
+      const barePrefix =
+        item === ACTIVATION_EVENT_PREFIXES.command || item === ACTIVATION_EVENT_PREFIXES.view
+      problems.push(
+        barePrefix
+          ? `${at} ${JSON.stringify(item)} 的 <id> 不能为空（${ACTIVATION_EVENT_HINT}）`
+          : `${at} ${JSON.stringify(item)} 不受支持（${ACTIVATION_EVENT_HINT}）`
+      )
+      continue
+    }
+    if (typeof parsed === 'object') {
+      const target = parsed.command !== undefined ? parsed.command : parsed.view
+      if (target.trim() === '') {
+        problems.push(`${at} ${JSON.stringify(item)} 的 <id> 不能为空（${ACTIVATION_EVENT_HINT}）`)
+        continue
+      }
+    }
+    reasons.push(parsed)
+  }
+  return { reasons, problems }
 }
 
 // ---------------------------------------------------------------- 宿主 warning（可静态判定的）
@@ -337,6 +438,10 @@ export function validateManifest(raw, oboxApiVersion) {
   }
   if (typeof m.main !== 'string' || !m.main.trim()) {
     messages.push({ level: 'error', message: 'main（扩展入口）必填' })
+  }
+  // EH-C1：激活事件只认 4 类 + 缺省 `*`。未知事件 / `<id>` 空 / 非字符串 ⇒ error（扩展无效、不加载）。
+  for (const problem of analyzeActivationEvents(m.activationEvents).problems) {
+    messages.push({ level: 'error', message: problem })
   }
   if (m.contributes !== undefined && typeof m.contributes !== 'object') {
     messages.push({ level: 'error', message: 'contributes 必须是对象' })
