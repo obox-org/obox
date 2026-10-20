@@ -1,0 +1,9 @@
+{
+  "name": "bad-activation-non-array",
+  "version": "1.0.0",
+  "apiVersion": 3,
+  "displayName": "激活事件非数组",
+  "description": "差分门禁（EH-C1）：activationEvents 写成字符串 ⇒ 两侧同一句 error",
+  "main": "./index.js",
+  "activationEvents": "onCommand:bad-activation-non-array.hello"
+}

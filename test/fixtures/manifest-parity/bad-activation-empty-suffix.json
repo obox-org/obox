@@ -1,0 +1,9 @@
+{
+  "name": "bad-activation-empty-suffix",
+  "version": "1.0.0",
+  "apiVersion": 3,
+  "displayName": "激活事件后缀为空",
+  "description": "差分门禁（EH-C1）：onCommand: 与 onView:（含只有空白）⇒ 两侧都报 <id> 不能为空",
+  "main": "./index.js",
+  "activationEvents": ["onCommand:", "onView:   "]
+}

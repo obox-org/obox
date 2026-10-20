@@ -1,0 +1,9 @@
+{
+  "name": "ok-activation-events",
+  "version": "1.0.0",
+  "apiVersion": 3,
+  "displayName": "4 类激活事件全合法",
+  "description": "差分门禁（EH-C1）：* / onStartupFinished / onCommand:<id> / onView:<id> 四条都必须 0 error",
+  "main": "./index.js",
+  "activationEvents": ["*", "onStartupFinished", "onCommand:ok-activation-events.hello", "onView:ok-activation-events.panel"]
+}

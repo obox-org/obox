@@ -457,8 +457,8 @@ describe('apiVersion 递增 · 单源与门槛', () => {
 
   const valid = { name: 'pet', version: '1.0.0', main: './index.js' }
 
-  it('根 package.json 的 apiVersion === 2（整数；新增 overlay + progress 扩展面 API）', () => {
-    expect(pkg.apiVersion).toBe(2)
+  it('根 package.json 的 apiVersion === 3（整数；ADR-0026 决策 8：运行时环境变了，能力来自宿主进程）', () => {
+    expect(pkg.apiVersion).toBe(3)
     expect(Number.isInteger(pkg.apiVersion)).toBe(true)
   })
 
@@ -480,9 +480,9 @@ describe('apiVersion 递增 · 单源与门槛', () => {
   })
 
   it('负向：apiVersion 高于宿主 / 字符串 / 负数 / 非整数 → 门槛拒绝', () => {
-    // 字面断言钉死"当前宿主为 v2"（未来递增 apiVersion 时须同步更新本用例）
-    expect(errors({ ...valid, apiVersion: 3 })).toEqual([
-      '需要 obox API v3 或更高（当前 obox 为 v2）'
+    // 字面断言钉死"当前宿主为 v3"（未来递增 apiVersion 时须同步更新本用例）
+    expect(errors({ ...valid, apiVersion: 4 })).toEqual([
+      '需要 obox API v4 或更高（当前 obox 为 v3）'
     ])
     expect(errors({ ...valid, apiVersion: '2' })).toEqual(['apiVersion 必须是大于等于 0 的整数'])
     expect(errors({ ...valid, apiVersion: -1 })).toEqual(['apiVersion 必须是大于等于 0 的整数'])

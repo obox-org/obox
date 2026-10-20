@@ -1,0 +1,9 @@
+{
+  "name": "bad-activation-unknown",
+  "version": "1.0.0",
+  "apiVersion": 3,
+  "displayName": "未知激活事件",
+  "description": "差分门禁（EH-C1）：onDebug:foo 不在 4 类里 ⇒ 两侧同一句 error",
+  "main": "./index.js",
+  "activationEvents": ["onCommand:bad-activation-unknown.hello", "onDebug:foo"]
+}

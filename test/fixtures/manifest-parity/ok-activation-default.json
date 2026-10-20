@@ -1,0 +1,8 @@
+{
+  "name": "ok-activation-default",
+  "version": "1.0.0",
+  "apiVersion": 3,
+  "displayName": "缺省激活事件",
+  "description": "差分门禁（EH-C1）：不写 activationEvents ⇒ 缺省 *，两侧都必须 0 error",
+  "main": "./index.js"
+}
