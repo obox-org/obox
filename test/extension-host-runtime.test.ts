@@ -1070,12 +1070,10 @@ test('fs 能力：真的能读写扩展 data 目录，越界路径拒绝', async
   assert.equal(built.api.env.nodeVersion, process.versions.node)
   assert.equal(built.api.env.language, 'zh')
 
-  // fs.readDir 之外：watch/unwatch 是桩
-  await assert.rejects(
-    built.api.fs.watch('w', '.', () => {}),
-    /尚未迁移/
-  )
-  await assert.rejects(built.api.fs.unwatch('w'), /尚未迁移/)
+  // EH-B1：watch/unwatch 已从桩变实现（真 Node fs.watch，真事件见 test/extension-host-io.test.ts）。
+  // 这里只验「不再是抛『尚未迁移』的桩」：注册得进、取消得掉。
+  await built.api.fs.watch('w', '.', () => {})
+  await built.api.fs.unwatch('w')
 })
 
 test('timer 能力：按秒触发、可 clear、dispose 清干净', async () => {
@@ -1144,6 +1142,8 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     .sort()
   assert.deepEqual(implemented, [
     'appInfo.get',
+    'clipboard.readText',
+    'clipboard.writeText',
     'env.arch',
     'env.getOboxVersion',
     'env.language',
@@ -1153,9 +1153,12 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'fs.readDir',
     'fs.readFile',
     'fs.remove',
+    'fs.unwatch',
+    'fs.watch',
     'fs.writeFile',
     'i18n.locale',
     'log',
+    'net.fetch',
     'timer.clearInterval',
     'timer.clearTimeout',
     'timer.setInterval',
@@ -1164,8 +1167,8 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
 
   const stubs = rows.filter((row) => row.status === 'stub')
   // 行数与分布锁死：阶段 B 把某个桩落地时这里会失败，提醒同步对照表（而不是悄悄少一行）
-  assert.equal(rows.length, 99, '对照表共 99 项（17 已实现 + 82 桩）')
-  assert.equal(stubs.length, 82, '桩 82 项（阶段 B 待迁移）')
+  assert.equal(rows.length, 99, '对照表共 99 项（22 已实现 + 77 桩）')
+  assert.equal(stubs.length, 77, '桩 77 项（阶段 B 待迁移；EH-B1 已带走 5 项）')
   assert.equal(
     rows.length,
     implemented.length + stubs.length,

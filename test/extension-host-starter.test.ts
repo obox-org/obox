@@ -19,12 +19,17 @@ import {
   EH_ERROR_TEXT,
   PROTOCOL_VERSION,
   TERMINATE_GRACE_MS,
+  EhProtocolError,
   createActivateEnvelope,
+  createCancelEnvelope,
   createInitializedEnvelope,
   createLogEnvelope,
   createReadyEnvelope,
+  createRequestEnvelope,
   createResponseEnvelope,
-  type Envelope
+  type Envelope,
+  type ErrorEnvelope,
+  type ResponseEnvelope
 } from '../src/shared/extensionHostProtocol'
 
 /* -------------------------------------------------------------------------------------------- */
@@ -954,4 +959,131 @@ test('describeExtensionHostCrash：合成退出码有专属中文文案，真实
   )
   assert.match(describeExtensionHostCrash({ code: EXIT_CODE_FORK_FAILED, at: 0 }), /无法拉起/)
   assert.match(describeExtensionHostCrash({ code: 12, at: 0 }), /退出码 12/)
+})
+
+/* -------------------------------------------------------------------------------------------- */
+/* 11. 宿主 → main 的请求（EH-B1 的 `registerMethod`）                                             */
+/* -------------------------------------------------------------------------------------------- */
+
+/** 等某个 `res`/`err` 信封（`RpcServer.dispatch` 是异步的，不能同步断言） */
+async function waitForReply(
+  child: FakeChild,
+  type: 'res' | 'err',
+  id: number
+): Promise<ResponseEnvelope | ErrorEnvelope> {
+  const startedAt = Date.now()
+  for (;;) {
+    const found = child.messages.find((envelope) => envelope.t === type && envelope.id === id)
+    if (found) return found as ResponseEnvelope | ErrorEnvelope
+    if (Date.now() - startedAt > 3000) throw new Error(`等待 ${type}#${id} 超时`)
+    await new Promise<void>((resolve): void => {
+      setTimeout(resolve, 5)
+    })
+  }
+}
+
+test('registerMethod：宿主 req 按 method 分发并回 res；参数原样透传，可查可注销', async () => {
+  const harness = createHarness()
+  const pending = harness.starter.start()
+  const child = handshake(harness)
+  await pending
+
+  const seen: unknown[] = []
+  const unregister = harness.starter.registerMethod('host.proxyConfig', (params) => {
+    seen.push(params)
+    return { proxy: null, ignoreSSL: true }
+  })
+  assert.deepEqual(harness.starter.registeredMethods(), ['host.proxyConfig'])
+
+  child.emitMessage(createRequestEnvelope(7, 'host.proxyConfig', { a: 1 }))
+  const res = (await waitForReply(child, 'res', 7)) as ResponseEnvelope
+  assert.deepEqual(res.result, { proxy: null, ignoreSSL: true })
+  assert.deepEqual(seen, [{ a: 1 }], 'params 必须原样交给 handler')
+
+  unregister()
+  assert.deepEqual(harness.starter.registeredMethods(), [], '注销后 method 应消失')
+  child.emitMessage(createRequestEnvelope(8, 'host.proxyConfig', null))
+  const err = (await waitForReply(child, 'err', 8)) as ErrorEnvelope
+  assert.equal(err.code, 'EH_INTERNAL')
+  assert.match(err.message, /未知 RPC method "host\.proxyConfig"/)
+})
+
+test('registerMethod：handler 抛错转 err 信封（EhProtocolError 保留码，普通 Error 记 EH_INTERNAL）', async () => {
+  const harness = createHarness()
+  const pending = harness.starter.start()
+  const child = handshake(harness)
+  await pending
+
+  harness.starter.registerMethod('host.clipboard', (): never => {
+    throw new EhProtocolError('EH_INTERNAL', '剪贴板被占用')
+  })
+  harness.starter.registerMethod('host.boom', (): never => {
+    throw new Error('处理函数炸了')
+  })
+
+  child.emitMessage(createRequestEnvelope(11, 'host.clipboard', { action: 'read' }))
+  child.emitMessage(createRequestEnvelope(12, 'host.boom', null))
+  const first = (await waitForReply(child, 'err', 11)) as ErrorEnvelope
+  const second = (await waitForReply(child, 'err', 12)) as ErrorEnvelope
+
+  assert.equal(first.code, 'EH_INTERNAL')
+  assert.match(first.message, /剪贴板被占用/)
+  assert.equal(second.code, 'EH_INTERNAL')
+  assert.match(second.message, /处理函数炸了/)
+  // handler 抛错必须留痕（否则只会表现为"没反应"）
+  assert.ok(logMessages(harness, 'error').some((message) => message.includes('host.boom')))
+})
+
+test('registerMethod：并发两个请求按 id 配对（先完成的先回，不串号）', async () => {
+  const harness = createHarness()
+  const pending = harness.starter.start()
+  const child = handshake(harness)
+  await pending
+
+  harness.starter.registerMethod('host.slow', async (params): Promise<{ done: string }> => {
+    const { id, ms } = params as { id: string; ms: number }
+    await new Promise<void>((resolve): void => {
+      setTimeout(resolve, ms)
+    })
+    return { done: id }
+  })
+
+  child.emitMessage(createRequestEnvelope(21, 'host.slow', { id: 'first', ms: 40 }))
+  child.emitMessage(createRequestEnvelope(22, 'host.slow', { id: 'second', ms: 1 }))
+  const first = (await waitForReply(child, 'res', 21)) as ResponseEnvelope
+  const second = (await waitForReply(child, 'res', 22)) as ResponseEnvelope
+
+  assert.deepEqual(first.result, { done: 'first' })
+  assert.deepEqual(second.result, { done: 'second' })
+  assert.ok(
+    child.messages.indexOf(second) < child.messages.indexOf(first),
+    '后发的快请求应先回（说明两个请求真的并发，而不是串行）'
+  )
+})
+
+test('registerMethod：重复注册抛错；宿主 cancel → 该请求以 EH_CANCELLED 收尾', async () => {
+  const harness = createHarness()
+  const pending = harness.starter.start()
+  const child = handshake(harness)
+  await pending
+
+  harness.starter.registerMethod('host.x', (): { ok: true } => ({ ok: true }))
+  assert.throws(
+    (): void => {
+      harness.starter.registerMethod('host.x', (): { ok: true } => ({ ok: true }))
+    },
+    /重复注册/,
+    '静默覆盖会让"handler 没被调用"变成一次二小时的排查'
+  )
+
+  harness.starter.registerMethod('host.slow2', async (): Promise<string> => {
+    await new Promise<void>((resolve): void => {
+      setTimeout(resolve, 30)
+    })
+    return 'late'
+  })
+  child.emitMessage(createRequestEnvelope(31, 'host.slow2', null))
+  child.emitMessage(createCancelEnvelope(31))
+  const err = (await waitForReply(child, 'err', 31)) as ErrorEnvelope
+  assert.equal(err.code, 'EH_CANCELLED')
 })
