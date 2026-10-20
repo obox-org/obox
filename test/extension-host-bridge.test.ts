@@ -19,7 +19,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   EH_ERROR_TEXT,
   EhProtocolError,
@@ -33,6 +33,7 @@ import {
 import {
   ANY_EVENT_CHANNEL,
   EXTENSION_HOST_ENV,
+  clearRendererFallback,
   createExtensionHostBridge,
   handOverToExtensionHost,
   isExtensionHostEnabled,
@@ -41,6 +42,7 @@ import {
   type ExtensionHostChannel
 } from '../src/renderer/src/core/extensionHostBridge'
 import { collectHostedExtensions } from '../src/renderer/src/core/loader'
+import { stateStore } from '../src/renderer/src/core/state'
 import type { ExtensionHostPhase, ExtensionHostStatusSnapshot } from '../src/shared/types'
 
 /* -------------------------------------------------------------------------------------------- */
@@ -841,17 +843,32 @@ function hostEntry(
 
 afterEach(() => {
   delete (globalThis as unknown as { window?: unknown }).window
-  // EH-D2a：开关优先级是「设置项 > 环境变量 > 默认开」，而设置项存在 localStorage 里。
-  // 不清理会让"某条用例写过设置=关"泄漏到后续用例，使它们解析成"关"（CI 上真实发生过：
-  // 「开关打开 ⇒ 只激活内置」那条曾因此变红）。
+  // EH-D2a 之后开关解析是「回退标记 > 设置项 > 环境变量 > 默认开」，前两者都是**进程内可变状态**：
+  // 回退标记在 sessionStorage（节点环境下可能存在但不可用），设置项在 stateStore 的内存单例里。
+  // 用例之间不清干净，后一条用例就会读到前一条留下的"关"，在 CI（Node 的 localStorage 不可用）
+  // 上真实红过。这里统一复位，让每条用例从"未设过 + 无回退标记"开始。
   try {
-    localStorage.clear()
+    clearRendererFallback()
   } catch {
-    /* 没有 localStorage 的环境（纯 node）忽略 */
+    /* 忽略 */
+  }
+  try {
+    // 只在确实设过时复位：避免在 node 环境（无 localStorage）里每次 afterEach 都触发一次
+    // "persist failed" 噪音日志。
+    if (stateStore.getExtensionHostEnabled() !== undefined) {
+      stateStore.setSetting('extensionHost.enabled', undefined)
+    }
+  } catch {
+    /* 忽略 */
   }
 })
 
 describe('渲染侧 host.start()：开关关闭 ⇒ 默认行为零变化', () => {
+  // 用**设置项**显式驱动（优先级最高、且不受 env/回退标记等环境状态影响）；
+  // env 的解析本身由 `test/extension-host-flag.test.ts` 单独穷举，这里不重复依赖它。
+  beforeEach(() => {
+    stateStore.setSetting('extensionHost.enabled', false)
+  })
   it('显式关闭（OBOX_EXTENSION_HOST=0）⇒ 不 start 宿主、不交清单，用户扩展照旧在渲染进程激活', async () => {
     // 2.0.0 起「未设置」= **默认开**（EH-D2a，见 test/extension-host-flag.test.ts 的优先级表），
     // 所以"零变化"这条路径要用**显式关闭**来驱动。
@@ -888,6 +905,10 @@ describe('渲染侧 host.start()：开关关闭 ⇒ 默认行为零变化', () =
 })
 
 describe('渲染侧 host.start()：开关打开 ⇒ 交接 + 跳过用户扩展激活', () => {
+  // 同上：显式用设置项打开，避免依赖环境变量/回退标记的残留状态。
+  beforeEach(() => {
+    stateStore.setSetting('extensionHost.enabled', true)
+  })
   it('清单形状正确、渲染侧只激活内置、宿主收到 start、桥已接上', async () => {
     const stub = installWindow({ flag: '1' })
     const activated: string[] = []
