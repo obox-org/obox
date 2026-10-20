@@ -103,12 +103,21 @@ jobs:
           Write-Output "uploading: $($assets -join ', ')"
           # 4) 发布：不存在则创建，已存在则覆盖上传（幂等，且**不删除 git tag**——
           #    旧实现 gh release delete --cleanup-tag 会连 tag 一起删，失败后 tag 丢失、窗口期更新检查 404）
+          #
+          # 预发布（v2.0.0-rc.1 / -beta.N / -alpha.N）：必须标记 --prerelease，
+          # 否则 /releases/latest 会指向预发布包，已发布版本的用户会被自动更新带到它。
+          $preArgs = @()
+          if ($tag -match '-(alpha|beta|rc)\.') {
+            Write-Output "预发布标签：$tag ⇒ 标记为 prerelease（不影响 /releases/latest 与自动更新）"
+            $preArgs = @('--prerelease')
+          }
           gh release view $tag 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) {
             Write-Output "release $tag 已存在：覆盖上传资产"
             gh release upload $tag $assets --clobber
+            if ($preArgs.Count -gt 0) { gh release edit $tag --prerelease }
           } else {
-            gh release create $tag $assets `
+            gh release create $tag $assets @preArgs `
               --title "obox $tag" `
               --notes "obox $tag Windows 安装包（x64 / arm64，向导式安装：可选目录与安装用户）"
           }
