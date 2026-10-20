@@ -55,6 +55,58 @@
  * 为什么这条很重要：这条缝曾经断过（`port.ts` 只取 `event.data`、把 `ports` 丢了），而没人发现，
  * 正是因为"什么都没发生"看起来像"什么都没配"。`test/extension-host-ui-plane.test.ts` 有一组
  * 接缝测试专门盯它。
+ *
+ * ---
+ *
+ * # EH-B3b-2 · 状态与 UI 面（本卡追加）
+ *
+ * 本卡接手最后 **10 项**桩，把对照表推到 **99 实现 + 0 桩**：`ui`(5) / `output.createChannel`(1) /
+ * `update` 的 4 条门控方法。它们与 B3b-1 的"注册面"不同：**渲染与判定都在渲染侧**，宿主只是发起方。
+ *
+ * ## 方向：宿主 → 渲染侧的 `req`（`RpcClient`）
+ *
+ * 同一个 `host-renderer` 端口上现在有**两条 RPC 方向**，各自一对 `RpcServer`/`RpcClient`（协议零扩展）：
+ *
+ * | 方向 | 宿主侧 | 渲染侧 | method |
+ * | --- | --- | --- | --- |
+ * | 渲染侧 → 宿主 | `RpcServer`（B3b-1） | `ExtensionHostBridge.request()` | `UI_PLANE_RPC` |
+ * | **宿主 → 渲染侧** | **`RpcClient`** | **`RpcServer`**（本卡） | **`UI_RENDERER_RPC`** |
+ *
+ * 为什么必须反过来起一个渲染侧 `RpcServer`：`ui.*` 的模态框/toast 由渲染进程的 `uiStore` 渲染、
+ * `output` 的通道由 `outputStore` 持有、`update` 的门控真相是渲染侧的 `updaterStore`。宿主进程
+ * 没有 DOM，也没有那三份状态——**谁能渲染/谁能判定，请求就发给谁**。复用 `../rpc.ts`（纯模块、
+ * 无 Node 依赖，main 早已复用同一份，见 `extensionHostStarter.ts` 的 `registerMethod`），语义
+ * （未知 method 列表、取消、超时、错误码）天然一致，不需要第二套。
+ *
+ * ## 语义**照抄 v1**（`core/host.ts` 的 `showUiModal` / `buildUpdateApi` / `output.createChannel`）
+ *
+ * - 模态框（quickPick / inputBox / form）：取消 ⇒ `undefined`；**60 秒无结果 ⇒ 取消**——v1 的
+ *   `src/main/ui.ts` 用的是 60s 定时器 + `canceled:true`，这里给 `RpcClient` 传
+ *   `timeoutMs: UI_MODAL_TIMEOUT_MS`，并把 `EH_TIMEOUT` **翻译成 `undefined`**（不是抛错）；
+ * - `ui.showMessage` 保持**同步 void**（v1 是 `uiStore.showToast`）：内部发一条 `ui.showMessage`
+ *   请求但不等待结果，失败只落宿主日志（toast 永远不该让扩展的调用点抛错）；
+ * - `output.createChannel` 保持**同步**并当场返回句柄：通道 id 由宿主生成（`host-output:<ext>:<n>`），
+ *   渲染侧用它当映射键（与 B3b-1 的 `statusBar.createItem` 同一手法），后续
+ *   `append`/`appendLine`/`show`/`clear`/`dispose` 全部走 `output` 通道的 `event`；
+ * - `update` 的 4 条：**渲染侧权威判定**（技术债 #2 的退场条件）——先问 `ui.updateGate`，只有
+ *   `{ok:true}` 才继续。非提供者抛 v1 那句「当前扩展不是生效的更新提供者（需在设置-更新中选择）」；
+ *   放行后经既有 `HostMainBridge` 发 `HOST_MAIN_METHODS.update*`（R70：main 侧已注册这 4 条，
+ *   实现复用 `src/main/updater.ts` 的同一份逻辑）。
+ *
+ * ## 窗口不在时**响亮**
+ *
+ * v1 的 `showUiModal` 在焦点不在 App 子窗口时走 `localFn`（主窗口本地渲染）。宿主模式下**没有
+ * 「本地」可退**：端口没到 ⇒ `EH_NOT_READY` + {@link HOST_RENDERER_PORT_MISSING}；端口到了但渲染
+ * 侧没有窗口（页面正在销毁/回退期）⇒ 渲染侧回 `EH_NOT_READY` + {@link UI_WINDOW_MISSING}。
+ * 两种情况都是**当场抛中文错误**，绝不静默地让扩展的 Promise 永远挂着。
+ *
+ * ## 新增的 `output` 事件 channel（为什么不复用既有 5 个）
+ *
+ * `EH_EVENT_CHANNELS` 里没有 output 语义的通道（statusBar/commands/views/app.register/settings/
+ * theme/bubble/cardIcon 都不沾边）。协议对 `event.channel` **不设白名单**（`validateEnvelope` 只要求
+ * 非空字符串，注释明说"新增已知 channel 时同步补到协议常量与文档"），而本卡所有权不含
+ * `src/shared/extensionHostProtocol.ts`，因此这里用**局部常量** {@link UI_PLANE_EVENT_CHANNELS}
+ * 声明 `output`，两侧逐字一致并由测试断言；把它并回协议常量是 D1 文档卡的一行活。
  */
 import { mkdirSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -63,6 +115,7 @@ import type {
   AppRegistration,
   ExtensionActivationApi,
   Memento,
+  OutputChannel,
   SettingsPage,
   StatusBarItem,
   TreeItem,
@@ -76,14 +129,24 @@ import {
   createEventEnvelope,
   type CancelEnvelope,
   type Envelope,
+  type ErrorEnvelope,
   type EventEnvelope,
   type LogLevel,
-  type RequestEnvelope
+  type RequestEnvelope,
+  type ResponseEnvelope
 } from '../../shared/extensionHostProtocol'
 import { toErrorMessage } from '../errors'
 import type { EnvelopeSink, HostLogger } from '../log'
 import { unwrapParentPortMessage, type HostRendererPortLike } from '../port'
-import { RpcServer } from '../rpc'
+import {
+  RpcClient,
+  RpcServer,
+  systemRpcTimers,
+  type RpcRequestOptions,
+  type RpcTimers
+} from '../rpc'
+import { HOST_MAIN_METHODS } from './host-main'
+import type { HostMainBridge } from './io'
 
 /* -------------------------------------------------------------------------------------------- */
 /* 常量                                                                                          */
@@ -103,8 +166,76 @@ export const UI_PLANE_RPC = {
   /** 取树视图子节点（渲染侧 `TreeView` 组件问回宿主里的 provider） */
   treeChildren: 'ui.treeChildren',
   /** 派发 App 子窗口消息（渲染侧消息桥寻址到某个宿主扩展后问回宿主） */
-  appMessage: 'ui.appMessage'
+  appMessage: 'ui.appMessage',
+  /**
+   * `ui.withProgress` 的**取消**（EH-B3b-2，渲染侧 → 宿主）。
+   *
+   * 为什么取消要单独一条而不是复用 `cancel` 信封：`cancel` 的语义是"**发起方**放弃自己那条
+   * 在途请求"，而这里发起方是宿主、放弃方是渲染侧（用户点了取消/进度被顶掉/窗口要关）。用一条
+   * 普通 `req` 表达"请把那个进度任务判为已取消"，宿主侧的回处理就是把对应 Promise 以
+   * `EH_CANCELLED` 结算——语义显式，且两边都不需要给协议加字段。
+   */
+  progressCancel: 'ui.progressCancel'
 } as const
+
+/**
+ * **宿主 → 渲染侧**的 RPC method（EH-B3b-2）。与本文件顶端的 `UI_PLANE_RPC` 方向相反。
+ *
+ * 渲染侧各写一份同名字符串（`src/renderer/src/core/extensionHostConsumer.ts` 的
+ * `HOSTED_RENDERER_RPC`）——理由与 B3b-1 相同：跨侧 import 会把宿主代码（含 `node:fs`）打进渲染包，
+ * 所以两边各写一份、由 `test/extension-host-ui-plane2.test.ts` 断言逐字一致。
+ */
+export const UI_RENDERER_RPC = {
+  /** 应用内 toast（`uiStore.showToast`；v1 的 `ui.showMessage` 是同步 void） */
+  showMessage: 'ui.showMessage',
+  /** 快速选择（取消 ⇒ `value:null`） */
+  showQuickPick: 'ui.showQuickPick',
+  /** 单行输入（取消 ⇒ `value:null`） */
+  showInputBox: 'ui.showInputBox',
+  /** 多字段表单（取消 ⇒ `value:null`） */
+  showForm: 'ui.showForm',
+  /** 进度开始（渲染侧建进度条并登记 progressId） */
+  withProgress: 'ui.withProgress',
+  /** 进度帧（percent） */
+  progressUpdate: 'ui.progressUpdate',
+  /** 进度结束（渲染侧拆除进度条） */
+  progressEnd: 'ui.progressEnd',
+  /** 更新门控判定（**渲染侧权威**：`updaterStore.isActive(extId)`） */
+  updateGate: 'ui.updateGate'
+} as const
+
+/**
+ * 本卡新增的 `event` channel（只有一条）。
+ *
+ * 为什么不加进 `EH_EVENT_CHANNELS`：那是 `src/shared/extensionHostProtocol.ts` 的常量表，本卡
+ * 所有权不含它；而协议**不限制** `event.channel` 的取值（`validateEnvelope` 只校验非空字符串，
+ * 且注释写明"新增已知 channel 时同步补到协议常量与文档"）。渲染侧同名常量见
+ * `HOSTED_UI_EVENT_CHANNELS`，测试断言两侧逐字一致。
+ */
+export const UI_PLANE_EVENT_CHANNELS = {
+  /** 输出通道：create / append / appendLine / show / clear / dispose / disposeExtension */
+  output: 'output'
+} as const
+
+/**
+ * 模态框的等待上限 = **60 秒**，与 v1 逐字同一个数（`src/main/ui.ts` 的 60_000 定时器 ⇒
+ * `canceled:true` ⇒ `undefined`）。超过它按"用户取消"处理（不是报错）。
+ */
+export const UI_MODAL_TIMEOUT_MS = 60_000
+
+/**
+ * 渲染侧**没有窗口**时的中文错误（渲染侧同名常量 `HOSTED_UI_WINDOW_MISSING`）。
+ *
+ * v1 的 `showUiModal` 在焦点不在 App 子窗口时走 `localFn`（主窗口本地渲染）；宿主模式下没有
+ * "本地"可退，因此窗口不在时**必须响亮**，绝不让扩展的 Promise 永远挂着（ADR-0026 的失败姿态）。
+ */
+export const UI_WINDOW_MISSING =
+  '界面窗口不在：该 UI（quickPick / inputBox / form / withProgress / toast）必须由渲染进程的 ' +
+  'uiStore 渲染，但当前渲染侧没有可用窗口（主窗口正在销毁或页面已卸载）。请等主窗口恢复后重试；' +
+  '宿主模式下没有 v1 的"本地渲染"兜底，所以这里明确报错而不是静默等待。'
+
+/** 更新门控拒绝时的文案（**逐字**照抄 v1 `core/host.ts` 的 `isProvider()`） */
+export const UPDATE_NOT_PROVIDER = '当前扩展不是生效的更新提供者（需在设置-更新中选择）'
 
 /** 端口没到时给的中文可执行文案（**固定句式**：接缝测试与日志都按这句话认） */
 export const HOST_RENDERER_PORT_MISSING =
@@ -167,6 +298,40 @@ export interface SettingsSnapshotPayload {
   locale: string
   themeId: string
 }
+
+/* -------------------------------------------------------------------------------------------- */
+/* 载荷类型 · EH-B3b-2（ui / output / update；渲染侧 consumer 有结构相同的定义）                      */
+/* -------------------------------------------------------------------------------------------- */
+
+/**
+ * `output` 通道的统一信封体（`op` 区分子操作）。
+ *
+ * 通道 id 由**宿主**生成（`host-output:<extId>:<seq>`）：`createChannel` 在扩展 API 里是**同步**
+ * 返回句柄的，宿主必须当场给出一个 id 才能让后续 `append` 有归属；渲染侧把它当映射键
+ * （它自己那份 `outputStore` 里的 `out-N` 只在渲染进程内有意义）。
+ */
+export type OutputPayload =
+  | { v: 1; op: 'create'; extId: string; id: string; name: string }
+  | { v: 1; op: 'append'; extId: string; id: string; text: string }
+  | { v: 1; op: 'appendLine'; extId: string; id: string; text: string }
+  | { v: 1; op: 'show'; extId: string; id: string }
+  | { v: 1; op: 'clear'; extId: string; id: string }
+  | { v: 1; op: 'dispose'; extId: string; id: string }
+  | { v: 1; op: 'disposeExtension'; extId: string }
+
+/** 模态框的回包形状（`value:null` = 取消；渲染侧保证不写 `undefined`——它过不了 `checkSerializable` 的语义） */
+export interface UiModalResult {
+  value: unknown | null
+}
+
+/**
+ * `ui.updateGate` 的回包。
+ *
+ * `ok:false` 时 `code` 固定 `not-provider`（宿主据此写日志/文案；目前只有这一种拒绝原因，
+ * 但留了 `code` 让将来"提供者扩展已停用"之类的原因可以区分，不必改信封）。
+ */
+export type UiUpdateGateResult =
+  { ok: true; feedUrl?: string } | { ok: false; code: 'not-provider'; error: string }
 
 /* -------------------------------------------------------------------------------------------- */
 /* 扩展清单（宿主自己读；与 ipc.ts 的 R61 同一先例）                                                */
@@ -353,6 +518,10 @@ interface ExtensionPlaneState {
   readonly busCleanups: Array<() => void>
   /** 本扩展已经发过的 `dispose` 句柄（幂等） */
   statusSeq: number
+  /** 本扩展创建过的输出通道数（生成 `host-output:<extId>:<n>` 的序号） */
+  outputSeq: number
+  /** 本扩展发起过的进度任务数（生成 `host-progress:<extId>:<n>` 的序号） */
+  progressSeq: number
 }
 
 /** hub 的构造参数 */
@@ -361,6 +530,13 @@ export interface UiPlaneHubOptions {
   rendererPort?: HostRendererPortLike | null
   /** hub 级日志（缺省丢弃；装配处会传宿主 logger） */
   log?: HostLogger
+  /**
+   * 宿主 → 渲染侧 `RpcClient` 的定时器（缺省 {@link systemRpcTimers}）。
+   * 单测注入假时钟才能断言"模态框 60 秒无结果 ⇒ 当取消"，而不用真的等一分钟。
+   */
+  rpcTimers?: RpcTimers
+  /** 模态框等待上限（毫秒，缺省 {@link UI_MODAL_TIMEOUT_MS}；单测可缩短） */
+  modalTimeoutMs?: number
 }
 
 /** `hub.forExtension()` 的参数 */
@@ -374,6 +550,28 @@ export interface UiPlaneExtensionOptions {
   log: HostLogger
   /** 读清单文本（缺省读 `<extensionDir>/manifest.json`；测试注入） */
   readManifest?: (extensionDir: string) => string
+  /**
+   * 宿主 → main 的请求通道（`apiFactory` 已经把 `options.hostMain` 接好）。
+   *
+   * 本卡只用于 `update` 的 4 条门控方法（门控放行后：解析源/检查/下载/安装都要 main 的
+   * `electron-updater`）。缺省 ⇒ 抛 `EH_INTERNAL` + 「需要主进程 IPC」，与 secrets/clipboard 同一口径。
+   */
+  hostMain?: HostMainBridge
+  /**
+   * 读当前代理配置（`update.*` 与 v1 一样带上代理：`window.api.resolveUpdateFeed(repo, proxy())`）。
+   *
+   * 由装配处提供（`() => hostMainCapabilities.proxy.get()`：宿主侧同步缓存，来自 main 的
+   * `host.proxy.get`），这样本文件不必知道 `ProxyConfig` 的形状。
+   */
+  readProxyConfig?: () => unknown
+}
+
+/** 本卡新增的三族能力（`apiFactory` 摊进 `api`） */
+export interface UiPlaneUpdateCapabilities {
+  readonly resolveFeed: ExtensionActivationApi['update']['resolveFeed']
+  readonly check: ExtensionActivationApi['update']['check']
+  readonly download: ExtensionActivationApi['update']['download']
+  readonly install: ExtensionActivationApi['update']['install']
 }
 
 /** 一个扩展拿到的数据面能力（`apiFactory` 直接摊进 `api`） */
@@ -389,6 +587,12 @@ export interface UiPlaneExtension {
   readonly emit: ExtensionActivationApi['emit']
   readonly registerCommand: ExtensionActivationApi['registerCommand']
   readonly executeCommand: ExtensionActivationApi['executeCommand']
+  /** EH-B3b-2：交互 UI（渲染侧 `uiStore` 渲染，宿主发起请求） */
+  readonly ui: ExtensionActivationApi['ui']
+  /** EH-B3b-2：输出通道（渲染侧 `outputStore` 持有；本文件只发事件） */
+  readonly output: ExtensionActivationApi['output']
+  /** EH-B3b-2：更新门控（渲染侧 `updaterStore` 判定，放行后回 main） */
+  readonly update: UiPlaneUpdateCapabilities
   /** 发 dispose 事件并清掉本扩展在 hub 里的一切（停用时调用；幂等） */
   dispose(): void
 }
@@ -468,6 +672,30 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     },
     log
   })
+
+  /**
+   * **宿主 → 渲染侧**的客户端（EH-B3b-2）：`ui.*` / `output` 之外的 4 条 `update` 门控与全部
+   * UI 请求都从这里发出。与服务端是同一份 `../rpc.ts` 实现，方向相反。
+   *
+   * 超时语义沿用 `ACK_TIMEOUT_MS`（3 秒）**只做默认**：模态框显式传 `timeoutMs = modalTimeoutMs`
+   * （v1 的 60 秒），因为"用户还没点"不是"对端卡住"。
+   */
+  const client = new RpcClient({
+    send: (envelope): void => {
+      sendEnvelope(envelope)
+    },
+    log,
+    timers: options.rpcTimers ?? systemRpcTimers
+  })
+  const modalTimeoutMs = options.modalTimeoutMs ?? UI_MODAL_TIMEOUT_MS
+
+  /**
+   * 在途的 `ui.withProgress` 会话（progressId → 取消入口）。
+   *
+   * 为什么放在 hub 级而不是扩展级：取消是渲染侧经 `ui.progressCancel` **按 progressId** 找回来的，
+   * 与哪个扩展无关（id 里已带 extId）；hub 级一张表才能让"取消一条已经不存在的进度"变成幂等 no-op。
+   */
+  const progressSessions = new Map<string, { cancel(): void; cancelled: boolean }>()
 
   /** 发一条 `event`（端口没到 ⇒ 抛 `EH_NOT_READY`，不静默） */
   const emit = (channel: string, payload: unknown): void => {
@@ -587,6 +815,27 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     return await entry.handler(...args)
   }
 
+  /**
+   * `ui.progressCancel`（渲染侧 → 宿主，EH-B3b-2）：把某个进度任务判为已取消。
+   *
+   * 幂等：进度已经结束（`progressSessions` 里没有它）时回 `{ok:false}` 而不是抛错——渲染侧的
+   * "结束"与"取消"可能交错到达（用户点取消的同时任务刚好跑完），那不是错误。
+   */
+  rpc.register(UI_PLANE_RPC.progressCancel, (params: unknown): { ok: boolean } => {
+    const record = asRecord(params)
+    const progressId = typeof record.progressId === 'string' ? record.progressId : ''
+    const session = progressId === '' ? undefined : progressSessions.get(progressId)
+    if (!session) {
+      log(
+        'debug',
+        `收到 ui.progressCancel（progressId=${progressId || '(未给)'}）：没有在途进度，忽略`
+      )
+      return { ok: false }
+    }
+    session.cancel()
+    return { ok: true }
+  })
+
   /* ------------------------------ 端口 ------------------------------ */
 
   const attachRendererPort = (port: HostRendererPortLike | null): void => {
@@ -617,6 +866,15 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     }
     if (envelope.t === 'cancel') {
       rpc.handleCancel(raw as CancelEnvelope)
+      return
+    }
+    if (envelope.t === 'res') {
+      // EH-B3b-2：宿主 → 渲染侧请求的**回包**（方向与下面三类相反）
+      client.handleResponse(raw as ResponseEnvelope)
+      return
+    }
+    if (envelope.t === 'err') {
+      client.handleError(raw as ErrorEnvelope)
       return
     }
     if (envelope.t === 'event') {
@@ -664,7 +922,9 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       appMessageHandler: null,
       statusBarItems: new Map(),
       busCleanups: [],
-      statusSeq: 0
+      statusSeq: 0,
+      outputSeq: 0,
+      progressSeq: 0
     }
     extensions.set(extId, state)
 
@@ -1059,6 +1319,363 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       }
     }
 
+    /* ------------------------------ 交互 UI（EH-B3b-2） ------------------------------ */
+
+    // 方向：**宿主 → 渲染侧**（上面的 `client`）。语义逐条照抄 v1（见文件头「语义照抄 v1」）：
+    // 端口没到 ⇒ `EH_NOT_READY`；端口到了但窗口不在 ⇒ 渲染侧回 `EH_NOT_READY` + UI_WINDOW_MISSING。
+
+    /** 请求参数先过可传输性守卫（函数/类实例/undefined 在跨进程**之前**就报清楚字段路径） */
+    const assertCallParams = (method: string, params: unknown): void => {
+      const measured = checkSerializable(params, `params(${method})`)
+      if (!measured.ok) {
+        throw new EhProtocolError(
+          'EH_UNSERIALIZABLE',
+          `调用渲染侧 ${method} 的参数无法跨进程传输：${measured.path} 是 ${measured.kind}。` +
+            '请只传纯数据；回调要留在宿主里（界面侧按 id 寻址回来）。'
+        )
+      }
+    }
+
+    /** 发一条宿主 → 渲染侧的请求（端口没到当场抛，不排队假成功） */
+    const callRenderer = async (
+      method: string,
+      params: unknown,
+      requestOptions?: RpcRequestOptions
+    ): Promise<unknown> => {
+      requirePort()
+      assertCallParams(method, params)
+      return await client.request(method, params, requestOptions)
+    }
+
+    /**
+     * 一条模态框请求：回 `{value}`，`null`/缺省 = 取消 ⇒ `undefined`。
+     *
+     * `EH_TIMEOUT` **也当取消**：v1 的 `src/main/ui.ts` 是 60s 定时器 ⇒ `canceled:true` ⇒ `undefined`。
+     * 这里用同一个数（`UI_MODAL_TIMEOUT_MS`）并做同样的翻译，区别只是"谁在计时"（宿主侧 RpcClient）。
+     */
+    const runModal = async <T>(method: string, params: unknown): Promise<T | undefined> => {
+      let raw: unknown
+      try {
+        raw = await callRenderer(method, params, { timeoutMs: modalTimeoutMs })
+      } catch (error) {
+        if (error instanceof EhProtocolError && error.code === 'EH_TIMEOUT') {
+          extLog(
+            'warn',
+            `${method} 在 ${modalTimeoutMs}ms 内没有结果，按 v1 语义当作取消（返回 undefined）`,
+            'v1 的 src/main/ui.ts 也是 60s 定时器 ⇒ canceled:true'
+          )
+          return undefined
+        }
+        // 其余错误（EH_NOT_READY / EH_CANCELLED / EH_INTERNAL）原样抛：链路与窗口问题必须响亮
+        throw error
+      }
+      const value = asRecord(raw).value
+      return value === null || value === undefined ? undefined : (value as T)
+    }
+
+    const ui: ExtensionActivationApi['ui'] = {
+      showQuickPick(items, opts) {
+        const list = Array.isArray(items) ? items.map((item) => compactShallow(item)) : []
+        return runModal<string>(
+          UI_RENDERER_RPC.showQuickPick,
+          opts === undefined ? { items: list } : { items: list, opts: compactShallow(opts) }
+        )
+      },
+      showInputBox(opts) {
+        return runModal<string>(
+          UI_RENDERER_RPC.showInputBox,
+          opts === undefined ? {} : compactShallow(opts)
+        )
+      },
+      showMessage(message, type = 'info') {
+        // v1 是**同步 void**（`uiStore.showToast`）：所以这里也不返回 Promise，失败只落宿主日志
+        // （一条 toast 不该让扩展的调用点抛错）；但"端口没到"仍然当场抛——那是接缝问题，必须响亮。
+        requirePort()
+        void callRenderer(UI_RENDERER_RPC.showMessage, {
+          message: typeof message === 'string' ? message : String(message ?? ''),
+          type: normalizeToastType(type)
+        }).catch((error: unknown): void => {
+          extLog('warn', 'ui.showMessage 没有送到界面', toErrorMessage(error))
+        })
+      },
+      showForm(opts) {
+        const fields = Array.isArray(opts?.fields)
+          ? opts.fields.map((field) => compactShallow(field))
+          : []
+        const params: Record<string, unknown> = { fields }
+        if (opts?.title !== undefined) params.title = opts.title
+        if (opts?.closeOnClickOutside !== undefined) {
+          params.closeOnClickOutside = opts.closeOnClickOutside
+        }
+        return runModal<Record<string, unknown>>(UI_RENDERER_RPC.showForm, params)
+      },
+      withProgress: async <T>(
+        title: string,
+        task: (report: (percent: number) => void) => Promise<T>
+      ): Promise<T> => {
+        if (typeof task !== 'function') {
+          throw new Error('ui.withProgress 的 task 必须是函数')
+        }
+        requirePort()
+        state.progressSeq += 1
+        const progressId = `host-progress:${extId}:${state.progressSeq}`
+        /** 取消入口（渲染侧经 `ui.progressCancel` 触发；会话结束时整条删掉） */
+        const session = {
+          cancelled: false,
+          cancel: (): void => {}
+        }
+        await callRenderer(UI_RENDERER_RPC.withProgress, {
+          progressId,
+          extId,
+          title: typeof title === 'string' ? title : String(title ?? '')
+        })
+
+        progressSessions.set(progressId, session)
+        /** 取消信号：reject 一条永不 resolve 的 Promise，让 `Promise.race` 以 `EH_CANCELLED` 结算 */
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          session.cancel = (): void => {
+            if (session.cancelled) return
+            session.cancelled = true
+            reject(
+              new EhProtocolError(
+                'EH_CANCELLED',
+                '进度已被界面取消：该 ui.withProgress 的任务被放弃（宿主侧 Promise 以 EH_CANCELLED 失败）',
+                `progressId=${progressId}`
+              )
+            )
+          }
+        })
+        /** 进度帧：取消之后不再发（渲染侧进度条已经拆掉了） */
+        const report = (percent: number): void => {
+          if (session.cancelled) return
+          const value = typeof percent === 'number' && Number.isFinite(percent) ? percent : 0
+          void callRenderer(UI_RENDERER_RPC.progressUpdate, { progressId, percent: value }).catch(
+            (error: unknown): void => {
+              extLog(
+                'debug',
+                `ui.withProgress 的进度帧没有送到界面（${progressId}）`,
+                toErrorMessage(error)
+              )
+            }
+          )
+        }
+
+        try {
+          const taskPromise = Promise.resolve().then(() => task(report))
+          // 取消之后没人再等它：先挂一个空 catch，避免宿主日志被 unhandledRejection 刷屏
+          taskPromise.catch((): void => {})
+          return await Promise.race([taskPromise, cancelled])
+        } finally {
+          progressSessions.delete(progressId)
+          if (!disposed && rendererPort) {
+            // 无论成功/失败/取消都要拆掉界面的进度条（v1 的 `finally { hideProgress() }`）
+            void callRenderer(UI_RENDERER_RPC.progressEnd, { progressId }).catch(
+              (error: unknown): void => {
+                extLog(
+                  'debug',
+                  `ui.withProgress 结束时拆除进度条失败（${progressId}）`,
+                  toErrorMessage(error)
+                )
+              }
+            )
+          }
+        }
+      }
+    }
+
+    /* ------------------------------ 输出通道（EH-B3b-2） ------------------------------ */
+
+    // `createChannel` 在 v1 里是**同步**返回句柄的（`outputStore.createChannel(name)`），所以通道 id 只能
+    // 由宿主当场生成；渲染侧把 `id` 当映射键、自己那份 store 的 `out-N` 只在该进程内有意义
+    // （与 B3b-1 的 `statusBar.createItem` 同一手法）。后续操作全部走 `output` channel 的 event。
+
+    const output: ExtensionActivationApi['output'] = {
+      createChannel(name: string): OutputChannel {
+        requirePort()
+        if (typeof name !== 'string' || name.trim() === '') {
+          throw new Error('output.createChannel 的 name 必须是非空字符串')
+        }
+        state.outputSeq += 1
+        const id = `host-output:${extId}:${state.outputSeq}`
+        /** 发给渲染侧的通道事件（`href` 停用/宿主退出后静默：句柄还在扩展手里，不能抛） */
+        const send = (payload: OutputPayload): void => {
+          if (disposed || !rendererPort) return
+          emit(UI_PLANE_EVENT_CHANNELS.output, payload)
+        }
+        send({
+          v: UI_PLANE_PAYLOAD_VERSION,
+          op: 'create',
+          extId,
+          id,
+          name
+        })
+        let handleDisposed = false
+        return {
+          append(text: string): void {
+            if (handleDisposed) return
+            send({
+              v: UI_PLANE_PAYLOAD_VERSION,
+              op: 'append',
+              extId,
+              id,
+              text: typeof text === 'string' ? text : String(text ?? '')
+            })
+          },
+          appendLine(text: string): void {
+            if (handleDisposed) return
+            send({
+              v: UI_PLANE_PAYLOAD_VERSION,
+              op: 'appendLine',
+              extId,
+              id,
+              text: typeof text === 'string' ? text : String(text ?? '')
+            })
+          },
+          show(): void {
+            if (handleDisposed) return
+            send({ v: UI_PLANE_PAYLOAD_VERSION, op: 'show', extId, id })
+          },
+          clear(): void {
+            if (handleDisposed) return
+            send({ v: UI_PLANE_PAYLOAD_VERSION, op: 'clear', extId, id })
+          },
+          dispose(): void {
+            if (handleDisposed) return
+            handleDisposed = true
+            send({ v: UI_PLANE_PAYLOAD_VERSION, op: 'dispose', extId, id })
+          }
+        }
+      }
+    }
+
+    /* ------------------------------ 更新门控（EH-B3b-2） ------------------------------ */
+
+    // 技术债 #2 的退场：门控真相只在渲染侧（`updaterStore.isActive`），所以**先问渲染侧**，
+    // 只有 `{ok:true}` 才回 main（R70 起 main 侧已注册 `host.update.*` 四条，实现复用
+    // `src/main/updater.ts` 的同一份逻辑，不是第二套）。
+
+    /**
+     * 问渲染侧"我这个扩展是不是当前生效的更新提供者"。
+     *
+     * 非提供者 ⇒ 抛 v1 逐字同一句（`core/host.ts` 的 `isProvider()`），**绝不在门控前碰 main**。
+     * 返回放行时的提供者 `feedUrl`（v1 的 `install({force:true})` 缺省用它）。
+     */
+    const requireUpdateProvider = async (api: string): Promise<string | undefined> => {
+      const gate = asRecord(await callRenderer(UI_RENDERER_RPC.updateGate, { extId }))
+      if (gate.ok !== true) {
+        const message =
+          typeof gate.error === 'string' && gate.error.trim() !== ''
+            ? gate.error
+            : UPDATE_NOT_PROVIDER
+        extLog('warn', `${api} 被拒：${message}`)
+        throw new Error(message)
+      }
+      return typeof gate.feedUrl === 'string' && gate.feedUrl !== '' ? gate.feedUrl : undefined
+    }
+
+    /** 发一条宿主 → main 的请求（缺桥 ⇒ 与 secrets/clipboard 同一句中文错误） */
+    const callUpdateMain = async (
+      api: string,
+      method: string,
+      params: unknown
+    ): Promise<Record<string, unknown>> => {
+      const bridge = extensionOptions.hostMain
+      if (!bridge) {
+        throw new EhProtocolError(
+          'EH_INTERNAL',
+          `${api} 需要主进程 IPC：宿主进程没有对应的 Electron 模块`,
+          `缺桥：hostMain 未接线（需要 main 侧 ${method} 提供者 + runtime.ts 注入）`
+        )
+      }
+      try {
+        return asRecord(await bridge.request(method, params))
+      } catch (error) {
+        if (error instanceof EhProtocolError) throw error
+        throw new Error(`${api} 失败：${toErrorMessage(error)}`)
+      }
+    }
+
+    /** 当前代理配置（v1 的 `proxy()`；渲染侧是 reactive Proxy，宿主侧读的是 main 推来的纯对象） */
+    const readProxy = (): unknown => extensionOptions.readProxyConfig?.() ?? null
+
+    const update: UiPlaneUpdateCapabilities = {
+      async resolveFeed(repo: string) {
+        await requireUpdateProvider('update.resolveFeed')
+        const raw = await callUpdateMain(
+          'update.resolveFeed',
+          HOST_MAIN_METHODS.updateResolveFeed,
+          {
+            repo: typeof repo === 'string' ? repo : String(repo ?? ''),
+            proxy: readProxy()
+          }
+        )
+        const result: {
+          ok: boolean
+          tag?: string
+          feedUrl?: string
+          publishedAt?: string
+          error?: string
+        } = { ok: raw.ok === true }
+        if (typeof raw.tag === 'string') result.tag = raw.tag
+        if (typeof raw.feedUrl === 'string') result.feedUrl = raw.feedUrl
+        if (typeof raw.publishedAt === 'string') result.publishedAt = raw.publishedAt
+        if (typeof raw.error === 'string') result.error = raw.error
+        return result
+      },
+      async check(feedUrl: string) {
+        await requireUpdateProvider('update.check')
+        const raw = await callUpdateMain('update.check', HOST_MAIN_METHODS.updateCheck, {
+          feedUrl: typeof feedUrl === 'string' ? feedUrl : '',
+          proxy: readProxy()
+        })
+        const result: { ok: boolean; available?: string; error?: string } = { ok: raw.ok === true }
+        if (typeof raw.available === 'string') result.available = raw.available
+        if (typeof raw.error === 'string') result.error = raw.error
+        return result
+      },
+      async download() {
+        await requireUpdateProvider('update.download')
+        const raw = await callUpdateMain('update.download', HOST_MAIN_METHODS.updateDownload, {
+          proxy: readProxy()
+        })
+        const result: { ok: boolean; error?: string } = { ok: raw.ok === true }
+        if (typeof raw.error === 'string') result.error = raw.error
+        return result
+      },
+      async install(opts) {
+        const providerFeedUrl = await requireUpdateProvider('update.install')
+        if (opts?.force !== true) {
+          // v1：非 force 只等 `installUpdate()`（quitAndInstall），回值固定 `{ok:true}`
+          await callUpdateMain('update.install', HOST_MAIN_METHODS.updateInstall, {
+            force: false,
+            proxy: readProxy()
+          })
+          return { ok: true }
+        }
+        // 强制重装/降级：优先用调用方给的 feedUrl，否则回落到提供者 manifest 里声明的 feedUrl
+        const requested =
+          typeof opts.feedUrl === 'string' && opts.feedUrl !== '' ? opts.feedUrl : undefined
+        const feedUrl = requested ?? providerFeedUrl
+        if (feedUrl === undefined) {
+          return {
+            ok: false,
+            error:
+              '强制重装需要更新源：请传入 feedUrl，或在 manifest 声明 contributes.updater.feedUrl'
+          }
+        }
+        const raw = await callUpdateMain('update.install', HOST_MAIN_METHODS.updateInstall, {
+          force: true,
+          feedUrl,
+          proxy: readProxy(),
+          reason: 'user'
+        })
+        const result: { ok: boolean; version?: string; error?: string } = { ok: raw.ok === true }
+        if (typeof raw.version === 'string') result.version = raw.version
+        if (typeof raw.error === 'string') result.error = raw.error
+        return result
+      }
+    }
+
     /* ------------------------------ 事件总线（on / emit） ------------------------------ */
 
     const on: ExtensionActivationApi['on'] = (event, listener) => {
@@ -1128,6 +1745,12 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
               command
             })
           }
+          // EH-B3b-2：输出通道也归本扩展，停用即让渲染侧整批拆掉（否则底部面板会留下僵尸通道）
+          emit(UI_PLANE_EVENT_CHANNELS.output, {
+            v: UI_PLANE_PAYLOAD_VERSION,
+            op: 'disposeExtension',
+            extId
+          })
         } catch (error) {
           extLog('warn', `停用 ${extId} 时清理渲染侧注册失败`, toErrorMessage(error))
         }
@@ -1165,6 +1788,9 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       emit: emitBus,
       registerCommand,
       executeCommand: executeCommandForExt,
+      ui,
+      output,
+      update,
       dispose: disposeExtension
     }
   }
@@ -1195,6 +1821,10 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       commands.clear()
       busListeners.clear()
       rpc.dispose('宿主数据面已关闭')
+      // EH-B3b-2：在途的宿主 → 渲染侧请求全部以 EH_CANCELLED 结算（不重放，见协议层 cancel 注释）；
+      // 进度会话跟着一起清（它们的 Promise 由 `client` 的 reject 或 task 自己收尾）。
+      client.rejectAll('EH_CANCELLED', '扩展宿主正在退出，在途的界面请求已取消')
+      progressSessions.clear()
       try {
         rendererPort?.close?.()
       } catch {
@@ -1243,6 +1873,30 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null
     ? (value as Record<string, unknown>)
     : ({} as Record<string, unknown>)
+}
+
+/**
+ * 浅拷贝并丢掉 `undefined` 值字段（EH-B3b-2）。
+ *
+ * 为什么必须做：`checkSerializable` **拒绝 `undefined`**（它过不了 JSON 表达，见协议层注释），
+ * 而 `ui.*` 的 opts / items / form field 全是可选字段——扩展写 `showQuickPick(items, { title })`
+ * 时若 `title` 恰好是 `undefined`，最普通的调用就会在跨进程时抛 `EH_UNSERIALIZABLE`。
+ * v1 走 IPC（structured clone 会把 `undefined` 字段照传）不会因此报错，所以这里做等价归一：
+ * **"没给" 与 "给的是 undefined" 都记成"没给"**。
+ */
+function compactShallow(value: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (typeof value !== 'object' || value === null) return out
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (child === undefined) continue
+    out[key] = child
+  }
+  return out
+}
+
+/** toast 类型归一（v1 的 `uiStore.showToast` 默认 `info`；非法值回落 `info`） */
+function normalizeToastType(value: unknown): 'info' | 'warning' | 'error' | 'success' {
+  return value === 'warning' || value === 'error' || value === 'success' ? value : 'info'
 }
 
 /** 逐字段通知订阅者（单个订阅者抛错不能打断其它订阅者） */

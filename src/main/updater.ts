@@ -302,6 +302,115 @@ async function forceInstallFromFeed(opts: {
   return { ok: true, version: feed.version, filePath: dest }
 }
 
+/**
+ * 解析更新源（**两处共用**：渲染侧的 `update:resolve-feed` IPC 与宿主的 `host.update.resolve-feed`）。
+ *
+ * R70：把原先内联在 `ipcMain.handle` 里的逻辑抽成具名导出，**行为零变化**（既有 IPC handler 现在
+ * 只调用它）。这样宿主路径与渲染路径共用同一份校验/代理/事件，不会出现"两条链路各写一遍然后漂"。
+ */
+export async function resolveFeedForHost(
+  repo: string,
+  proxy?: ProxyConfig
+): Promise<{ ok: boolean; tag?: string; feedUrl?: string; publishedAt?: string; error?: string }> {
+  try {
+    if (!isValidRepo(repo)) {
+      return { ok: false, error: '仓库格式非法（应为 owner/repo）' }
+    }
+    return await resolveLatestRelease(repo, proxy)
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * 检查更新（**两处共用**）：需要更新源 URL（由更新提供者扩展传入；无默认源）。
+ * 进行中互斥复用同一结果（同一次检查不会被宿主与渲染侧各触发一次）。
+ */
+export function checkUpdateForHost(opts: {
+  feedUrl?: string
+  proxy?: ProxyConfig
+}): Promise<{ ok: boolean; available?: string; error?: string }> {
+  ensureInit()
+  if (!opts?.feedUrl)
+    return Promise.resolve({ ok: false, error: '未配置更新源（需在设置-更新选择更新扩展）' })
+  if (activeCheck) return activeCheck
+  activeCheck = (async (): Promise<{ ok: boolean; available?: string; error?: string }> => {
+    try {
+      applyUpdaterProxy(opts.proxy)
+      // Windows 上 electron-builder 生成的更新元数据固定叫 latest.yml（无架构后缀），
+      // 其中 files 含全部架构安装包；electron-updater 按机器架构自动选匹配的安装包。
+      // 不要设 channel（arm64 不存在 latest-arm64.yml，设了会 404）。
+      autoUpdater.setFeedURL({ provider: 'generic', url: opts.feedUrl })
+      const result = await autoUpdater.checkForUpdates()
+      return { ok: true, available: result?.updateInfo.version }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })().finally(() => {
+    activeCheck = null
+  })
+  return activeCheck
+}
+
+/** 下载更新（**两处共用**）：不自动安装，等 `install`（quitAndInstall）；进行中互斥复用 */
+export function downloadUpdateForHost(): Promise<{ ok: boolean; error?: string }> {
+  ensureInit()
+  if (activeDownload) return activeDownload
+  activeDownload = (async (): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      // 下载动作前**再**配置一次：本调用不带 proxy 参数 ⇒ 回落「当前配置」（渲染进程启动/改设置
+      // 时推入，或上一次 check 用的配置）。此前这里完全不碰代理，是否走代理取决于上一次 check
+      // 是否恰好配置过这个 session —— 顺序一变（先下载后检查 / 重启后直接下载）代理就静默失效。
+      applyUpdaterProxy()
+      await autoUpdater.downloadUpdate()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })().finally(() => {
+    activeDownload = null
+  })
+  return activeDownload
+}
+
+/** 安装并重启（**两处共用**）：下载完成后调用 `quitAndInstall()` */
+export function installUpdateForHost(): void {
+  ensureInit()
+  // 同样先补齐 session 配置（安装器启动前的最后一跳不再依赖此前是否配置过代理）
+  applyUpdaterProxy()
+  autoUpdater.quitAndInstall()
+}
+
+/**
+ * 强制重装 / 降级（**两处共用**）：见 `forceInstallFromFeed` 的说明（绕开 electron-updater 的版本门控）。
+ * 进行中互斥：重复调用复用同一结果。
+ */
+export function forceInstallForHost(opts: {
+  feedUrl?: string
+  proxy?: ProxyConfig
+  reason?: 'user' | 'auto'
+}): Promise<{ ok: boolean; version?: string; filePath?: string; error?: string }> {
+  ensureInit()
+  if (!opts?.feedUrl) {
+    return Promise.resolve({ ok: false, error: '未配置更新源（需在设置-更新选择更新扩展）' })
+  }
+  if (activeForceInstall) return activeForceInstall
+  // reason 目前只用于日志（后续可据此区分"用户主动"与"自动重试"的埋点/提示）
+  console.log(`[updater] 强制安装请求（reason=${opts.reason ?? 'user'}）`)
+  activeForceInstall = forceInstallFromFeed({
+    feedUrl: opts.feedUrl,
+    proxy: opts.proxy
+  })
+    .catch((err) => ({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err)
+    }))
+    .finally(() => {
+      activeForceInstall = null
+    })
+  return activeForceInstall
+}
+
 export function registerUpdateIpc(): void {
   ensureInit()
 
@@ -310,7 +419,7 @@ export function registerUpdateIpc(): void {
   // 解析更新源（更新提供者扩展调用）：仓库格式 "owner/repo"；代理与 check 走同一套 session 配置
   ipcMain.handle(
     'update:resolve-feed',
-    async (
+    (
       _e,
       repo: string,
       proxy?: ProxyConfig
@@ -320,71 +429,26 @@ export function registerUpdateIpc(): void {
       feedUrl?: string
       publishedAt?: string
       error?: string
-    }> => {
-      try {
-        if (!isValidRepo(repo)) {
-          return { ok: false, error: '仓库格式非法（应为 owner/repo）' }
-        }
-        return await resolveLatestRelease(repo, proxy)
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
-    }
+    }> => resolveFeedForHost(repo, proxy)
   )
 
   // 检查更新：需要更新源 URL（由更新提供者扩展传入；无默认源）
   ipcMain.handle(
     'update:check',
-    async (
+    (
       _e,
       opts: { feedUrl?: string; proxy?: ProxyConfig }
-    ): Promise<{ ok: boolean; available?: string; error?: string }> => {
-      if (!opts?.feedUrl) return { ok: false, error: '未配置更新源（需在设置-更新选择更新扩展）' }
-      if (activeCheck) return activeCheck
-      activeCheck = (async (): Promise<{ ok: boolean; available?: string; error?: string }> => {
-        try {
-          applyUpdaterProxy(opts.proxy)
-          // Windows 上 electron-builder 生成的更新元数据固定叫 latest.yml（无架构后缀），
-          // 其中 files 含全部架构安装包；electron-updater 按机器架构自动选匹配的安装包。
-          // 不要设 channel（arm64 不存在 latest-arm64.yml，设了会 404）。
-          autoUpdater.setFeedURL({ provider: 'generic', url: opts.feedUrl })
-          const result = await autoUpdater.checkForUpdates()
-          return { ok: true, available: result?.updateInfo.version }
-        } catch (err) {
-          return { ok: false, error: err instanceof Error ? err.message : String(err) }
-        }
-      })().finally(() => {
-        activeCheck = null
-      })
-      return activeCheck
-    }
+    ): Promise<{ ok: boolean; available?: string; error?: string }> => checkUpdateForHost(opts)
   )
 
   // 下载更新（不自动安装，等 quitAndInstall）
-  ipcMain.handle('update:download', async (): Promise<{ ok: boolean; error?: string }> => {
-    if (activeDownload) return activeDownload
-    activeDownload = (async (): Promise<{ ok: boolean; error?: string }> => {
-      try {
-        // 下载动作前**再**配置一次：本 IPC 不带 proxy 参数 ⇒ 回落「当前配置」（渲染进程启动/改设置
-        // 时推入，或上一次 check 用的配置）。此前这里完全不碰代理，是否走代理取决于上一次 check
-        // 是否恰好配置过这个 session —— 顺序一变（先下载后检查 / 重启后直接下载）代理就静默失效。
-        applyUpdaterProxy()
-        await autoUpdater.downloadUpdate()
-        return { ok: true }
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
-    })().finally(() => {
-      activeDownload = null
-    })
-    return activeDownload
-  })
+  ipcMain.handle('update:download', (): Promise<{ ok: boolean; error?: string }> =>
+    downloadUpdateForHost()
+  )
 
   // 安装并重启（下载完成后调用）
   ipcMain.handle('update:install', (): void => {
-    // 同样先补齐 session 配置（安装器启动前的最后一跳不再依赖此前是否配置过代理）
-    applyUpdaterProxy()
-    autoUpdater.quitAndInstall()
+    installUpdateForHost()
   })
 
   /**
@@ -393,27 +457,11 @@ export function registerUpdateIpc(): void {
    */
   ipcMain.handle(
     'update:force-install',
-    async (
+    (
       _e,
       opts: { feedUrl?: string; proxy?: ProxyConfig; reason?: 'user' | 'auto' }
-    ): Promise<{ ok: boolean; version?: string; filePath?: string; error?: string }> => {
-      if (!opts?.feedUrl) return { ok: false, error: '未配置更新源（需在设置-更新选择更新扩展）' }
-      if (activeForceInstall) return activeForceInstall
-      // reason 目前只用于日志（后续可据此区分"用户主动"与"自动重试"的埋点/提示）
-      console.log(`[updater] 强制安装请求（reason=${opts.reason ?? 'user'}）`)
-      activeForceInstall = forceInstallFromFeed({
-        feedUrl: opts.feedUrl,
-        proxy: opts.proxy
-      })
-        .catch((err) => ({
-          ok: false,
-          error: err instanceof Error ? err.message : String(err)
-        }))
-        .finally(() => {
-          activeForceInstall = null
-        })
-      return activeForceInstall
-    }
+    ): Promise<{ ok: boolean; version?: string; filePath?: string; error?: string }> =>
+      forceInstallForHost(opts)
   )
 }
 

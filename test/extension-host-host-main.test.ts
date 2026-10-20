@@ -799,8 +799,8 @@ test('兜底读值：main 回非对象 / 缺 ok 时按失败处理（不猜成�
   assert.match(overlay.error ?? '', /无法识别的结果/)
 })
 
-test('update 的 4 条门控方法是桩（R64）：EH_INTERNAL +「尚未迁移」+「阶段 B」+ 指向 EH-B3b', async (): Promise<void> => {
-  const dir = await mkdtemp(path.join(tmpdir(), 'obox-eh-b3a-gate-'))
+test('update 的 4 条门控方法（EH-B3b-2 起）：先问渲染侧，端口不在就 EH_NOT_READY（不再是桩）', async (): Promise<void> => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'obox-eh-b3b2-gate-'))
   try {
     const built = createExtensionApi({
       ext: {
@@ -815,6 +815,8 @@ test('update 的 4 条门控方法是桩（R64）：EH_INTERNAL +「尚未迁移
       log: (): void => {},
       runSafely: createRunExtensionSafely((): void => {})
     })
+    // 本用例没有渲染侧端口：门控请求发不出去 ⇒ 响亮失败（「host-renderer 端口未到」），
+    // 而不是 v1 阶段 B 那句「尚未迁移」——门控判定已经搬到渲染侧，链路问题要和"没实现"区分开。
     for (const call of [
       (): Promise<unknown> => built.api.update.resolveFeed('owner/repo'),
       (): Promise<unknown> => built.api.update.check('https://example.com/'),
@@ -822,12 +824,8 @@ test('update 的 4 条门控方法是桩（R64）：EH_INTERNAL +「尚未迁移
       (): Promise<unknown> => built.api.update.install({ force: true })
     ]) {
       await assert.rejects(call, (error: unknown): boolean => {
-        assert.ok(error instanceof EhProtocolError)
-        assert.equal(error.code, 'EH_INTERNAL')
-        assert.match(error.message, /尚未迁移/)
-        assert.match(error.message, /阶段 B/)
-        assert.match(error.message, /EH-B3b/, '要告诉作者该等哪个卡')
-        assert.match(error.message, /update\.provider/, '要点明门控状态在渲染侧')
+        assert.match(String((error as Error).message), /host-renderer 端口未到/)
+        assert.doesNotMatch(String((error as Error).message), /尚未迁移/)
         return true
       })
     }
@@ -974,13 +972,18 @@ function stripComments(source: string): string {
 test('源码门禁：HOST_MAIN_METHODS 的每个 key 都在 src/main/index.ts 里注册（防两边漂移）', (): void => {
   const mainSource = readSource('src/main/index.ts')
   const keys = Object.keys(HOST_MAIN_METHODS)
-  assert.equal(keys.length, 22, '方法名常量共 22 条（23 项能力里 onFocusChanged/onEvent 走事件）')
+  assert.equal(
+    keys.length,
+    26,
+    '方法名常量共 26 条（23 项 B3a 能力 + EH-B3b-2 的 4 条 update 门控；onFocusChanged/onEvent 走事件）'
+  )
 
   for (const key of keys) {
-    const reference = `HOST_MAIN_METHODS.${key}`
+    // 允许换行/缩进：prettier 会把长调用折成多行（`registerMethod(` 与常量之间可以有空白）
+    const pattern = new RegExp(`registerMethod\\(\\s*HOST_MAIN_METHODS\\.${key}\\b`)
     assert.ok(
-      mainSource.includes(`registerMethod(${reference}`),
-      `src/main/index.ts 里必须 registerMethod(${reference})`
+      pattern.test(mainSource),
+      `src/main/index.ts 里必须 registerMethod(HOST_MAIN_METHODS.${key})`
     )
   }
   // 反向：main 里不许出现手写的 'host.' 字面量方法名（那会绕过常量门禁）
@@ -1029,7 +1032,7 @@ test('源码门禁：宿主能力文件不 import electron（extension-host.js �
 /* 11. 对照表（EH-B3b-1 之后）                                                                     */
 /* -------------------------------------------------------------------------------------------- */
 
-test('对照表：EH-B3b-1 之后 89 已实现 + 10 桩 = 99（新增 28 条注册面数据面能力）', async (): Promise<void> => {
+test('对照表：EH-B3b-2 之后 99 已实现 + 0 桩 = 99（阶段 B 能力面收口）', async (): Promise<void> => {
   const dir = await mkdtemp(path.join(tmpdir(), 'obox-eh-b3a-table-'))
   try {
     const built = createExtensionApi({
@@ -1104,6 +1107,8 @@ test('对照表：EH-B3b-1 之后 89 已实现 + 10 桩 = 99（新增 28 条注�
       'net.fetch',
       'notification.show',
       'on',
+      // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
+      'output.createChannel',
       'overlay.create',
       'overlay.destroy',
       'overlay.setMouseThrough',
@@ -1132,8 +1137,19 @@ test('对照表：EH-B3b-1 之后 89 已实现 + 10 桩 = 99（新增 28 条注�
       'timer.clearTimeout',
       'timer.setInterval',
       'timer.setTimeout',
+      // EH-B3b-2：交互 UI 5 项（渲染侧 uiStore 渲染）
+      'ui.showForm',
+      'ui.showInputBox',
+      'ui.showMessage',
+      'ui.showQuickPick',
+      'ui.withProgress',
+      // EH-B3b-2：更新门控 4 条（渲染侧判定 + 放行后回 main）
+      'update.check',
+      'update.download',
       'update.getVersion',
+      'update.install',
       'update.onEvent',
+      'update.resolveFeed',
       'views.registerTreeProvider',
       // EH-B3a：window 7 项
       'window.close',
@@ -1148,8 +1164,8 @@ test('对照表：EH-B3b-1 之后 89 已实现 + 10 桩 = 99（新增 28 条注�
       'workspaceState.update'
     ])
     assert.equal(rows.length, 99, '对照表共 99 项')
-    assert.equal(implemented.length, 89, '已实现 89 项（61 + EH-B3b-1 的 28）')
-    assert.equal(stubs.length, 10, '桩 10 项（ui 5 / output 1 / update 4——全归 EH-B3b-2）')
+    assert.equal(implemented.length, 99, '已实现 99 项（61 + EH-B3b-1 的 28 + EH-B3b-2 的 10）')
+    assert.equal(stubs.length, 0, '桩 0 项（ui 5 / output 1 / update 4 已在 EH-B3b-2 落地）')
 
     // 本卡落地的能力不许再抛「尚未迁移」
     await assert.rejects(built.api.secrets.get('k'), (error: unknown): boolean => {
@@ -1160,8 +1176,9 @@ test('对照表：EH-B3b-1 之后 89 已实现 + 10 桩 = 99（新增 28 条注�
       assert.doesNotMatch(String((error as Error).message), /尚未迁移/)
       return true
     })
-    assert.throws((): void => built.api.output.createChannel('x'), /尚未迁移/)
-    assert.throws((): void => built.api.ui.showMessage('x'), /尚未迁移/)
+    // EH-B3b-2：output / ui / update 门控同样不再是桩（本用例没有渲染侧端口 ⇒ 端口未到）
+    assert.throws((): void => built.api.output.createChannel('x'), /host-renderer 端口未到/)
+    assert.throws((): void => built.api.ui.showMessage('x'), /host-renderer 端口未到/)
 
     built.dispose()
   } finally {
