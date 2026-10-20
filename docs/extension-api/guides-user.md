@@ -7,7 +7,25 @@
 
 > 代码位置写法：`src/…` 是仓库路径，`main/…` 即 `src/main/…`；其余短路径相对 `src/renderer/src/`（如 `core/loader.ts`）。
 
-**运行时零依赖**：宿主激活时把 `api` 对象注入给入口，`.oix` 里只有你自己的文件（无 `node_modules`）。入口**必须是纯 ESM JavaScript**——宿主经 `import('app://extensions/<id>/' + manifest.main)` 动态加载（`core/loader.ts:118-121`），没有 Vite 转换，TypeScript 不能直接用。
+## 0. 运行模型：你的代码跑在哪（先读）
+
+obox 有两个扩展运行时，**用户扩展与内置扩展的位置不同**，这决定了你能用什么：
+
+|              | **用户扩展**（本文，`.oix`）                                                                 | **内置扩展**（[guides-builtin.md](guides-builtin.md)）                    |
+| ------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 跑在哪       | **Extension Host Process**：主进程用 Electron `utilityProcess` 拉起的独立 **Node 进程**，随主窗口同生共死 | **渲染进程**（与 UI 同一个进程）                                          |
+| Node         | **完整 Node**：`import fs from 'node:fs'` / `node:child_process` / `node:sqlite` 都可用        | 没有 Node，只有注入的 `api`                                              |
+| DOM          | **没有**：`document` / `window` / `localStorage` / `HTMLElement` 全部不存在                    | 有（可以写 Vue 组件、用浏览器 API）                                      |
+| 界面怎么来   | 贡献点 + **`app://` 静态页**（App 卡片 / overlay 页面）、树视图数据源                          | 还可以 `navItems[].view` 指向具名导出的 **Vue 组件**                     |
+| 激活         | 按 `activationEvents` **懒激活**（缺省 `*` = 立即）                                           | **立即激活**，不参与懒激活（写了 `activationEvents` 也不生效）            |
+
+- **API 仍是 `plugin(api)`**：`export default function (api) {…}`，`api` 由宿主进程按扩展 id 现场构造后传入。别去找全局变量，也别 `require('obox')`。
+- **跨进程**：每次 `api.*` 都是 RPC。参数/返回值只过 **JSON 值 + 二进制旁路**（函数、类实例、循环引用、`Map`/`Set` 过不去，报 `EH_UNSERIALIZABLE`）。
+- **事件不跨运行时**：`api.on` / `api.emit` 只在用户扩展之间（或内置扩展之间）广播；`api.executeCommand` 也执行不了内置扩展的命令。
+- **界面必须在页面里**：宿主进程没有 DOM，所以"画东西"只能靠 App 卡片静态页 / overlay 页面（那些页面里**有** DOM 与自己的 `localStorage`，但与扩展入口**不是同一个文档**），通信走 `api.app.onMessage`。
+- **过渡期回退开关**：2.0 之前宿主进程默认**关**（`OBOX_EXTENSION_HOST=1` 才启用），关着时你的扩展仍在渲染进程执行、`activationEvents` 不生效。**但请按宿主进程写**（不碰 DOM/localStorage），否则开关一开就坏。
+
+**运行时零依赖**：`.oix` 里只有你自己的文件（不带 `node_modules`），需要 Node 内置模块时直接 `import 'node:fs'`；第三方包不要指望（打包脚本会排除 `node_modules/`）。入口必须是**纯 ESM JavaScript**——宿主在**扩展进程里按 `file://` 动态 `import()`**（回退开关关闭时经 `app://` 在渲染进程 import），没有 Vite 转换，TypeScript 不能直接用。
 
 ## 1. 最小项目结构
 
@@ -44,9 +62,10 @@ export default function myHello(api) {
 }
 ```
 
-- **不许 `import 'vue'` 或任何裸模块**：`app://` 下没有模块解析器，运行时只有注入的 `api`、标准 JS 与 `fetch` 等。
+- **`node:*` 内置模块可以直接用**（宿主是完整 Node：`node:fs` / `node:path` / `node:child_process` / `node:sqlite` 都行），但**不要 `import 'vue'` / 任何第三方裸模块**：`.oix` 不携带 `node_modules`（打包脚本显式排除），裸包在安装态解析不到。界面请交给页面（下一节）
 - 生命周期钩子（可选具名导出 `install` / `uninstall`）见 [api-reference.md](api-reference.md) 的「生命周期钩子」。
-- **界面怎么来**：`navItems[].view` 需要 Vue 组件对象（宿主按入口具名导出取组件，`core/host.ts:271-275`），而你的入口没有 Vue —— 用户扩展的界面用 **App 卡片静态页**（下一节）或 **`contributes.views` 树**（宿主内置树视图渲染，数据源 `api.views.registerTreeProvider(viewId, provider)`，`api/types.ts:639-641`）；纯命令 / 状态栏 / 通知类扩展不需要界面。
+- **界面怎么来**：`navItems[].view` 需要 Vue 组件对象，而你的入口没有 Vue、也没有 DOM —— 用户扩展的界面用 **App 卡片静态页**（下一节）或 **`contributes.views` 树**（宿主内置树视图渲染，数据源 `api.views.registerTreeProvider(viewId, provider)`）；纯命令 / 状态栏 / 通知类扩展不需要界面。
+- **激活时机由 `activationEvents` 决定**（缺省 `*` = 立即）：只注册 App 卡片的扩展如果写了 `onCommand`/`onView`，会**永不激活**（卡片也就永远不出现）。规则见 [manifest-reference.md](manifest-reference.md) 的「activationEvents」一节。
 - 贡献点声明与内置扩展同构（`contributes` 里写 `commands` / `statusBarItems` / `views` / `keybindings` / `menus` / `settings` / `themes` / `ipcChannels` / `i18n` / `updater` 等），但 **`titleKey` 对你无效**——它由宿主语言包解析（`components/NavBar.vue:14`、`components/TreeView.vue:65`），而用户扩展改不了 `src/renderer/src/i18n/locales/`，写了只会显示原始 key；要双语用 `api.i18n` 自己的命名空间。**命令必须先声明**：未声明的 `registerCommand` 会被 `registry.setCommandHandler` 抛错（`core/registry.ts:203`），扩展标红 `activationError`。
 
 ## 3. 两种形态
@@ -76,21 +95,32 @@ export default defineConfig({
 
 `base: './'` 不能改：绝对路径 `/page.js` 会解析到 `app://extensions/page.js`（丢了扩展目录）。
 
-## 4. 静态资源 URL：用 `import.meta.url` 推导，别硬编码
+## 4. 静态资源 URL
+
+**页面仍必须用 `app://` 形状**（App 卡片 `url` 与 overlay `url` 的校验只认 `app:` 协议 + `app://extensions/<安装目录名>/…`）。但**入口的 `import.meta.url` 在宿主模式下是 `file://`**（宿主按磁盘路径 `import()` 入口），因此**不能直接拿它当页面 URL**：
 
 ```js
-const base = new URL('.', import.meta.url).href // 安装态 app://extensions/<安装目录名>/；调试态 app://debug/<id>/
-const pageUrl = new URL('./page.html', base).href
+// 回退开关关闭（扩展在渲染进程执行）时：入口经 app:// 加载，可直接推导
+// const pageUrl = new URL('./page.html', import.meta.url).href  // → app://extensions/<安装目录名>/page.html
+
+// 宿主模式（入口经 file:// 加载）：import.meta.url 是磁盘路径，需要显式拼 app://
+const dirName = decodeURIComponent(new URL('.', import.meta.url).pathname)
+  .split(/[\\/]/)
+  .filter(Boolean)
+  .pop() // 安装目录名 = <name>_<清洗后 author>（调试扩展则是 --debug-extension 的 id）
+const pageUrl = `app://extensions/${dirName}/page.html`
 ```
 
 - **不要硬编码 `app://extensions/<manifest.name>/`**：安装目录名是 `<name>_<清洗后 author>`（`main/oixCore.ts:56-60`），带作者时与 `manifest.name` 不同。
-- `app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（`main/protocol.ts:12-16,46`）；同一份代码在 `--debug-extension` 下自动指向调试目录。
+- `app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（`main/protocol.ts`）；同一份代码在 `--debug-extension` 下指向 `app://debug/<id>/`。
+- **这是一处正在迁移的坑**（如实登记）：上面那段"从 `file://` 反推安装目录名"的写法**未实机验证**，5 个既有用户扩展的改造会逐个确认。交付前请自己验一遍：卡片能打开、overlay 能加载；若页面打不开，先打印 `import.meta.url` 与拼出来的 `pageUrl` 对照。
 
 ## 5. App 卡片与子窗口
 
 ```js
 export default function myHello(api) {
-  const base = new URL('.', import.meta.url).href
+  // 页面 URL 见上一节：宿主模式下入口是 file:// 加载的，必须显式拼 app://extensions/<安装目录名>/
+  const pageUrl = `app://extensions/${installDirName}/page.html`
   const card = api.app.register({
     id: 'my-hello.demo',
     name: '你好演示',
@@ -98,8 +128,8 @@ export default function myHello(api) {
     author: 'Obox',
     description: '点击弹出独立窗口',
     icon: "<svg viewBox='0 0 24 24'><circle cx='12' cy='12' r='9'/></svg>",
-    iconUrl: new URL('./icon.png', base).href, // 子窗口任务栏图标（见下）
-    url: new URL('./page.html', base).href, // 子窗口内容：静态页（优先）
+    iconUrl: `app://extensions/${installDirName}/icon.png`, // 子窗口任务栏图标（见下；只认 app://extensions/…）
+    url: pageUrl, // 子窗口内容：静态页（优先）
     multiOpen: true,
     width: 800,
     height: 600
@@ -180,8 +210,14 @@ node scripts/pack.mjs   # 产出 out/<name>-<version>.oix
 - 安装（含同名覆盖升级）成功后**立即热生效**：宿主清理旧实例 → 注册贡献点 → 激活，列表即时出现、导航 / 状态栏 / 命令立即可用，**无需重启**（`core/host.ts:1038-1085`、`ExtensionManagerView.vue:114-164`）。manifest 无效或激活失败 → 扩展在列表里标红，详情页给 `activationError`。
 - **禁用 / 卸载**才可能要求重启：未激活的扩展可立即热移除，**已激活的扩展禁用或卸载会标记需重启**并在 UI 出现「立即重启」（`core/host.ts:1168-1209`）。所以"升级 = 直接覆盖安装"是热路径，"先卸载再装"要走重启。
 - 内置扩展不可卸载；调试扩展不占安装态（`core/host.ts:1198-1199`）。
+- **宿主模式下（迁移期注意）**：清单是在**宿主启动时**一次性交给它的（`ehStart` 的 `init` 信封），所以**新装/覆盖安装的扩展要重启应用才会被宿主加载并激活**；渲染侧的热路径只更新贡献点与列表，不会让宿主重新读清单。上面"立即热生效"描述的是回退开关关闭（扩展在渲染进程执行）时的行为。
 
 ## 8. 在 VS Code 里调试（不安装、不依赖 obox 源码）
+
+> **先看清断点打在哪一侧（ADR-0026 之后）**：用户扩展的代码跑在 **Extension Host Process**，而 `--remote-debugging-port`（CDP）attach 的是**渲染进程**。所以：
+>
+> - **宿主模式下**（`OBOX_EXTENSION_HOST=1`）入口与插件函数的断点**打不到**——宿主进程目前没有接线 `--inspect`（`src/main/extensionHostStarter.ts` 里没有 inspect 参数），宿主侧调试属于未完成项；
+> - **现阶段调试用户扩展**：① 靠日志（`api.output.createChannel` 写日志、`console.log` 会经 `log` 信封转发到渲染侧 console 与主进程终端）；② 或**临时关掉回退开关**（不设 `OBOX_EXTENSION_HOST`）让扩展回到渲染进程执行，再用下面的 CDP 链路打断点——这也是下面这份配置现在唯一可用的场景。
 
 `--debug-extension` 把本地目录直接当扩展源加载，配合 CDP 端口即可对源码打断点：
 
@@ -197,7 +233,7 @@ npm run dev -- -- --remote-debugging-port=9333 --debug-extension my-hello@<路�
 - 调试扩展经 `app://debug/<id>/` 加载（`core/loader.ts:73-97`）：**不占安装态**（不写安装时间戳、管理器显示「调试中」、**不可从管理器停用/卸载**），重启消失。**注意两处易误解的事实**（卡 16 实测）：① **调试扩展照样写 userData**——数据目录与安装态一致（`userData/extensions/<id>/data`，见下一条），`state.json` 等运行时文件真实落盘；② 因为管理器对调试扩展隐藏了停用/卸载入口（`extensions/ext-manager/ExtensionManagerView.vue` 对 `source === 'debug'` 不渲染该按钮），它的**生命周期只由 CLI 控制**：改代码后重载窗口、去掉 `--debug-extension` 重启即消失。要在 UI 里演练"停用即回收"，请改用安装态的 `.oix`。
 - **调试扩展可自带运行时 / 二进制**：宿主找"扩展自己的文件"时调试目录优先（`main/paths.ts:22-31`），所以 `<扩展>/python/`、`bin/x.exe` 与安装态行为一致；**数据目录**仍在 `userData/extensions/<id>/data`（`main/fs.ts:12-14`）。
 - 启动日志 `[debug] 调试扩展 N 个: id@路径` 证明参数进来了（`main/debug.ts:47-53`）；没有这行就是没传进 electron。
-- 改代码后重载窗口生效：入口是 `app://` 动态 import，模块缓存不会自动失效。
+- 改代码后重载窗口生效：入口模块被缓存，不会自动失效（回退开关关闭时经 `app://` 动态 import；宿主模式下由宿主进程按 `file://` 加载并缓存 ⇒ 改完要重载窗口、必要时重启扩展宿主）
 
 扩展自己仓库里的 `.vscode/launch.json`（**未实机验证**，`urlFilter` 依赖 electron-vite dev 端口 —— 仓库没固定 `server.port`，`electron.vite.config.ts:15-20`，端口一变就要同步改；打包版渲染进程是 `file://`，可删掉 `urlFilter`）：
 

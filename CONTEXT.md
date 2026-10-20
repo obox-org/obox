@@ -20,7 +20,7 @@ _Avoid_: 侧边栏、Activity Bar
 _Avoid_: 状态条
 
 **Extension / 扩展**:
-为宿主贡献能力的可插拔单元。清单（manifest）声明贡献点（导航项、状态栏项、命令），宿主导入后统一解析注册；入口导出 Cordis 插件函数 + 具名导出视图组件。
+为宿主贡献能力的可插拔单元。清单（manifest）声明贡献点（导航项、状态栏项、命令），宿主导入后统一解析注册；入口导出插件函数（`plugin(api)`），内置扩展的入口还可具名导出视图组件。分**用户扩展**（跑在 Extension Host Process）与**内置扩展**（跑在渲染进程）两类。
 _Avoid_: 插件、模块
 
 **Extension Host Process / 扩展宿主进程**:
@@ -35,11 +35,11 @@ _Avoid_: 扩展宿主（旧称，已改名为本词条）、渲染进程（那�
 内置扩展，以 Grid 网格展示已安装扩展（名称/版本/作者/简介），点击查看详情，支持**安装（.oix 按钮/拖拽）**、禁用/卸载/搜索/排序/来源标注。
 
 **User Extension / 用户扩展**:
-经 .oix 安装到 `userData/extensions/<name>_<author>/` 的扩展（非内置，可卸载）。入口须为纯 ESM JavaScript（宿主动态 import，无构建转换）；静态资源经 `app://extensions/<id>/` 由 App 子窗口 iframe 加载。
+经 .oix 安装到 `userData/extensions/<name>_<author>/` 的扩展（非内置，可卸载）。跑在 **Extension Host Process**（独立 Node 进程、完整 Node、无 DOM/localStorage），激活时机由清单 `activationEvents` 决定（缺省 `*` = 立即）；入口须为纯 ESM JavaScript（宿主按 `file://` 动态 import，无构建转换）；静态资源经 `app://extensions/<id>/` 由 App 子窗口 iframe 加载。
 _Avoid_: 插件
 
 **Debug Extension / 调试扩展**:
-经 `obox --debug-extension <id>@<本地目录>` 声明的扩展：不写 userData、不做 .oix 安装、无安装时间戳，经 `app://debug/<id>/` 协议从本地目录直接加载，重启后消失；扩展管理器显示"调试中"、不可卸载。配合 `--remote-debugging-port`（CDP）可在 VS Code 中打断点调试，扩展仓库无需依赖 obox 源码。
+经 `obox --debug-extension <id>@<本地目录>` 声明的扩展：不写 userData、不做 .oix 安装、无安装时间戳，经 `app://debug/<id>/` 协议从本地目录直接加载，重启后消失；扩展管理器显示"调试中"、不可卸载。配合 `--remote-debugging-port`（CDP）可在 VS Code 中打断点调试——**仅当扩展在渲染进程执行时**（回退开关关闭）；宿主模式下扩展跑在独立进程，宿主侧调试链路尚未接线。扩展仓库无需依赖 obox 源码。
 _Avoid_: 开发扩展、测试扩展
 
 **App / 应用**:
@@ -58,7 +58,7 @@ _Avoid_: App 子窗口（那是卡片窗）、浮窗、托盘窗
 _Avoid_: 弹窗、模态框
 
 **Main Window / 主窗口**:
-承载导航栏/内容栏/状态栏的主 BrowserWindow，扩展在其中被激活（`plugin(api)` 只在这里执行一次）。与 App 子窗口相对；关闭或最小化它默认按"关闭行为"收进托盘。
+承载导航栏/内容栏/状态栏的主 BrowserWindow。**内置扩展**在其中被激活（`plugin(api)` 只在这里执行一次）；**用户扩展**不在渲染进程激活，它们在 Extension Host Process 里按 `activationEvents` 激活。与 App 子窗口相对；关闭或最小化它默认按"关闭行为"收进托盘。
 _Avoid_: 主界面、首页窗口
 
 **Taskbar / 任务栏**:
@@ -108,14 +108,14 @@ _Avoid_: 插件点、扩展点
 扩展注册的可执行动作，有全局唯一 id（`<扩展名>.<动作>`），可从命令面板（Ctrl+Shift+P）、其他扩展、状态栏项触发。
 
 **API Version / API 版本**:
-obox 对外扩展 API 的版本号，**单个非负整数**，单源定义在根 `package.json` 的 `apiVersion` 字段（当前 `2`）。扩展在 manifest 里声明 `apiVersion` 声明其要求的版本：缺失视为 `0`（兼容所有），**高于 obox 当前版本时拒绝加载**；仅在新版 API 破坏性变更时递增，高版本 obox 始终兼容低版本扩展。
+obox 对外扩展 API 的版本号，**单个非负整数**，单源定义在根 `package.json` 的 `apiVersion` 字段（当前 `3`）。扩展在 manifest 里声明 `apiVersion` 声明其要求的版本：缺失视为 `0`（兼容所有），**高于 obox 当前版本时拒绝加载**；仅在新版 API 破坏性变更时递增，高版本 obox 始终兼容低版本扩展。`3` 的理由：用户扩展从渲染进程搬进 Extension Host Process（无 DOM/localStorage、能力来自宿主进程），属行为破坏。
 _Avoid_: 版本字符串、API level
 
 **Cordis**:
 本项目采用的插件框架，运行在**渲染侧运行时**里；宿主只用其**事件总线**（`new Context()` + `on/off/emit`），扩展并非以 `ctx.plugin()` 挂载的 Cordis 插件实例。
 
 **Memento**:
-扩展的状态存储 API（workspaceState/globalState），get/update 键值，底层存 userData JSON。
+扩展的状态存储 API（`workspaceState` / `globalState`），get/update 键值，底层存 userData JSON。**两者是两份独立存储**（`state/workspace.json` / `state/global.json`）：宿主模式下按名字真隔离，不再共用同一份。
 
 **oix / 扩展包**:
 用户扩展的分发格式，本质是 zip 压缩包（根目录含 manifest.json + 入口 + 静态资源）。宿主校验 manifest、防路径穿越解压，**安装（含同名覆盖）热生效**——立即注册贡献点并激活，无需重启；禁用/卸载已激活的扩展才需要重启。
@@ -156,7 +156,7 @@ _Avoid_: 任务、事项
 扩展 API 的统一清理形状，所有注册 API 返回 dispose()；扩展上下文的 subscriptions 数组在停用时统一释放。
 
 **System Notification / 系统提醒**:
-经 `api.notification.show` 调用操作系统通知 API（Windows Toast / macOS 通知中心）弹出的提醒；点击通知宿主自动聚焦主窗口并回调扩展。设置-通知可**逐扩展关闭**（关闭后该扩展不再弹出）。
+经 `api.notification.show` 调用操作系统通知 API（Windows Toast / macOS 通知中心）弹出的提醒；点击通知宿主自动聚焦主窗口并回调扩展。设置-通知可**逐扩展关闭**（关闭后该扩展不再弹出）——**该开关对内置扩展有效；宿主模式下的用户扩展暂不受它约束**（开关状态在渲染侧，宿主读不到，属已登记的技术债）。
 _Avoid_: 弹窗、应用内提醒
 
 **Database / 数据库**:
@@ -164,7 +164,7 @@ _Avoid_: 弹窗、应用内提醒
 _Avoid_: 数据库路径、数据文件
 
 **Global Timer / 全局定时器**:
-经 `api.timer` 使用的宿主级定时器，运行在**主进程**（不受渲染进程后台节流影响），间隔为**整数秒**（≥1s）；按扩展隔离，扩展停用自动清理。与扩展自己 `setTimeout` 的区别：后者在渲染进程，窗口最小化时被节流到 1 秒粒度。
+经 `api.timer` 使用的宿主级定时器，跑在**扩展自己所在的运行时进程**（用户扩展 = Extension Host Process，内置扩展 = 主进程侧的宿主级定时器），都**不在渲染进程**、不受后台节流影响；间隔为**整数秒**（≥1s）；按扩展隔离，扩展停用自动清理。与扩展自己 `setTimeout` 的区别：后者在渲染进程，窗口最小化时被节流到 1 秒粒度。
 _Avoid_: 系统定时器、计划任务
 
 ## 扩展开发流程（obox-ext 九步链）

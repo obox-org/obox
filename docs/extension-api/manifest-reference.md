@@ -2,7 +2,7 @@
 
 > **本文件是 obox 扩展 manifest（贡献点 schema 与校验规则）的唯一真相，位置 `docs/extension-api/`**：仓库内其它文档一律引用本文件，不复制副本。
 
-扩展清单（manifest）声明扩展的身份、入口与贡献点。宿主扫描后统一解析注册（两阶段启动：先注册贡献点、后激活）。
+扩展清单（manifest）声明扩展的身份、入口与贡献点。宿主扫描后统一解析注册（两阶段启动：先注册贡献点、后激活）。**用户扩展跑在 Extension Host Process**（独立 Node 进程，无 DOM/localStorage，见 [api-reference.md](api-reference.md) 的「运行模型」），激活时机由 `activationEvents` 决定（缺省 = 立即激活）；**内置扩展**仍在渲染进程立即激活、不参与懒激活。
 
 > 代码证据一律写 `path:line`，本文省略公共前缀：`core/xxx.ts` = `src/renderer/src/core/xxx.ts`，`api/` = `src/api/`，`main/` = `src/main/`，`shared/` = `src/shared/`，`extensions/<id>/` = `src/renderer/src/extensions/<id>/`。
 
@@ -17,8 +17,9 @@
 | ----------------------- | ---- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`                  | ✅   | string   | 扩展 id。正则 `/^[a-z0-9][a-z0-9._-]*$/`（**不带 `i`，只接受小写**，`core/manifest.ts:11`）：`MyExt`、`MY-EXT` 均为 error（issue #77 的行为变更，大写 id 从此被拒）；全局唯一，约定写小写并带短前缀（如 `ext-manager`、`app`、`todo`）                                                                                                                                                                                                 |
 | `version`               | ✅   | string   | semver（`1.0.0`；`core/manifest.ts:12` 的正则还接受 `-pre` / `+build` 后缀）。非法 = error，扩展不加载                                                                                                                                                                                                                                                                                                                                 |
-| `apiVersion`            | ❌   | number   | 扩展要求的 obox API 版本（非负整数）。缺失视为 `0`（兼容所有）。**高于 obox 当前 API 版本时校验 error，拒绝加载**（"需要 obox API vN 或更高（当前 obox 为 vM）"，`core/manifest.ts:28-38`）。obox API 版本单源在根 `package.json` 的 `apiVersion` 字段（**当前 `2`**，`package.json:4`）；只在新版 API 不兼容旧版（破坏性签名变更）时递增。**v2 的递增理由**：新增了 `api.overlay` 命名空间（`api/types.ts:187-234`）与 `progress` 设置字段类型（`api/contributions.ts:106-107`）——v2 本身是**纯加法**（没有破坏性签名变更），递增它是为了给扩展一个**可声明的最低宿主版本门槛**：用了这两项能力的扩展声明 `apiVersion: 2`，老宿主（`apiVersion: 1`）读到 2 就**直接拒绝加载**（清单无效、扩展在管理器标红、入口根本不执行），而不是让扩展在运行期撞上 `api.overlay` 为 `undefined`、或把 `progress` 字段降级成可编辑文本框。不声明（或声明 `1`）的既有扩展在每个宿主上都照常加载 |
-| `main`                  | ✅   | string   | 入口文件相对路径（`core/manifest.ts:39-41`）。**用户扩展须为纯 JS（.js ESM）**——经 `app://` 动态 import，无构建转换（`core/loader.ts:118-121`）；内置扩展可用 `.ts`（Vite 转换）                                                                                                                                                                                                                                                       |
+| `apiVersion`            | ❌   | number   | 扩展要求的 obox API 版本（非负整数）。缺失视为 `0`（兼容所有）。**高于 obox 当前 API 版本时校验 error，拒绝加载**（"需要 obox API vN 或更高（当前 obox 为 vM）"，`core/manifest.ts`）。obox API 版本单源在根 `package.json` 的 `apiVersion` 字段（**当前 `3`**）；只在新版 API 不兼容旧版（破坏性变更）时递增。**v3 的递增理由**：运行时环境变了——用户扩展从**渲染进程**搬进 **Extension Host Process**（独立 Node 进程），因此**没有 DOM / `localStorage` / `window`**，能力改由宿主进程交付（ADR-0026）。这是**行为破坏**（用了 DOM 的扩展会失效），所以必须让扩展有一个可声明的最低宿主门槛：写 `apiVersion: 3` 的扩展在**旧宿主（`apiVersion ≤ 2`，即 **≤ 1.0.17** 的全部已发布版本）上直接被拒绝加载**（清单无效、管理器标红、入口根本不执行），而不是运行到一半 `document is not defined`。`apiVersion: 2` 及以下仍照常加载（旧扩展不声明也能跑）。**v2 的递增理由（历史）**：新增 `api.overlay` 命名空间与 `progress` 设置字段类型，属**纯加法**，递增只为让用它们的扩展能声明"最低宿主 v2" |
+| `main`                  | ✅   | string   | 入口文件相对路径。**用户扩展须为纯 JS（ESM）**——宿主在 **Extension Host Process** 里按 `file://` 动态 `import()`（回退开关关闭时经 `app://` 在渲染进程 import），无构建转换；内置扩展可用 `.ts`（Vite 转换）                                                                                                                                                                                          |
+| `activationEvents`      | ❌   | string[] | **何时激活**（ADR-0026 决策 6）：只接受 4 类——`*` / `onStartupFinished` / `onCommand:<id>` / `onView:<id>`；**缺省（不写 / `null` / `[]`）= `*`**，即"立即激活"。逐项非法即 error（清单无效、不加载）。**内置扩展不参与**（仍立即激活）。完整规则见下方「activationEvents（激活事件）」 |
 | `displayName`           | ❌   | string   | 扩展管理器展示名（默认回退 id）                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `author`                | ❌   | string   | 作者（也参与 .oix 安装目录名的清洗，`main/oixCore.ts:56-60`）                                                                                                                                                                                                                                                                                                                                                                          |
 | `description`           | ❌   | string   | 简介                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -29,6 +30,51 @@
 > **为什么 `uninstall` 字段写了不报错**：公开类型 `ExtensionManifest` 仍声明它（`api/manifest.ts:29-30`，注释还写着"卸载时先执行再删目录"），所以按类型写清单**不会有类型报错**；但宿主从不读该字段，别把它当成钩子——钩子是入口的具名导出（见上表 `uninstall` 行与 api-reference 的「生命周期钩子」）。
 
 > **随包 Python 运行时不靠 manifest 字段**：运行时靠扩展自带目录 `<扩展>/python/python.exe`（`main/pythonCore.ts:25-27,113-116`）+ `api.python.run`（`api/types.ts:612-631`）。公开类型 `ExtensionManifest`（`api/manifest.ts:11-33`）里**没有** `arch` / `python`，按类型写清单对象会报"对象字面量只能指定已知属性"（本文档早先教学过这两个字段，已删）。安装器另有一处旁路读取 `manifest.arch` / `manifest.python`（`main/oixCore.ts:247-264`），用于安装期拒掉错架构的 `.oix`；那两个键由运行时打包工具写入（`main/pythonPackage.ts:155-159`），不是要手工声明的清单项。原 `python.requirements` 已移除（issue #82：它从未被安装器传入、实际不可达），旧清单里残留该键只被忽略、不报错。
+
+## activationEvents（激活事件，ADR-0026 决策 6）
+
+用户扩展**不再一律在启动时激活**：清单用 `activationEvents` 声明"什么时候该把我的 `plugin(api)` 跑起来"，宿主按事件懒 `import()` 入口模块（模块顶层代码也一起不跑）。
+
+```json
+{
+  "name": "my-ext",
+  "version": "1.0.0",
+  "main": "./index.js",
+  "activationEvents": ["onCommand:my-ext.sync", "onView:my-ext.tree"],
+  "contributes": { "commands": [{ "command": "my-ext.sync", "title": "同步" }] }
+}
+```
+
+### 只支持 4 类
+
+| 写法                | 含义                                     | 触发时机（宿主侧）                                                             |
+| ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------ |
+| `*`                 | 立即激活（**缺省值**，= 老行为）         | 宿主 `init` 之后立刻分派一次                                                   |
+| `onStartupFinished` | 首屏之后、空闲时激活                     | `*` 那一轮**之后**再分派一次（不是并行）                                       |
+| `onCommand:<id>`    | 该命令被调用时激活                       | 执行前先请宿主激活并**重查** handler；激活失败则**中止**该命令并报中文错因      |
+| `onView:<id>`       | 该导航项/视图首次被打开时激活            | 导航栏点击（`selectNav`）与主进程 `nav:open`（托盘"设置"等）各接一路            |
+
+- **缺省 = `*`**：不写该字段 / 写 `null` / 写 `[]` 都是"立即激活"。现有 5 个用户扩展都不写这个字段，行为完全不变
+- **内置扩展不参与**：`src/renderer/src/extensions/*` 仍在渲染进程**立即激活**，写 `activationEvents` 对它们没有意义
+- **同一扩展只激活一次**：多条事件命中同一扩展、或命令与视图同时触发，都只跑一次 `plugin(api)`（宿主内有并发去重）
+- **不要在没有触发源的扩展上写 `onCommand` / `onView`**：`onCommand` 只在该命令**真的被执行**时触发（命令面板、快捷键、状态栏点击、树节点点击、`api.executeCommand`），`onView` 只在导航项被**点开**时触发。只贡献 App 卡片、没有任何可触发命令或视图的扩展写这两个等于**永不激活**——声明式的东西（导航项、状态栏项、命令条目）还在，但**运行期注册**的东西（App 卡片、树数据源、命令 handler）永远不会有；这类扩展请写 `*` 或 `onStartupFinished`
+- **激活失败不影响别人**：`import` 失败 / 没导出 `default` / `plugin` 抛错，都只影响该扩展自己，并在扩展管理器详情页给出归因；其余扩展照常激活
+
+### 校验规则与逐字错误文案（`core/manifest.ts` 的 `analyzeActivationEvents`）
+
+以下全部是 **error**（清单无效 ⇒ `isValid=false`、不加载、管理器标红），**一处错报一行**。`合法值：…` 是固定尾巴（`ACTIVATION_EVENT_HINT`，与 `scripts/validate-manifest.mjs` 逐字一致）：`合法值：* / onStartupFinished / onCommand:<id> / onView:<id>`。
+
+| 输入                                                    | 错误文案（逐字）                                                                                  |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 不是数组（`{}` / `5` / `true` / 字符串）                | `activationEvents 必须是字符串数组（合法值：* / onStartupFinished / onCommand:<id> / onView:<id>）` |
+| 第 N 项不是字符串（`5` / `true` / `{}` / `null`）       | `activationEvents 第 N 项必须是字符串（收到 <值的 JSON 形式>，合法值：…）`                          |
+| 认不出的事件名（`onSave` / `oncommand:x` / `startup`）  | `activationEvents 第 N 项 "<事件>" 不受支持（合法值：…）`                                            |
+| 前缀对但没写 id（`onCommand:` / `onView:`）             | `activationEvents 第 N 项 "<事件>" 的 <id> 不能为空（合法值：…）`                                     |
+| id 只有空白（`onCommand:   `）                          | 同上（`<id> 不能为空`）——协议层要求 `trim()` 非空，否则清单能过、激活信封却被判 `EH_INTERNAL`        |
+
+- **合法判定只有一处实现**：清单校验与宿主分派共用 `src/shared/extensionHostProtocol.ts` 的 `parseActivationEvent()`；`core/manifest.ts` 只额外补一条"`<id>` 不能只有空白"的判据，不写第二份前缀解析
+- **`contributes` 里的命令/视图不必写进 `activationEvents`**：那是"何时激活"，与"声明了什么"两回事。写了不等于命令存在，没写不代表命令不能声明
+- **坏清单不会"退回 `*` 照旧激活"**：归一化函数在"全部非法"时确实退回 `['*']`（那是为了不因为一处笔误让扩展永不激活），但校验已经把该清单判为无效 ⇒ 它连加载都不会被加载。改完清单请重启应用重新扫描
 
 ## contributes 贡献点
 
@@ -333,6 +379,7 @@
 | `main`                   | 必填、字符串、去空白后非空                                                                                                                                        | `core/manifest.ts:39-41`   |
 | `contributes`            | 出现时必须是对象                                                                                                                                                  | `core/manifest.ts:42-44`   |
 | `extensionDependencies`  | 出现时必须是字符串数组——非数组值（`{}` / `5` / `true`）只记一条 error，**不再抛 `TypeError` 打断整轮扫描**（issue #83）；且**不能包含自身**（"扩展不能依赖自身"） | `core/manifest.ts:120-128` |
+| `activationEvents`       | 出现时必须是字符串数组；逐项必须是 4 类事件之一，`onCommand:` / `onView:` 的 `<id>` 去空白后必须非空（**一处错报一行**，文案逐字见「activationEvents（激活事件）」） | `core/manifest.ts` 的 `analyzeActivationEvents` |
 | `contributes` 的八类数组 | `ipcChannels` / `keybindings` / `menus` / `views` / `navItems` / `statusBarItems` / `commands` / `themes`，形状规则见下一节                                       | `core/manifest.ts:46-119`  |
 | `contributes.settings` 的字段（**仅 `scripts/validate-manifest.mjs`**；宿主 `core/manifest.ts` **不校验**） | `settings` 出现时必须是 `{id, title, fields}` 对象、`fields` 必须是数组；逐项：`key` / `label` 非空字符串、`type` ∈ 七类白名单（含 `progress`）、`max` 出现须为 > 0 的有限数字、`progress` 的 `default` 出现须为数字（越界不报错） | `scripts/validate-manifest.mjs:242-303,412-414`（文案逐字见「settings 字段校验」） |
 

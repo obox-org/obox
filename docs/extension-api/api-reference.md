@@ -4,26 +4,53 @@
 
 宿主在激活扩展时构造 `ExtensionActivationApi` 作为插件函数的唯一参数注入（`api`）。本文按其成员逐节说明；类型定义的物理位置见文末「类型文件位置」。
 
-> **代码引用约定**：未写目录的 `xxx.ts` 一律指 `src/renderer/src/core/xxx.ts`（如 `host.ts`、`registry.ts`、`manifest.ts`、`appStore.ts`）；`src/api/*`、`src/main/*`、`src/shared/*` 一律写全相对路径（如 `src/api/types.ts`、`src/main/timer.ts`）。注意 `core/types.ts` 只是 `src/api` 的历史兼容再导出（`core/types.ts:7`），**类型定义在 `src/api/types.ts`**。
+> **代码引用约定**：未写目录的 `xxx.ts` 一律指 `src/renderer/src/core/xxx.ts`（如 `host.ts`、`registry.ts`、`manifest.ts`、`appStore.ts`）；`src/api/*`、`src/main/*`、`src/shared/*`、`src/extension-host/*` 一律写全相对路径（如 `src/api/types.ts`、`src/main/timer.ts`、`src/extension-host/activator.ts`）。注意 `core/types.ts` 只是 `src/api` 的历史兼容再导出（`core/types.ts:7`），**类型定义在 `src/api/types.ts`**。
+
+## 运行模型（ADR-0026，先读这一节）
+
+obox 有**两个扩展运行时**，代码落在哪一侧决定了你能用什么：
+
+|              | 用户扩展（`.oix`）                                                                                      | 内置扩展                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 执行位置     | **Extension Host Process**：主进程用 Electron `utilityProcess` 拉起的独立 **Node 进程**，随主窗口同生共死 | **Renderer Runtime**：渲染进程（源码在 `src/renderer/src/extensions/<id>/`）    |
+| Node 能力    | **完整 Node**：`node:fs` / `node:child_process` / `node:sqlite` / 任意内置模块，入口按 `file://` 动态 `import()` | 无 Node（只有注入的 `api`，能力经 `window.api` 走主进程）                       |
+| DOM          | **没有**（宿主进程没有 DOM、没有 `window`、没有 `localStorage`）                                        | 有（与 UI 同一个进程）                                                         |
+| 界面怎么来   | 贡献点 + `app://` 静态页（App 卡片 / overlay 页面）、树视图数据源                                       | 另有 `navItems[].view` 指向的**具名导出 Vue 组件**                             |
+| 激活时机     | 按 `activationEvents` 懒激活（缺省 `*` = 立即，见 [manifest-reference.md](manifest-reference.md)）       | **立即激活**，不参与懒激活                                                     |
+
+- **API 交付方式没变**：仍是 `export default function (api) {…}`，`api` 由宿主按扩展 id 现场构造后作为**唯一参数**传入（不是 `require('obox')` 拦截，也不是全局变量）。
+- **宿主进程没有 Electron API**：`safeStorage`（`api.secrets`）、系统对话框、通知、窗口与托盘、菜单、`app://` 协议、自动更新都仍**经主进程**执行；扩展看到的方法签名不变。
+- **跨进程约束**（写代码时就要按这个来）：每次 `api.*` 都是 RPC（或宿主内直达）。参数与返回值**只过 JSON 值 + 二进制旁路**——函数 / Symbol / 类实例 / 循环引用 / `Map` / `Set` 一律拒绝（`EH_UNSERIALIZABLE`），单帧上限 **8MB**（`EH_FRAME_TOO_LARGE`）。排查见 [troubleshooting.md](troubleshooting.md)。
+- **`api.on` / `api.emit` 不跨运行时**：事件只在**同一个运行时内**广播——用户扩展之间互通、内置扩展之间互通，**两者之间不再互通**（用户扩展已不在渲染进程，这条是结构性的，不是缺陷）。
+- **`api.executeCommand` 只能执行用户扩展的命令**：命令表在宿主里（含全部用户扩展），内置扩展的命令不在其中 ⇒ 执行内置命令会得到 `command not found: <id>`。
+- **`workspaceState` / `globalState` 在宿主模式下是真隔离**：两份独立存储（`state/workspace.json` / `state/global.json`）。v1 里"两者其实指向同一份 store"是假隔离，已修正——依赖"两者其实同一份"的扩展会感知到差异。
+- **过渡期回退开关**：2.0 之前宿主进程默认**关**（`OBOX_EXTENSION_HOST=1` / `=true` 才启用）。关着时用户扩展仍在**渲染进程**执行、`activationEvents` 不生效（全部立即激活）。要交付 2.0 的扩展请**按"宿主进程"这一侧写**（不碰 DOM / localStorage），开关一开行为才不变。
+- 逐条**降级实现**（同步 API 退化成缓存、字节分帧、未自动化验证的重连等）集中登记在文末「宿主模式的降级与限制」。
 
 ## 入口契约
 
+用户扩展的入口在**扩展自己的目录**（`manifest.main`，纯 ESM JavaScript，宿主在宿主进程里按 `file://` 动态 `import`）；内置扩展入口是 `src/renderer/src/extensions/<id>/index.ts`（Vite `import.meta.glob` 收集，可用 `.ts` / `.vue`，差异见 [guides-builtin.md](guides-builtin.md)）。
+
 ```ts
-// src/renderer/src/extensions/<id>/index.ts
-export const HomeView = /* Vue 组件 */   // 具名导出：导航项 view 字段引用
+// 内置扩展：src/renderer/src/extensions/<id>/index.ts
+// 用户扩展：<扩展仓库>/index.js（manifest.main 指向的文件）
+export const HomeView = /* Vue 组件（仅内置扩展） */   // 具名导出：导航项 view 字段引用
 export default function myExt(api: ExtensionActivationApi): (() => void) | void {
   // ... 注册命令实现、事件、App 卡片 ...
   return () => { /* 清理：dispose 所有注册 */ }
 }
 ```
 
-- `default` 导出插件函数：宿主以 `plugin(api)` 调用；返回值（函数）作为清理函数被宿主收集，扩展停用时执行
-- 具名导出：视图组件（`view` 字段引用）；宿主把具名导出组件登记进注册表
+- `default` 导出插件函数：宿主以 `plugin(api)` 调用；返回值（函数或 `{ dispose() }`）作为清理函数被宿主收集，扩展停用时执行
+- 具名导出：视图组件（`view` 字段引用）；宿主把具名导出组件登记进注册表。**只有内置扩展能这么用**——用户扩展没有 Vue 运行时，界面走 App 卡片静态页或 `contributes.views` 树视图（见 [guides-user.md](guides-user.md)）
 - 扩展 id（目录名与 `manifest.name`）的合法字符集是 `^[a-z0-9][a-z0-9._-]*$`，该正则**不带 `i` 标志**（`core/manifest.ts:11`，issue #77）——**只接受小写**，含大写（如 `MyExt`）即清单无效。完整校验规则见 `manifest-reference.md`
 
 ## 宿主生命周期语义
 
-- **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表（`host.ts:986-1004`）
+> 本节描述**渲染侧**的时序（两个运行时共用）。用户扩展（宿主模式）的 `plugin(api)` 不在渲染进程跑：渲染侧只注册它的贡献点，激活由宿主进程按 `activationEvents` 完成（`*` 在 `init` 后、`onStartupFinished` 在 `*` 之后、`onCommand:<id>` 在执行该命令之前、`onView:<id>` 在打开该导航项时）。**内置扩展仍在渲染侧立即激活**，不参与懒激活。
+
+- **两阶段启动**：扫描 → 注册贡献点 → 释放 barrier → 激活（`plugin(api)`）。UI 等 barrier 后才消费注册表（`host.ts` 的 `start()`）
+- **激活触发（宿主模式）**：`onCommand:<id>` 由 `executeCommand` 前置触发（判断"命令归属的扩展是否在宿主里"，是则先请宿主激活、再**重查** handler；激活失败则**中止**动作并给出中文原因，不会执行一个没有实现的命令）；`onView:<id>` 由导航栏点击（`App.vue` 的 `selectNav`）与 `nav:open`（主进程请求切页）各接一路。同一扩展的并发触发会**合并成一次**激活，激活请求超时 **10 秒**（`ACTIVATION_TIMEOUT_MS`，不是普通 RPC 的 3 秒）
 - **App 子窗口不激活扩展，但仍会 import 入口**：子窗口（`?obox-window=app`；overlay 窗体 `?obox-window=overlay` 同判，`src/renderer/src/main.ts:21-23`）由 `src/renderer/src/main.ts:37` 传 `activateExtensions:false`，**只跳过阶段二**（不调用 `plugin(api)`，`host.ts:1006-1012`）；**阶段一照常执行**——宿主仍 `await load()` 每个扩展入口模块并 `registerContributions`（`host.ts:986-1000`）。也就是说：**入口模块的顶层代码会在每个 App 子窗口重跑**，`default` 插件函数才只在主窗口执行一次。因此**副作用（连 IPC、写盘、起定时器、装监听、注册命令）必须放进插件函数**，写在模块顶层会在每个子窗口重复执行。子窗口渲染所需的数据来自贡献点注册表与（与主窗口同源的）localStorage 里的 App 卡片（`appStore`）；子窗口内的交互请走 `api.app.onMessage` 消息桥
 - **依赖拓扑序**：`extensionDependencies` 先激活依赖；**检测到环不跳过**——环内扩展仍会被激活，只是排到最后（`manifest.ts:197-200` 把环内扩展补进 `ordered`，`host.ts:1013-1022` 照常激活）；宿主启动日志末尾会列出环内 id（`host.ts:1024-1031` 的 `依赖环 …`）。缺失依赖不阻塞，扩展照常激活（`manifest.ts:187`）
 - **命令归属**：命令 id 全局唯一，`api.registerCommand(id, handler)` 只能绑定**本扩展 manifest 声明**的命令；绑定别人声明的 id 会被拒绝（`console.warn` + 返回空 Disposable，`registry.ts:206-211`），绑定完全未声明的 id 直接抛错（见 `registerCommand`）。扩展被热移除/卸载/覆盖安装时，其命令会从注册表**物理移除**，同 id 可被其它版本或扩展重新声明（`registry.ts:189-191`）
@@ -53,12 +80,16 @@ const d = api.registerCommand('my-ext.do', async (arg) => {
 
 ### executeCommand<T>(id, ...args) → Promise<T>
 
-跨扩展执行命令（命令 id 是跨扩展稳定契约）。
+执行命令（命令 id 是跨扩展稳定契约）。
 
 ```ts
 const result = await api.executeCommand('other-ext.act', payload)
 // 未找到命令/无 handler → 抛 Error(`command not found: <id>`)
 ```
+
+- **只能执行用户扩展的命令**（含自己）：命令表在宿主进程里，只收集用户扩展 `api.registerCommand` 绑定的实现；**内置扩展的命令不在其中**，执行会得到 `command not found: <id>`
+- 目标扩展还没激活时，宿主会**先按 `onCommand:<id>` 触发激活**再执行（见「宿主生命周期语义」）；激活失败 ⇒ 抛中文错误并中止，不会执行半个动作
+- handler 的返回值可过 RPC：纯 JSON 值可回，函数 / 类实例等过不去（`EH_UNSERIALIZABLE`）。二进制用 `Uint8Array` / `ArrayBuffer`
 
 ### statusBar（状态栏项）
 
@@ -101,12 +132,14 @@ api.workspaceState.get<string>('key') // 读
 api.workspaceState.get('key', 'default') // 读带默认
 api.workspaceState.update('key', value) // 写（undefined 删 key）
 api.workspaceState.keys()
-// globalState 同构（当前与 workspaceState 共用同一命名空间存储：obox 无"工作区"概念，两者都是应用级）
+// globalState 同构
 ```
+
+> **宿主模式下两者是真隔离**（两份文件：扩展 data 目录下的 `state/workspace.json` 与 `state/global.json`，各一套键空间）。v1 把 `workspaceState` 与 `globalState` 指向同一个 store（假隔离），本版按名字给出真隔离——**依赖"两者其实是同一份"的扩展会感知到差异**。回退开关关闭（扩展仍在渲染进程）时仍是 v1 的共用存储。
 
 ### on(event, listener) / emit(event, ...args)
 
-Cordis 事件总线（跨扩展广播；`emit` 同名事件所有 `on` 监听者收到）：
+事件总线（**同一个运行时内**广播；`emit` 同名事件的所有 `on` 监听者都会收到）：
 
 ```ts
 const off = api.on('my-ext:changed', (payload) => {
@@ -115,6 +148,9 @@ const off = api.on('my-ext:changed', (payload) => {
 api.emit('my-ext:changed', { some: 'data' })
 // 注意：事件名建议含扩展前缀，避免与其他扩展冲突
 ```
+
+- **不跨运行时**：用户扩展的事件在 Extension Host Process 里广播，内置扩展的事件在 Renderer Runtime 里广播，**两者之间不再互通**（这是 ADR-0026 的结构性后果，不是缺陷）
+- payload 过 RPC：纯 JSON 值可传，函数 / 类实例 / 循环引用过不去（`EH_UNSERIALIZABLE`）
 
 ### window（窗口控制，经 preload IPC 到主进程）
 
@@ -297,7 +333,7 @@ if (moved.ok) console.log(moved.position) // { x, y }（扩展拿不到 workArea
 - **定位方式**：主进程登记表 key = `overlayKey(extId, overlayId)` = `` `${extId}:${overlayId}` ``（`src/main/appWindow.ts:240-252`；扩展 id 字符集不含 `:`，故首冒号即分界）。
 - **区分"别人的"与"不存在"**：`findOverlayOwner(overlayId)` 扫登记表找所属扩展（`:384-389`）。找到且不是调用方 ⇒ **越权拒绝**：`destroy` 回「越权被拒：overlay X 由扩展 Y 创建，Z 只能销毁自己创建的 overlay」（`:516-525`），`setMouseThrough` 回同款文案（`:555-562`），`setPosition` 与 `setMouseThrough` **完全同构**（越权 `:627-634`，不存在 `:635-636`，卡 14）；找不到 ⇒ `destroy` **静默成功**（幂等），`setMouseThrough` / `setPosition` **明确报错**（见下方生命周期）。
 - **宿主侧把 `ext.id` 绑死在闭包里**：`buildOverlayApi(ext, disposables)` 构造的四个方法都只转发 `ext.id`（`host.ts:581-614`），扩展拿不到别人的绑定，也无法从参数里伪造。
-- **这是能力封装，不是安全边界**：扩展与宿主同进程同上下文、无沙箱（ADR-0015）。作用域校验防的是**误用/串号**；不限定作用域等于任一扩展都能销毁、穿透或**移走**别人的窗体，所以必须严格。门禁：`test/overlay-window.test.ts` 的「主进程 · 作用域安全」与「主进程 · setPosition」。
+- **这是能力封装，不是安全边界**：用户扩展跑在 Extension Host Process（与 UI 不同进程），但仍是受信代码、无沙箱，宿主模式下还有完整 Node（ADR-0015）。作用域校验防的是**误用/串号**；不限定作用域等于任一扩展都能销毁、穿透或**移走**别人的窗体，所以必须严格。门禁：`test/overlay-window.test.ts` 的「主进程 · 作用域安全」与「主进程 · setPosition」。
 
 #### 生命周期
 
@@ -565,19 +601,28 @@ const p = api.proxy.get()
 //     'http://user:pass@host:1080'；空串 = 直连
 ```
 
-obox 主进程的网络请求（更新下载等）自动使用该代理；内置扩展经 `api.proxy.get()` 读取并应用；非内置扩展可选使用。
+obox 主进程的网络请求（更新下载等）自动使用该代理；内置扩展经 `api.proxy.get()` 读取并应用；用户扩展在宿主模式下由 `api.net.fetch` **自动继承同一份配置**，不需要自己读。
 
-> **形态迁移（1.0.12 起，用户裁定"单一 URL"）**：设置里存的是一个 URL（`http://127.0.0.1:7890`、`socks5://…`、可含 `user:pass@`），不再是 host/port/username/password 四栏。**旧值自动迁移**：读到 1.0.11 及更早的 `{enabled,host,port,username,password,...}` 时会拼成 `http://[user:pass@]host[:port]`，设置不丢。迁移实现在 `src/shared/proxyConfig.ts`；URL 解析与规则串派生在 `src/main/proxy.ts:68,128`。
+> **形态迁移（1.0.12 起，用户裁定"单一 URL"）**：设置里存的是一个 URL（`http://127.0.0.1:7890`、`socks5://…`、可含 `user:pass@`），不再是 host/port/username/password 四栏。**旧值自动迁移**：读到 1.0.11 及更早的 `{enabled,host,port,username,password,...}` 时会拼成 `http://[user:pass@]host[:port]`，设置不丢。迁移实现在 `src/shared/proxyConfig.ts`；URL 解析与规则串派生在 `src/main/proxy.ts`。
 >
-> **代理如何生效**（`src/main/proxy.ts:194-227`）：主进程在**发请求的 session** 上调用 `setProxy`（URL → `proxyRules`，`noProxy` → `proxyBypassRules`；未启用/空 URL → `mode:'direct'`）与 `setCertificateVerifyProc`（`ignoreSSL` → 放行全部证书），同一份配置同时应用到扩展联网 session（`obox-net`）与 electron-updater session；配置指纹未变则不重复调用。因此代理与 `ignoreSSL` **真实作用于请求**，且不会互相覆盖。
+> **代理如何生效——两条链路两种机制**（别按其中一条的机制排查另一条）：
 >
-> **账号密码进不了规则串**（Chromium 的 `proxyRules` 语法没有 userinfo 位）：认证凭据只从 URL 的 `user:pass@` 解析出来，走 session 的 **login 事件**回填——更新下载经 `autoUpdater.on('login')`（`src/main/updater.ts:121-130`）生效；`api.net.fetch` **不支持逐请求凭据**（见 `docs/update-and-release-verification.md` 第 2 节）。
+> - **主进程 / 渲染侧**（内置扩展的联网、electron-updater 的检查与下载）：在**发请求的 session** 上应用（`src/main/proxy.ts` 的 `applyProxyToSession`）——`setProxy`（URL → `proxyRules`，`noProxy` → `proxyBypassRules`；未启用 / 空 URL → `mode:'direct'`）与 `setCertificateVerifyProc`（`ignoreSSL` → 放行全部证书），同一份配置同时应用到扩展联网 session（`obox-net`）与 electron-updater session，配置指纹未变则不重复调用。
+> - **宿主进程**（用户扩展的 `api.net.fetch`）：宿主没有 Electron API、也没有 Chromium session，因此**在宿主内自行应用**——配置先向 main 要（宿主内部 RPC `host.proxyConfig`），**读不到或通道未接线时回落环境变量**（`HTTPS_PROXY` > `HTTP_PROXY` > `ALL_PROXY`，另认 `NO_PROXY` / `NODE_TLS_REJECT_UNAUTHORIZED`）。请求走 Node `http`/`https`：**http 目标用代理的绝对 URI 形式**，**https 目标走 CONNECT 隧道 + `tls.connect({ rejectUnauthorized: !ignoreSSL })`**；默认 30s 超时、响应体上限 8MB、最多跟随 5 次重定向。因此代理与 `ignoreSSL` **真实作用于请求**，两条链路也不会互相覆盖。
 >
-> **不要**试图用环境变量配代理：写 `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` / `NODE_TLS_REJECT_UNAUTHORIZED` **对两条链路都无效**——Node 的 `fetch`（undici）与 Electron `net.request`（Chromium）都不读这些变量（早期实现正是如此，实测把 `HTTP_PROXY` 指向不可达代理仍直连成功，`src/main/proxy.ts:1-23`）。
+> **账号密码进不了规则串**（Chromium 的 `proxyRules` 语法没有 userinfo 位）：认证凭据只从 URL 的 `user:pass@` 解析出来，主进程侧走 session 的 **login 事件**回填——更新下载经 `autoUpdater.on('login')`（`src/main/updater.ts:121-130`）生效；宿主侧直接把 `Proxy-Authorization` 头写进 CONNECT / 绝对 URI 请求。`api.net.fetch` **不支持逐请求凭据**（见 `docs/update-and-release-verification.md` 第 2 节）。
+>
+> **环境变量只是兜底，不是配置手段**：主进程链路（Chromium session）**完全不读**环境变量；宿主链路只在"拿不到 main 的配置"时才读，并会 warn 一次。所以改 `HTTP_PROXY` 不会覆盖设置-网络里的值，也不要靠它配代理——要改代理请改设置-网络。
+>
+> **代理相关的已知降级（宿主侧，逐条来自技术债）**：
+>
+> - `proxy.get()` 是**同步**签名而 RPC 是异步的 ⇒ 宿主读的是**快照**，默认 **1 秒 TTL**（过期后后台刷新）。语义是"最多旧 1 秒"，不再是 v1 的"每次读都是最新"；
+> - 只支持 **http / https 代理**：填 `socks5://…` 时 `api.net.fetch` **明确报错**（"宿主进程暂不支持 socks 代理…，请在设置-网络里改用 http 代理"），不会静默直连；
+> - `noProxy` **不支持 CIDR**（`10.0.0.0/8` 这种写法不生效），只支持 `*` / `example.com` / `.example.com` / `*.example.com` / `example.com:8080`。
 
-### timer（全局定时器，主进程精确计时）
+### timer（全局定时器，秒粒度，不受后台节流）
 
-宿主级定时器跑在**主进程**，不受渲染进程后台节流影响（窗口最小化/不可见时渲染进程 `setTimeout` 会被节流到 1s 粒度）。**间隔为整数秒（≥1s，上限 86400 秒 = 1 天）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器（`src/main/timer.ts:60-64`）。
+宿主级定时器跑在**扩展自己所在的运行时进程**里，两条路径都不在渲染进程 ⇒ 不受后台节流影响（窗口最小化/不可见时渲染进程的 `setTimeout` 会被节流到 1s 粒度）。用户扩展（宿主模式）由 Extension Host Process 的 Node 定时器实现；内置扩展走主进程的宿主级定时器。**间隔为整数秒（≥1s）**；同 id 重复设置会重置；扩展停用/卸载时宿主自动清理全部定时器。
 
 > **秒级倒计时怎么写**：每次 tick 用 `Date.now()` 与目标时间**重算剩余**再 `setText`，不要靠 tick 次数累加——定时器只保证「不小于间隔」，累加会漂移；长计时也不要放在渲染进程的 `setTimeout` 里（最小化会被节流）。
 
@@ -595,16 +640,16 @@ api.timer.clearTimeout('sync')
 api.timer.clearInterval('tick')
 ```
 
-- 回调在扩展上下文（渲染进程）执行，**无 payload**（纯"到点了"），需要数据的扩展在回调里自行查询
-- 定时器 id 在**扩展内**唯一即可（内部 key = `<扩展id>:<id>`，跨扩展自动隔离，`src/main/timer.ts:16-18`）
-- `seconds` 必须是 **1–86400 的整数**（`src/main/timer.ts:29-37`）。上限的存在理由：`seconds * 1000` 超过 2³¹−1 时 Node 会把延时钳成 1ms，`setInterval` 退化成"每毫秒广播 `timer:fire`"的事件风暴（`src/main/timer.ts:26-27`）
-- **非法 `seconds` 是静默失败，不会抛错**：主进程校验失败只返回 `{ ok:false, error }`（`src/main/timer.ts:69-88`），宿主用 `void` 丢弃该结果（`host.ts:724-726`）——既不抛错也不提示，定时器**不会建立**、回调永不触发
+- 回调在**扩展自己的上下文**执行（用户扩展 = 宿主进程；内置扩展 = 渲染进程），**无 payload**（纯"到点了"），需要数据的扩展在回调里自行查询
+- 定时器 id 在**扩展内**唯一即可（内部 key = `<扩展id>:<id>`，跨扩展自动隔离）
+- `seconds` 必须是 **≥1 的整数**。**上限 86400（1 天）只在内置扩展那条路径上校验**（`src/main/timer.ts`）；宿主路径只校验"≥1 的整数"，所以**不要写超大值**——`seconds * 1000` 超过 2³¹−1 时 Node 会把延时钳成 1ms，`setInterval` 会退化成"每毫秒一次"的事件风暴
+- **非法 `seconds` 的失败形态两条路径不同**：宿主模式**抛 `Error`**（`timer.setTimeout 的 seconds 必须是 ≥1 的整数（秒，宿主 timer 为秒粒度）`）；渲染进程模式是**静默失败**——主进程只回 `{ok:false, error}`，宿主侧用 `void` 丢弃该结果，既不抛错也不提示，定时器**不会建立**、回调永不触发
 
 ### sqlite（数据库，node:sqlite 内置驱动）
 
 宿主内置 SQLite（Node 22 `node:sqlite`，**零依赖**）。`open(name)` 必须传**相对路径**（拒绝绝对路径/`..`/盘符），解析到**扩展自己的数据目录** `userData/extensions/<扩展id>/data/<name>`（宿主自动建目录）——扩展拿不到磁盘路径，数据天然按扩展隔离。相对路径可含子目录（如 `sub/a.db`，Windows 上写 `/` 亦可）；**不同子目录下的同名库互不干扰**（列类型元数据按库路径隔离）。
 
-> **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的沙箱。两者的失败形态不同：`exec` **原样返回** `{ ok:false, error:'不允许的 SQL 语句：…' }`（`host.ts:752`），`query` 经内部 `call()` **抛 `Error`**（`host.ts:744-750,753-755`）。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
+> **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的封装。两者的失败形态不同：`exec` **原样返回** `{ ok:false, error:'不允许的 SQL 语句：…' }`，`query` **抛 `Error`**。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
 
 ```ts
 const db = await api.sqlite.open('todo.db') // → userData/extensions/todo_chenzhi/data/todo.db
@@ -625,8 +670,9 @@ await db.close()
 
 - 默认表名 = 数据库文件名去扩展名（`open('todo.db')` → 表 `todo`）；`query`/`exec` 作用于整个库
 - 条件对象（`get_by`/`update`/`del_by` 的 where）只支持**等值匹配**，多键为 AND；复杂条件用 `query` 写 SQL
-- 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主内部 `call()` 把主进程的 `{ok:false}` 转成抛错，`host.ts:744-750`）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 也**不经 `call()`**，直接返回 IPC 原始结果（`host.ts:774`，主进程侧是无返回值句柄关闭，`src/main/sqlite.ts:78-80`），因此对不存在的库 `close()` 静默无操作、**不会抛错**
-- 全部方法 `async`（经 IPC 到主进程）；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
+- 除 `exec` 与 `close` 外，所有方法的失败都是**抛 `Error`**（宿主把内部的 `{ok:false}` 转成抛错）；`exec` 走另一条路——**原样返回** `{ ok:false, error }`（见上）；`close()` 不经抛错通路（主进程侧是无返回值句柄关闭），因此对不存在的库 `close()` 静默无操作、**不会抛错**
+- 全部方法 `async`；扩展停用/卸载时宿主自动关闭其数据库连接（也可手动 `close()`）
+- **宿主模式下这不是安全边界**：`import { DatabaseSync } from 'node:sqlite'` 可以自己开任意库、执行任意 SQL。`api.sqlite` 的价值是"按扩展隔离的数据目录 + 自动建表 + 表集合操作"，不是沙箱
 - **数据目录的生命周期**：库文件在 `<扩展>/data/<name>.db`（安装态即 `userData/extensions/<扩展id>/data/`）；**覆盖安装（升级）时宿主保留 `data/`**，所以数据不会因升级丢失；**卸载时 `data/` 随扩展目录一起删除**。因此打包时不要把 `data/` 放进 `.oix`——宿主会直接拒收（见 `docs/extension-api/guides-user.md` §6「打包 `.oix`」）
 
 ### notification（系统提醒，操作系统通知）
@@ -646,10 +692,13 @@ const r = await api.notification.show({
 
 - `title` 必填，`body`/`icon`/`onClick` 可选；`onClick` 每次 show 独立绑定，点击后自动注销
 - 扩展停用/卸载后不再收到通知点击事件
+- **已知降级（宿主模式）**：宿主发起的通知**暂不遵循「设置-通知」里的逐扩展开关**——那份开关状态在渲染侧（`stateStore`），main 与宿主进程都读不到，因此即使某个扩展在设置里被关掉，它在宿主里调用 `api.notification.show` 仍会弹出。等设置状态交给宿主（或由渲染侧代发）后消除；内置扩展（渲染侧）不受影响，开关照旧生效
 
 ### net（网络请求）
 
-渲染进程 CSP（`default-src 'self' app:`）**禁止扩展直接 fetch 外部网络**——联网必须走 `api.net.fetch`（主进程经 **Chromium session** 发请求，**自动应用设置-网络代理**，默认 30s 超时，响应体上限 8MB）：
+**内置扩展**：渲染进程的 CSP（`default-src 'self' app:`）禁止直接 `fetch` 外部网络，联网必须走 `api.net.fetch`（主进程经 Chromium session 发请求）。**用户扩展（宿主模式）**：宿主有完整 Node，你本来就能自己 `fetch` / 用 `node:http`，`api.net.fetch` 的价值是**自动继承设置-网络里的代理与 `ignoreSSL`** 并把响应按 Content-Type 解析好。
+
+`api.net.fetch` 的契约两条路径一致：默认 **30s 超时**、响应体上限 **8MB**、最多跟随 **5 次重定向**：
 
 ```ts
 const r = await api.net.fetch('https://api.example.com/items', {
@@ -664,7 +713,7 @@ if (r.ok) {
 // 失败：r.ok=false, r.error（含超时/网络错误）
 ```
 
-代理与 `ignoreSSL` 的作用方式见上方 `proxy` 一节（session 级，不是环境变量）。
+代理与 `ignoreSSL` 的作用方式见上方 `proxy` 一节——**两条链路两种机制**：内置扩展走 Chromium session（主进程 `setProxy` / `setCertificateVerifyProc`）；用户扩展由**宿主进程自行应用**（`host.proxyConfig` 取配置 → http 走绝对 URI / https 走 CONNECT 隧道 + `rejectUnauthorized`；取不到配置时才回落环境变量）。**socks 代理在宿主侧会明确报错**，`noProxy` 不支持 CIDR。
 
 ### dialog / shell / clipboard（对话框 / 外链 / 剪贴板）
 
@@ -755,7 +804,8 @@ await api.fs.unwatch('watch-1') // 停止监听
 - `watch`：**单扩展并发监听上限 16**（`src/main/fs.ts:25`）；超限时主进程返回 `{ok:false, error:'监听数量已达上限（16）'}`（`src/main/fs.ts:154-156`），宿主**转成抛错**（`host.ts:692-699`）。同 id 重复 `watch` 会先关掉旧监听、不占新增额度（`src/main/fs.ts:151-153`）
 - 监听目录被删 / 权限变化 → 宿主记录并自动关闭该监听（`src/main/fs.ts:166-170`），扩展侧此后收不到事件（不会崩主进程）
 - 扩展停用/卸载时宿主自动关闭全部监听
-- `api.fs` 只能读写扩展自己的 data 目录；`api.dialog` 选到的外部路径**不能**用 `api.fs` 读写（安全边界）
+- `api.fs` 只能读写扩展自己的 data 目录；`api.dialog` 选到的外部路径**不能**用 `api.fs` 读写
+- **宿主模式下这不是安全边界**：宿主进程有完整 Node，`import fs from 'node:fs'` 就能读写任意路径。`api.fs` 的"仅 data 目录"是**能力封装**（防误用、给数据一个稳定落点），不是沙箱；扩展整体仍是受信代码（ADR-0015）
 
 ### ui（交互输入：QuickPick / InputBox / toast / 进度）
 
@@ -861,6 +911,8 @@ off.dispose() // 注销数据源
 
 协议是 **JSON-RPC 2.0**（请求/响应/错误/通知），分帧默认 `Content-Length`（二进制安全），也可 `ndjson`。
 
+> **`Content-Length` 按字节计，不是字符数**——这是 sidecar 侧最容易踩的一处：宿主写的是 `Content-Length: <payload 的 UTF-8 字节数>`（`Buffer.length`），一个中文字符算 **3 字节**。你的对端若按"字符数/码点数"算长度，读到一半就会被截断或吞掉下一帧，表现是**中文乱码 / 偶发丢帧 / `protocol-error`**。分帧实现见 `src/main/ipcCore.ts`（宿主与主进程共用同一份）。
+
 ```ts
 // 1) stdio：把随扩展分发的程序跑起来（program 必须是扩展目录内的相对路径）
 //    `.js/.cjs/.mjs` 以纯 Node 运行（语义见下方「JS 助手的运行时语义」）；其它（Rust/Python/Go 产物）直接执行
@@ -918,7 +970,7 @@ api.ipc.onClose('worker', (err) => console.warn('通道关闭', err.code))
 await api.ipc.close('worker')
 ```
 
-**JS 助手的运行时语义**：`program` 以 `.js` / `.cjs` / `.mjs` 结尾时，宿主用**宿主进程自带的 Node**（`process.execPath`）运行它，并给子进程注入 `ELECTRON_RUN_AS_NODE=1`（`src/main/ipc.ts:155-163`、`src/main/ipcTransport.ts:28-35`）——助手是**纯 Node 程序**，不是 Electron 应用（`process.versions.electron` 仍有值，用的还是同一个可执行文件，只是按 Node 模式启动）：
+**JS 助手的运行时语义**：`program` 以 `.js` / `.cjs` / `.mjs` 结尾时，宿主用**宿主进程自带的 Node**（`process.execPath`）运行它，并给子进程注入 `ELECTRON_RUN_AS_NODE=1`（`resolveStdioSpawn`，宿主与主进程共用同一份实现）——助手是**纯 Node 程序**，不是 Electron 应用（`process.versions.electron` 仍有值，用的还是同一个可执行文件，只是按 Node 模式启动）。**拉子进程的那一侧**：宿主模式由 Extension Host Process 自己 spawn（它有 `child_process`），渲染进程模式由主进程 spawn；两种模式下 stdin/stdout 归属、cwd 与 env 白名单一致。
 
 - **可用 `node:*` 内置模块**：`node:fs` / `node:path` / `node:child_process`…都行，**包括 `node:sqlite`**——助手可以**自己建库、自己读写**，不必绕经 `api.sqlite`（`api.*` 那条路按扩展隔离数据目录；助手这条路就是普通 Node 进程）
 - **stdin / stdout 正常工作**：宿主按声明的 `framing` 把请求写进 stdin，助手从 stdout 回包即可；日志一律写 **stderr**（stdout 只放协议数据）
@@ -933,7 +985,7 @@ await api.ipc.close('worker')
 | 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                                                                       |
 | stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（`src/main/ipc.ts:262`，不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`） |
 | 清单声明       | 在 `contributes.ipcChannels` 静态声明后，代码里只写 `api.ipc.connect('<通道id>')`；声明**不自动连接**，非法声明会让清单无效（见 manifest-reference）                                                                                                                                                  |
-| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**（扩展与宿主同上下文，属受信代码）                                                                                                                                                                                                                      |
+| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**——用户扩展跑在 Extension Host Process（与 UI 不同进程），但仍是**受信代码、无沙箱**；宿主模式下有完整 Node，`child_process` 本来就能起任意进程                                                                                                                                                                                                                      |
 
 #### api.ipc 服务端（多连接，issue #43）
 
@@ -979,6 +1031,8 @@ await api.ipc.close('svc') // 停止监听 + 断开全部连接；不存在时�
 #### api.ipc 自动重连（客户端通道，issue #44）
 
 **默认不重连**（行为与以前逐字节一致）。让一条 **pipe** 通道在意外断线后由宿主自动重建：
+
+> **验证状态（如实登记）**：重连语义的用例（`test/ipc-reconnect.test.ts`）覆盖的是**主进程**那条实现；**宿主进程侧** `pipe + autoReconnect` 的实现是照同一套控制器写的，但**尚无自动化用例**（技术债 #8）。用它做关键链路时请自行在真机上验一遍断线重连（拔对端 / 杀进程），不要只信文档。
 
 ```ts
 await api.ipc.connect({ id: 'bus', transport: 'pipe', autoReconnect: { retries: 5, backoffMs: 250 } })
@@ -1090,6 +1144,26 @@ export function uninstall(ctx) {
 | uninstall 失败 | 只告警（`[capabilities] 扩展 X 的 uninstall 钩子失败：…`），**仍继续删除目录**（否则写错的钩子会让扩展永远删不掉）                                                                                                                                                                                                                                                                  |
 | 幂等要求       | 宿主保证"同扩展同阶段不并发"；跨安装（升级重跑、补跑）可能再次执行，**钩子需自行保证幂等**                                                                                                                                                                                                                                                                                          |
 | 旧机制兼容     | 固定文件 `.uninstall.cjs` 仍作为**回退**（`spawn(process.execPath, [hookPath])`，5 秒超时）。触发条件不止"入口未导出 `uninstall`"：主进程判定式是 `delivered && !deferred && !skipped`（`src/main/capabilities.ts:102-112`），该式**不成立**时都会回退到该文件——即入口未导出钩子（`skipped`）、**扩展当时未加载到宿主**或**渲染进程/主窗口不可用**（`deferred` / 未送达）同样走回退 |
+
+## 宿主模式的降级与限制（技术债，逐条登记）
+
+扩到宿主进程时，有些能力只能**降级实现**。这里逐条写清"降级成什么样、你该怎么绕"，避免它们悄悄变成长期方案（来源：`docs/extension-host-migration.md` 的技术债表）。
+
+| # | 降级 / 限制 | 对你的影响 | 绕法 |
+| --- | --- | --- | --- |
+| 1 | **`main` → 宿主的事件是 250ms 轮询**（不是推送；协议还没有 main→host 的信封） | `api.update.onEvent`、通知点击等经 main 转发的事件**最多晚 250ms** | 事件驱动的地方按"可能延迟一个轮询周期"写，别依赖毫秒级时序；需要极实时就自己 `api.ipc` 起 sidecar |
+| 2 | **`proxy.get()` 是 1 秒 TTL 的快照** | 改完设置-网络后立刻读，可能还是旧值 | 隔 >1s 再读，或直接信任 `api.net.fetch`（它会用最新配置） |
+| 3 | **`net.fetch` 只支持 http / https 代理** | 填 `socks5://…` 会**明确报错**，不会静默直连 | 改用 http 代理；必须 socks 就自己起本地 http→socks 转发 |
+| 4 | **`noProxy` 不支持 CIDR** | `10.0.0.0/8` 这类规则不生效 | 用域名/主机名规则，或让目标走直连（关掉代理） |
+| 5 | **`api.ipc` 的 `Content-Length` 按字节计**（不是字符数） | 对端按字符数算长度时中文会乱码 / 丢帧 | 对端按 UTF-8 字节数编码（见 `api.ipc` 一节） |
+| 6 | **宿主侧 `pipe + autoReconnect` 无自动化用例** | 断线重连的时序没被测试钉住 | 关键链路真机验一遍（杀对端），或自己在 `onClose` 里退避重连 |
+| 7 | **宿主发起的通知不遵循「设置-通知」的逐扩展开关** | 用户在设置里关掉通知后，宿主扩展仍会弹 | **暂时没有绕法**：那份开关是渲染侧 `state` 里的数组（`notificationDisabledExtensions`），不是设置项，宿主与扩展都读不到。等它交给宿主后才恢复 |
+| 8 | **`workspaceState` 与 `globalState` 真隔离**（v1 是同一份 store） | 靠"两者其实同一份"做的迁移逻辑会失效 | 需要共享就把同一个键显式写两处，或只用一个 |
+| 9 | **`executeCommand` 执行不了内置扩展的命令** | `api.executeCommand('ext-manager.xxx')` 会 `command not found` | 内置能力请走对应 `api.*`（`api.ui` / `api.settings` 等），别去点内置扩展的命令 |
+| 10 | **`on` / `emit` 不跨运行时** | 内置扩展收不到用户扩展的事件（反之亦然） | 用户扩展之间用事件；跨运行时的数据流请走贡献点 + 消息桥（`api.app.onMessage`） |
+| 11 | **宿主扩展创建的 overlay 收不到 `api.app.onMessage`**（overlay→扩展的路由表由渲染侧 `api.overlay.create` 回填） | overlay 页面发来的消息会被判"扩展未注册消息处理器" | 需要双向通信时先用 `api.output` / `api.fs` 落盘或用 `api.ipc` pipe；这条退场前别把关键交互只压在 overlay 消息桥上 |
+
+> 这张表只列**扩展作者看得见**的降级。宿主/渲染侧的接缝缺陷、内部实现细节不在本表（见迁移文档的技术债表）。
 
 ## 类型文件位置
 
