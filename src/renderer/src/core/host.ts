@@ -19,11 +19,13 @@ import type {
 import { registry } from './registry'
 import { deferredHookResult, executeExtensionHook, hookFailureForActivation } from './hookRuntime'
 import { resolveIpcChannelDeclaration } from '../../../shared/ipcDeclaration'
+import type { ActivationReason } from '../../../shared/extensionHostProtocol'
 import {
   connectExtensionHostBridge,
   handOverToExtensionHost,
   readExtensionHostFlag
 } from './extensionHostBridge'
+import { currentExtensionHostConsumer, type HostedActivationPort } from './extensionHostConsumer'
 import { collectHostedExtensions } from './loader'
 import { contributesArray, makeExtensionInfo, topoSort } from './manifest'
 import { stateStore } from './state'
@@ -87,6 +89,14 @@ export interface HostOptions {
    * 若照常激活，会让每个子窗口都把全部扩展跑一遍（定时器 / DB 连接 / fs.watch 等副作用重复注册）。
    */
   activateExtensions?: boolean
+  /**
+   * 激活触发端口（EH-C2，可选）。
+   *
+   * 缺省取 `currentExtensionHostConsumer()`（生产：`main.ts` 在 `host.start()` 之前就建好消费者）。
+   * 显式传 `null` = **明确不要触发**（单测用）；传假件可以断言"哪条路径请求了激活"。
+   * 只依赖 `{ enabled, ensureActivated }` 两个成员（`HostedActivationPort`），不 import 消费者的整张面。
+   */
+  activationHost?: HostedActivationPort | null
 }
 
 /**
@@ -142,6 +152,17 @@ class ExtensionHost {
    */
   private extensionHostMode = false
 
+  /**
+   * 交给宿主进程的扩展 id 集合（EH-C2；`extensionHostMode` 关闭时恒为 `null`）。
+   *
+   * 只用来回答一个问题：「这条命令/这个视图属于宿主扩展吗？」——是，才需要在执行前请求激活；
+   * 内置扩展（仍在渲染进程执行）永远不在这份集合里，因此开关打开时它们的行为也不变。
+   */
+  private hostedExtensionIds: ReadonlySet<string> | null = null
+
+  /** 激活触发端口（EH-C2；缺省是 `currentExtensionHostConsumer()`，关闭态时 `enabled === false`） */
+  private activationHost: HostedActivationPort | null = null
+
   /** 宿主就绪：贡献点已注册完毕，UI 可查询 */
   readonly ready: Promise<void>
 
@@ -167,11 +188,78 @@ class ExtensionHost {
     return [...this.extensions.values()]
   }
 
-  /** 执行命令（跨扩展，经命令 id；快捷键触发等场景用） */
+  /**
+   * 执行命令（跨扩展，经命令 id；命令面板 / 快捷键 / 状态栏点击 / 树节点都用它）。
+   *
+   * **EH-C2**：宿主模式下先确保"命令归属的宿主扩展"已激活，再取 handler。
+   * 为什么顺序不能反：宿主扩展的命令 handler 是在宿主的 `plugin(api)` 里 `registerCommand` 的
+   * （渲染侧阶段一只拿到 `contributes.commands` 的**静态声明**），未激活时注册表里 `handler` 是空的。
+   * 先查 handler 会得到一条误导的 `command not found`——用户看到"命令不存在"，实际是"还没激活"。
+   *
+   * 归属判定只看 `hostedExtensionIds`：开关关闭时它是 `null`，`ensureHostedTargetActivated` 立刻返回，
+   * 于是默认配置下这条路径**零变化**（既不发请求，也不多做一次 await）。
+   */
   async executeCommand<T = unknown>(id: string, ...args: unknown[]): Promise<T> {
+    const declared = registry.commands.find((c) => c.command === id)
+    await this.ensureHostedTargetActivated('command', id, declared?.extensionId)
+    // 激活后**重查**：handler 是激活过程中由宿主的 commands 事件绑上来的（上面那份快照可能还没有）
     const cmd = registry.commands.find((c) => c.command === id)
     if (!cmd || !cmd.handler) throw new Error(`command not found: ${id}`)
     return (await cmd.handler(...args)) as T
+  }
+
+  /**
+   * 视图/导航项打开时确保目标已激活（EH-C2）。
+   *
+   * 谁会调它：`nav:open`（主进程请求切页，托盘"设置"等）由 `start()` 直接接上；
+   * 导航栏点击的接线点在 `App.vue` 的 `selectNav`（本卡文件所有权之外，见回执的越界声明），
+   * 因此这里把它做成**公开方法**：接线只需一行 `void host.ensureViewActivated(id)`。
+   *
+   * 返回 `true` = 目标属于宿主扩展且已确认激活；`false` = 无需激活（内置扩展/关闭态）
+   * 或激活失败。UI 路径是 fire-and-forget（导航切换没有"调用方"能展示错误），所以失败**不抛**，
+   * 只记一条 error——否则会变成一条没人处理的 unhandled rejection。
+   */
+  async ensureViewActivated(navId: string): Promise<boolean> {
+    if (!this.extensionHostMode || this.activationHost?.enabled !== true) return false
+    const item = registry.navItems.find((i) => i.id === navId)
+    if (!item || this.hostedExtensionIds?.has(item.extensionId) !== true) return false
+    try {
+      await this.ensureHostedTargetActivated('view', navId, item.extensionId)
+      return true
+    } catch (err) {
+      console.error('[host] 宿主扩展的视图激活失败', err)
+      return false
+    }
+  }
+
+  /**
+   * 宿主扩展的"动作前置激活"（EH-C2 的唯一实现处；`executeCommand` 与 `ensureViewActivated` 共用）。
+   *
+   * 三道闸依次是：不是宿主模式 / 目标不属于宿主扩展 / 激活端口没开 —— 任一命中就**什么都不做**
+   * （这是"开关关闭 ⇒ 零请求"与"内置扩展行为不变"的实现保证）。
+   * 真的需要激活时，失败一律抛中文错误（含扩展 id、动作目标、宿主给的原因），
+   * 因为调用方必须**中止**动作：执行一个没有实现的命令只会得到无语义的 undefined。
+   */
+  private async ensureHostedTargetActivated(
+    kind: 'command' | 'view',
+    targetId: string,
+    ownerId: string | undefined
+  ): Promise<void> {
+    if (!this.extensionHostMode) return
+    if (ownerId === undefined || this.hostedExtensionIds?.has(ownerId) !== true) return
+    const port = this.activationHost
+    if (port?.enabled !== true) return
+    const reason: ActivationReason = kind === 'command' ? { command: targetId } : { view: targetId }
+    try {
+      await port.ensureActivated(ownerId, reason)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const action = kind === 'command' ? `命令 ${targetId}` : `视图 ${targetId}`
+      const outcome = kind === 'command' ? '命令没有执行' : '视图没有加载'
+      throw new Error(
+        `${action} 属于宿主扩展 ${ownerId}，需要先激活它，但激活失败 —— ${outcome}。原因：${message}`
+      )
+    }
   }
 
   /** 阶段一：注册贡献点（barrier 释放前，UI 不消费注册表） */
@@ -1018,10 +1106,21 @@ class ExtensionHost {
     const hostedIds: ReadonlySet<string> | null = handover.enabled
       ? new Set(handover.extensions.map((ext) => ext.id))
       : null
+    // EH-C2：把"哪些扩展在宿主里"与"怎么请宿主激活"两个事实记下来，供 executeCommand /
+    // ensureViewActivated 判定。开关关闭时两者都是空值 ⇒ 新路径完全不生效（默认零变化）。
+    this.hostedExtensionIds = hostedIds
+    this.activationHost =
+      options.activationHost === undefined ? currentExtensionHostConsumer() : options.activationHost
     if (handover.enabled) {
       // 端口会在 start() 之后才到（main 先 fork、再 transfer）：桥自己处理"未到达"期间的状态，
       // 这里只把它接起来（A5 / 扩展管理器用 getExtensionHostBridge() 订阅 phase 与崩溃原因）
       connectExtensionHostBridge()
+      // EH-C2 · 视图触发的第一段接线：主进程请求切页（托盘"设置"、未来的深链）时，
+      // 目标导航项可能属于一个还没激活的宿主扩展 —— 先请宿主激活，再让 UI 去渲染它。
+      // 导航栏点击那一段在 App.vue（不在本卡所有权内），见回执。
+      window.events.on('nav:open', (navId) => {
+        void this.ensureViewActivated(navId)
+      })
       console.log(
         `[host] 扩展宿主模式：${handover.extensions.length} 个用户扩展交给宿主进程，` +
           '渲染侧只注册贡献点、不激活'

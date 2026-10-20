@@ -8,6 +8,7 @@
  * 收到 init          → 校验 apiVersion / 建加载器 / 播种状态表 / 建激活器
  *                    → 发 initialized
  *                    → 后台激活声明了 `*` 的扩展（不阻塞握手）
+ *                    → 再按 `onStartupFinished` 分派一轮（EH-C2：首屏之后、空闲时）
  * 收到 activate      → 按 extId + reason 激活（懒 import）
  * 收到 deactivate    → 停用（清定时器 + 跑清理）
  * 收到 req           → initialized 之前一律 EH_NOT_READY；之后交 RpcServer
@@ -43,6 +44,7 @@ import {
 } from '../shared/extensionHostProtocol'
 import { Activator, type ActivationResult } from './activator'
 import { createExtensionApi, type BuiltExtensionApi } from './apiFactory'
+import { getSharedUiPlaneHub, type UiPlaneHub } from './capabilities/ui-plane'
 import { toErrorDetail, toErrorMessage } from './errors'
 import { createEnvelopeLogger, createEnvelopeSink, type EnvelopeSink, type HostLogger } from './log'
 import { ExtensionLoader, type LoadedExtension } from './loader'
@@ -150,6 +152,11 @@ export class ExtensionHostRuntime {
   private readonly pending = new Set<Promise<void>>()
   private loader: ExtensionLoader | null = null
   private activator: Activator | null = null
+  /**
+   * 挂了本运行时激活入口的共享数据面 hub（EH-C2；`init` 之前为 `null`）。
+   * `dispose()` 时用它把入口摘掉——否则单例 hub 会一直指着一个已关停的 `Activator`。
+   */
+  private activationHub: UiPlaneHub | null = null
   private currentPhase: HostPhase = 'created'
   private graceTimer: ReturnType<typeof setTimeout> | null = null
   private apiVersion = 0
@@ -347,6 +354,13 @@ export class ExtensionHostRuntime {
     } catch {
       // 端口可能已随进程退出而失效：关闭是尽力而为
     }
+    // EH-C2：摘掉激活入口（共享 hub 是进程级单例，留着会指向一个已关停的激活器）
+    try {
+      this.activationHub?.setActivateHandler(null)
+    } catch {
+      // hub 已 dispose / 端口已失效：摘入口是尽力而为
+    }
+    this.activationHub = null
     if (this.graceTimer) {
       clearTimeout(this.graceTimer)
       this.graceTimer = null
@@ -414,6 +428,24 @@ export class ExtensionHostRuntime {
     this.loader = loader
     this.activator = activator
 
+    // EH-C2：把激活入口挂到**共享数据面 hub** 上，渲染侧的 `host.activate` RPC（走 host-renderer
+    // 端口）就落在这里。必须在 `initialized` **之前**挂好：渲染侧一收到 initialized 就可能因
+    // "启动视图 / 首条命令"发激活请求，晚一步就会拿到 EH_NOT_READY。
+    // 顺带这里是 hub 的**第一个**创建者（早于任何扩展的 `createExtensionApi`），所以单例的
+    // `rendererPort` / `log` 由运行时给定，后续 `apiFactory` 的 `getSharedUiPlaneHub()` 复用同一份。
+    const hub = getSharedUiPlaneHub({
+      rendererPort: this.currentRendererPort(),
+      log: this.logger
+    })
+    hub.setActivateHandler((extId, reason) => {
+      const current = this.activator
+      if (!current) {
+        throw new EhProtocolError('EH_NOT_READY', EH_ERROR_TEXT.EH_NOT_READY, '宿主尚未 init')
+      }
+      return current.activate(extId, reason)
+    })
+    this.activationHub = hub
+
     this.send(createInitializedEnvelope())
     this.currentPhase = 'initialized'
 
@@ -424,12 +456,25 @@ export class ExtensionHostRuntime {
     )
 
     // 启动即激活（缺省 `*`）：与 `initialized` 握手解耦，扩展再多也不拖慢启动时序
-    this.track(
-      activator.dispatch('*').then((results): void => {
+    const startup = activator
+      .dispatch('*')
+      .then((results): void => {
         const activated = results.filter((result) => result.state === 'activated').length
         this.logger('info', `启动激活完成：${activated}/${results.length} 个扩展`)
       })
-    )
+      // EH-C2：`onStartupFinished` 在 `*` **之后**分派（"首屏之后、空闲时"的语义；ADR-0026 决策 6）。
+      // 一次 init 只可能走到这里一次（handleInit 有阶段守卫），所以各事件只分派一次；
+      // 排在 `*` 后面而不是并行，是为了让"立即激活"的扩展先占住命令表/树 provider，
+      // 也让日志顺序可读（`启动激活完成` 一定在 `启动后激活完成` 之前）。
+      .then(() => activator.dispatch('onStartupFinished'))
+      .then((results): void => {
+        const activated = results.filter((result) => result.state === 'activated').length
+        this.logger(
+          'info',
+          `启动后激活完成（onStartupFinished）：${activated}/${results.length} 个扩展`
+        )
+      })
+    this.track(startup)
   }
 
   private handleActivate(envelope: ActivateEnvelope): void {

@@ -19,6 +19,9 @@ const paletteOpen = ref(false)
 
 function selectNav(id: string): void {
   activeNavId.value = id
+  // EH-C2：若该导航项的视图属于**宿主进程里的扩展**且尚未激活，先请求宿主激活
+  // （fire-and-forget：切页本身不该等激活；失败由 core/host.ts 记 error，不打断 UI）。
+  void host.ensureViewActivated(id)
 }
 
 function onGlobalKeydown(e: KeyboardEvent): void {

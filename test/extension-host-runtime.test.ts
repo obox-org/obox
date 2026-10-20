@@ -447,22 +447,24 @@ test('4 类激活事件：* 启动即激活，其余等自己的触发', async (
   sendInit(harness, dataDir, [star, onStartup, onCommand, onView])
   await harness.runtime.settled()
 
-  // 只有 `*`（缺省）在启动时激活
-  assert.deepEqual(state.activations, ['star'])
-  assert.equal(harness.runtime.statusOf('on-startup')?.state, 'pending')
+  // 启动分派（EH-C2）：`*` 立即激活，`onStartupFinished` 在它**之后**的那一轮激活；
+  // onCommand / onView 仍然等自己的触发（懒激活）
+  assert.deepEqual(state.activations, ['star', 'on-startup'])
+  assert.equal(harness.runtime.statusOf('on-startup')?.state, 'active')
   assert.equal(harness.runtime.statusOf('on-command')?.state, 'pending')
   assert.equal(harness.runtime.statusOf('on-view')?.state, 'pending')
 
-  // onStartupFinished：`*` 扩展也在匹配集中（立即激活语义），但它已激活 → skipped
+  // 再手动分派 onStartupFinished：`*` 扩展也在匹配集中（立即激活语义），但两者都已激活 → skipped
   const startupResults = await harness.runtime.dispatchActivation('onStartupFinished')
   assert.deepEqual(
     startupResults.map((result) => [result.extId, result.state]),
     [
       ['star', 'skipped'],
-      ['on-startup', 'activated']
+      ['on-startup', 'skipped']
     ]
   )
-  assert.ok(state.activations.includes('on-startup'))
+  // 启动那一轮已经激活过一次：手动再分派不许重复 plugin(api)
+  assert.equal(state.activations.filter((id) => id === 'on-startup').length, 1)
 
   /** 只看「这次真正激活了谁」 */
   const activatedIds = (results: Array<{ extId: string; state: string }>): string[] =>

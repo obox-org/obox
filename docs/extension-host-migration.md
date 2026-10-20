@@ -84,7 +84,7 @@
 | B | B3b-1 注册面数据面（statusBar/commands/views/settings/theme/i18n/app/memento/on·emit）+ **修端口接缝缺陷** | ✅ 已合并 | 89 / 10 |
 | B | B3b-2 状态与 UI 面（`ui`×5、`output`、`update` 门控×4）+ **修桥接缝缺陷** + R69 env 注入 + R70 update 主进程注册 | ✅ 已合并 | **99 / 0** |
 | C | C1 清单：`activationEvents`（4 类 + 缺省 `*`，宿主与 `validate-manifest.mjs` 同规则 + parity 差分）+ **`apiVersion` 2→3** | ✅ 已合并 | — |
-| C | C2 激活触发接线（渲染侧在「执行命令 / 打开视图 / 启动完成」时向宿主发 `activate`）与热装卸时序 | ⏳ 待做 | — |
+| C | C2 激活触发接线：启动（`*` → `onStartupFinished` 顺序各一次）、`onCommand:<id>`（执行前先激活并重查 handler）、`onView:<id>`（`nav:open` 与导航栏点击各接一路）+ 并发合并与 10s 超时 | ✅ 已合并 | — |
 | D | D1 文档全量重写 / D2 README / D3–D7 五个扩展 / D8 实机验证 / D9 obox 2.0.0 | ⏳ 待做 | — |
 
 > **阶段 A + B 已全部完成：`api` 的 99 项能力全部在宿主进程落地（0 桩）。**
