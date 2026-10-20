@@ -69,6 +69,7 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 **排查**：
 
 - 入口必须有 `export default function(api) {...}`
+- **宿主模式 + 清单写了 `onCommand` / `onView`**：启动时**本来就不会激活**（"激活 0"是正常的），要等命令被执行 / 视图被点开；见 #38
 - 扩展管理器详情页看 `activationError`（激活失败原因）
 - dev 日志看 `[host] activate <id> failed <error>`
 
@@ -104,7 +105,8 @@ Get-ChildItem src -Recurse -Force -Filter "*.tmpdir" -Directory | Remove-Item -R
 
 ## 11. 扩展管理器显示"清单无效"
 
-- `name`/`version`/`main` 缺失或格式错（校验规则见 `references/manifest-reference.md`）
+- `name`/`version`/`main` 缺失或格式错（校验规则见 [manifest-reference.md](manifest-reference.md)）
+- `activationEvents` 里有认不出的事件、或 `onCommand:` / `onView:` 没写 id（见 #39）
 - 详情页"校验信息"列出具体错误；修复后重启应用重新扫描
 
 ## 12. 用户扩展加载失败
@@ -206,14 +208,15 @@ export function uninstall(ctx) {
 
 **先看地址写法**（1.0.12 起设置-网络只有一个**代理地址 URL** 输入框，见下）：需要带协议的完整地址（`http://127.0.0.1:7890`、`https://proxy:8443`、`socks5://127.0.0.1:1080`，可含 `user:pass@`），空串 = 直连。地址非法（缺协议、协议不支持、带路径、端口越界）时宿主**回退直连**并在主进程日志写一行 `[proxy] 代理地址无法解析：…`——查日志即可确认。旧配置（≤1.0.11 的 host/port/用户名/密码）会在读取时自动迁移成 URL，不需要重填。
 
-**原因**（宿主早期实现缺陷，已修复）：代理原先靠**环境变量**（`HTTP_PROXY`/`HTTPS_PROXY`/`NODE_TLS_REJECT_UNAUTHORIZED`）应用，但 Node 的全局 `fetch`（undici）与 Electron `net.request`（Chromium）**都不读这些变量**——实测把 `HTTP_PROXY` 指向不可达代理，`fetch` 仍直连成功。`ignoreSSL` 同理无效，且 `NODE_TLS_REJECT_UNAUTHORIZED=0` 会**全局**关闭证书校验（含更新下载），风险面过大。
+**原因**（宿主早期实现缺陷，已修复）：代理原先靠**环境变量**（`HTTP_PROXY`/`HTTPS_PROXY`/`NODE_TLS_REJECT_UNAUTHORIZED`）应用，但 Node 的全局 `fetch`（undici）与 Electron `net.request`（Chromium）**都不读这些变量**——实测把 `HTTP_PROXY` 指向不可达代理，`fetch` 仍直连成功。`ignoreSSL` 同理无效，且 `NODE_TLS_REJECT_UNAUTHORIZED=0` 会**全局**关闭证书校验（含更新下载），风险面过大。**注意**：宿主侧（用户扩展）的实现换成了 Node `http`/`https` 并**自己读**这些环境变量，所以它在"拿不到 main 的配置"时会作为**兜底**生效——但正常运行时设置-网络的值优先，不要靠环境变量配代理。
 
-**修复后机制**：宿主在请求真正经过的 session 上应用配置（`src/main/proxy.ts`）——
+**修复后机制**：宿主在请求真正经过的那一层应用配置（`src/main/proxy.ts`）——
 
-- 扩展联网：专用 session `obox-net` + `setProxy` / `setCertificateVerifyProc`
+- 内置扩展联网：专用 session `obox-net` + `setProxy` / `setCertificateVerifyProc`
 - 更新下载：electron-updater 自己的 session（`electron-updater`）+ 同一套应用逻辑；代理认证经 `autoUpdater.on('login')` 回填**代理 URL 里 `user:pass@` 的账号密码**（Chromium 的规则串不能携带凭据）
+- **用户扩展（宿主模式）**：宿主进程没有 Chromium session，因此**在宿主内自行应用**（`src/extension-host/capabilities/io.ts`）——先向 main 要配置（内部 RPC `host.proxyConfig`），**读不到才回落环境变量**（`HTTPS_PROXY` > `HTTP_PROXY` > `ALL_PROXY`，另认 `NO_PROXY` / `NODE_TLS_REJECT_UNAUTHORIZED`，只 warn 一次）；请求经 Node `http`/`https` 发出：http 走代理的**绝对 URI**，https 走 **CONNECT 隧道** + `tls.connect({ rejectUnauthorized: !ignoreSSL })`
 
-**扩展侧注意事项**：不要自己读写代理环境变量——用 `api.proxy.get()` 读取配置（`{ enabled, url, ignoreSSL?, noProxy? }`），联网统一走 `api.net.fetch`（宿主自动应用）；`ignoreSSL` 现只作用于上述 session，不再是进程级全局开关。
+**扩展侧注意事项**：不要自己读写代理环境变量——用 `api.proxy.get()` 读取配置（`{ enabled, url, ignoreSSL?, noProxy? }`），联网统一走 `api.net.fetch`（**两条路径都会自动应用**）。`ignoreSSL` 现在只作用于这两条链路，不再是进程级全局开关。宿主侧的已知降级：`proxy.get()` 是 **1 秒 TTL 快照**、只支持 http/https 代理（socks 会明确报错）、`noProxy` 不支持 CIDR（详见 [api-reference.md](api-reference.md) 的 `proxy` 一节）。
 
 ## 21. 安装 .oix 失败：怎么判断是包的问题还是路径的问题
 
@@ -611,3 +614,131 @@ Select-String -Path src/renderer/src/assets/main.css -Pattern "obox-overlay"
 6. **error 是「主窗口不可用」**：只有 overlay 窗体、主窗口已关（overlay 随主窗口一并关闭，`:217-232`）⇒ 桥的对端宿主没了，消息投不出去（`mainWindow()` 会把 overlay 排除在"主窗口"之外，`:151-160,178-183`）。
 
 **回归防线（宿主侧）**：`test/overlay-window.test.ts` 的「宿主 · 消息路由」（卡片优先 / overlay 兜底 / 都未命中回既有错误文案）、「外壳 url 二次校验」、「60s 桥超时未被缩短」与「生命周期联动」。
+
+## 38. 扩展没激活（用户扩展按 `activationEvents` 懒激活）
+
+**症状**：扩展在管理器里显示正常（没有标红），但命令面板里没有它的命令、App 卡片不出现、状态栏点了没反应；宿主日志里是 `启动激活完成：0/1 个扩展`，看起来"加载了却没激活"。
+
+**先记住模型**：用户扩展跑在 **Extension Host Process**，**不再一律启动即激活**——清单的 `activationEvents` 决定何时跑 `plugin(api)`（缺省 = `*` = 立即）。内置扩展仍立即激活、不受影响。
+
+**逐条排查**：
+
+| 清单里写的               | 它什么时候激活                                                             | 没激活先看什么                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 不写 / `[]` / `null`     | **启动即激活**（缺省 `*`）                                                 | 那就是别的原因：看 #6（入口没 `default` / 入口抛错）与扩展管理器详情页的 `activationError`        |
+| `*`                      | 同上                                                                       | 同上                                                                                             |
+| `onStartupFinished`      | `*` 那一轮**之后**（首屏之后、空闲时）                                     | 日志要等这一行：`启动后激活完成（onStartupFinished）：x/y 个扩展`；只看到 `启动激活完成` 是正常的 |
+| `onCommand:<命令id>`     | **该命令被执行时**（命令面板 / 快捷键 / 状态栏点击 / 树节点 / `api.executeCommand`） | ① `<命令id>` 与 `contributes.commands[].command` **逐字一致**吗？② 这条命令真的被触发过吗？③ 命令是否已声明（未声明会在激活时抛错，见 #9） |
+| `onView:<导航项id>`      | **该导航项被点开时**（导航栏点击，或主进程 `nav:open`）                     | ① `<id>` 与 `contributes.views[].id` / `navItems[].id` 逐字一致吗？② 有没有真的点开过它？          |
+
+- **没有触发源的扩展别写 `onCommand` / `onView`**：只注册 App 卡片或只有状态栏展示、没有任何命令/视图可点的扩展写这两类就**永远不会激活**——卡片与树数据源都是运行期注册的，扩展不激活就不存在。这类扩展请写 `*` 或 `onStartupFinished`
+- **回退开关关着时 `activationEvents` 不生效**（默认配置，见 api-reference 的「运行模型」）：那时全部扩展立即激活，"没激活"只可能是 #6 那一类原因
+- **激活失败 ≠ 没触发**：触发过但 `plugin(api)` 抛错会在扩展管理器详情页留 `activationError`，并在日志里留 `扩展 <id> 激活失败（plugin-threw）`
+- **验证是否真的激活了**：渲染侧 console 里的宿主日志行 `激活扩展 <id>（onCommand:…）` / `扩展 <id> 激活完成（…）`（宿主日志经 `log` 信封转发到渲染侧 console）
+
+## 39. 清单标红：`activationEvents` 不合法
+
+**症状**：扩展在管理器里标红、显示"清单无效"、根本不加载；详情页校验信息里有 `activationEvents …` 的 error。
+
+**原因**：`activationEvents` 的每一项都必须是 4 类事件之一，且 `onCommand:` / `onView:` 的 `<id>` 去空白后必须非空。以下全部是 **error**（不是 warning），**一处错报一行**，`合法值：…` 是固定尾巴：
+
+| 输入                          | 逐字错误文案                                                                                         |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------ |
+| 不是数组（`{}` / `5` / `true`） | `activationEvents 必须是字符串数组（合法值：* / onStartupFinished / onCommand:<id> / onView:<id>）`     |
+| 第 N 项不是字符串             | `activationEvents 第 N 项必须是字符串（收到 <值>，合法值：…）`                                          |
+| 认不出的事件名                | `activationEvents 第 N 项 "<事件>" 不受支持（合法值：…）`                                               |
+| `onCommand:` / `onView:` 没写 id | `activationEvents 第 N 项 "<事件>" 的 <id> 不能为空（合法值：…）`                                    |
+| id 只有空白（`onCommand:  `）  | 同上（`<id> 不能为空`）                                                                                 |
+
+**修复**：
+
+- 只写这 4 类：`*`、`onStartupFinished`、`onCommand:<id>`、`onView:<id>`（**前缀大小写敏感**：`oncommand:x` 不认）
+- `<id>` 要么写全（与命令/视图 id 逐字一致），要么就别写这条事件
+- 最省事的写法：清单里**不写** `activationEvents`（缺省就是 `*`，与老版本行为一致）
+- 发布前先自查（与宿主**同一套规则**，脚本与宿主有差分门禁）：`node scripts/validate-manifest.mjs manifest.json`（`--all` 扫全部，`--json` 机器可读）。改完清单要**重启应用重新扫描**才会重新判定
+
+## 40. 扩展在宿主里报 `EH_NOT_READY`
+
+**症状**：扩展侧（或渲染侧）拿到 `EH_NOT_READY`；中文文案是「扩展宿主还没就绪（未收到 initialized）。请等待宿主启动完成；若反复出现，检查宿主进程是否已崩溃。」或渲染侧的「扩展宿主的端口还没到本窗口，请求没有发出去。…」。
+
+**原因**：这不是"宿主坏了"，而是**链路还没通**——两种可能：① **host-renderer 端口还没到本窗口**（端口由 main 在宿主起来后 `webContents.postMessage` 转移，渲染侧只负责收）；② **宿主还没完成握手**（没发 `initialized` 之前，宿主对一切 `req` 都回 `EH_NOT_READY`）。
+
+**按宿主 phase 对下一步**（渲染侧 `notReadyMessage()` 逐字给出的动作）：
+
+| phase          | 含义                                       | 该做什么                                                                 |
+| -------------- | ------------------------------------------ | ------------------------------------------------------------------------ |
+| `idle`         | 宿主从未启动                               | 用 `OBOX_EXTENSION_HOST=1` 启动应用（默认配置下用户扩展在渲染进程执行，不需要这条链路） |
+| `starting`     | 正在启动，握手未完成                       | 等 1–2 秒重试；一直如此就看主进程日志里的握手失败原因（10 秒握手超时）   |
+| `ready`        | 宿主已就绪，但**端口没到**                 | 页面可能刚重新加载过（端口随旧页面销毁）：**重启应用**重建链路            |
+| `unresponsive` | 3 秒内没应答判活                           | 检查扩展是否阻塞了事件循环                                              |
+| `crashed`      | 宿主崩溃（见 #41）                         | 重启宿主或禁用出错的扩展                                                 |
+| `stopped`      | 宿主已停止                                 | 重新启动宿主                                                             |
+
+**注意（当前实现的限制）**：上面的文案里提到"在扩展管理器里点启动/重启宿主"——**扩展管理器目前还没有宿主状态面板与这些按钮**（属于未完成的那张卡）。现阶段的实际恢复手段是**重启应用**；开发时可用 `window.api.ehStop()` 再 `window.api.ehStart(exts)` 手动重建链路。宿主状态只在渲染侧 console 的 `[eh] 扩展宿主状态：<phase>` 与主进程日志里可见。
+
+**排查顺序**：先看 phase（决定是"没起"还是"没通"），再看主进程日志里是否有宿主 fork / 握手失败的记录，最后才怀疑扩展自己的调用参数。
+
+## 41. 宿主崩溃 / 自动重启（5 分钟 3 次）
+
+**症状**：扩展突然集体失效（命令不响应、状态栏不动、UI 数据不再更新）；主进程日志出现 `扩展宿主崩溃（code=…），500ms 后自动重启（窗口内第 x/3 次）`，或 `5 分钟内第 3 次崩溃（code=…）：不再自动重启`。
+
+**策略（照 VS Code，ADR-0026 决策 7）**：
+
+| 情况                     | 行为                                                                                                   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------- |
+| 5 分钟内崩溃 **< 3 次**  | **自动重启**（延迟 500ms）；扩展会按各自 `activationEvents` 重新激活，内存态丢失（落盘的数据还在）     |
+| 5 分钟内崩溃 **达 3 次** | **不再自动重启**：`phase=crashed`，`ehStart` 回 `{ok:false}` + 中文原因（"…不再自动重启。请在上层弹窗里选择「重启宿主」或「禁用扩展」；原因：…"） |
+| 卡死（3 秒未应答判活）   | **只观测，不杀不重启**（`phase=unresponsive`）——避免把"慢"误判成"死"                                   |
+| 启动握手失败（10 秒）    | 记为 `crashed`，但**不计入**崩溃预算（这通常是入口写错，重启只会把 3 次烧在同一个错误上）              |
+
+- **崩溃计数按进程算，不按扩展**：一个扩展的 bug 会烧掉**所有**扩展的重启预算——所以"扩展 A 把宿主搞崩，扩展 B 也不动了"是预期行为
+- **扩展管理器当前不显示这些状态**：`phase` 与最近一次崩溃原因只进渲染侧 console（`[eh] 扩展宿主状态：crashed，最近崩溃：退出码 …`）与主进程日志；面板/按钮（重启宿主 / 禁用扩展）属于未完成的那张卡。现阶段的恢复手段是**重启应用**
+- **扩展侧该做什么**：别在 `plugin(api)` 里做会崩掉整个进程的操作（原生模块崩溃、`process.exit`、无界递归）；把"能丢"的状态写进 `api.fs` / `api.sqlite` / Memento，崩溃重启后自行恢复
+
+## 42. 扩展想用 DOM / `localStorage` 会失效
+
+**症状**：`ReferenceError: document is not defined` / `window is not defined` / `localStorage is not defined` / `HTMLElement is not defined`；或某个 npm 包一 import 就炸；或 `apiVersion: 3` 的扩展在旧宿主上被拒绝加载（"需要 obox API v3 或更高（当前 obox 为 v2）"）。
+
+**原因**：运行模型变了。用户扩展跑在 **Extension Host Process**（独立 Node 进程），**没有 DOM、没有 `window`、没有 `localStorage`**；内置扩展才在渲染进程里、才有 DOM。旧宿主（`apiVersion ≤ 2`，即 ≤ 1.0.17）读到 `apiVersion: 3` 会直接拒绝加载，这是**有意的**——总比运行到一半才炸好排查。
+
+**替代方案**：
+
+| 原来想用               | 宿主模式下怎么做                                                                                     |
+| ---------------------- | ---------------------------------------------------------------------------------------------------- |
+| `localStorage` 存数据  | `api.workspaceState` / `api.globalState`（Memento，落盘）、`api.fs`（自己管文件）、`api.sqlite`（结构化） |
+| `document` 操作界面    | 界面只能放在 **页面**里：App 卡片静态页（`app://extensions/<id>/…`）或 overlay 页面；那些页面**有** DOM 与自己的 `localStorage`，但与扩展入口**不是同一个文档** |
+| 页面 ↔ 扩展通信        | `api.app.onMessage`（页面 postMessage → 扩展 handler 回包）；主题经 `obox-theme` 消息下发             |
+| 直接 `fetch` / 读文件  | 宿主有完整 Node：可以直接 `fetch`、`node:fs`；要继承设置-网络里的代理就用 `api.net.fetch`             |
+
+**排查**：
+
+- 确认要交付的扩展声明了 `apiVersion: 3`（用了宿主形态的能力就该声明它，旧宿主上会明确拒绝而不是半坏）
+- 找"哪一行摸了 DOM"：报错栈里第一个业务文件就是它；常见是入口顶层就 `import` 了某个浏览器包——把 UI 相关代码挪进页面脚本
+- 页面里能用 `localStorage`，但那是**页面自己的**（按 `app://` 源隔离），与扩展入口不共享：跨窗口/跨文档传数据一律走 `api.app.onMessage`
+
+## 43. stdio sidecar 中文乱码 / 丢帧（`Content-Length` 按字节）
+
+**症状**：`api.ipc` 的 stdio 对端跑起来后，**中文内容乱码**、偶发少一条消息、或时好时坏地报 `timeout` / `protocol-error`；英文内容却一直正常。
+
+**原因**：`Content-Length` 分帧的长度是**字节数**，不是字符数（`src/main/ipcCore.ts` 的 `ContentLengthParser.encode` 用 `Buffer.length`）。UTF-8 下一个中文字符占 **3 字节**——对端若按"字符数/码点数"算长度并写进自己的帧头，宿主就会按错误的长度切帧：切短了读到半个 JSON（→ `protocol-error` 或"看起来被吞了一条"），切长了会把下一帧的头一起吞进上一条消息。
+
+**修复（按语言）**：
+
+```python
+# Python
+body = json.dumps(msg, ensure_ascii=False).encode('utf-8')
+sys.stdout.buffer.write(f'Content-Length: {len(body)}\r\n\r\n'.encode('ascii') + body)
+```
+
+```go
+// Go：len([]byte) 就是字节数（string 长度也是字节数，别先转 rune）
+body, _ := json.Marshal(msg)
+fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
+```
+
+- **C#**：`Encoding.UTF8.GetByteCount(body)`；**Rust**：`body.as_bytes().len()`
+- **不要**用 `len(str)`（Python 3 的字符数）/ `String.length`（JS 的 UTF-16 码元数）/ `string.Length`（C# 的 char 数）来算帧长
+- 日志一律写 **stderr**（stdout 只放协议数据）；单条消息上限 **8MB**
+- 也可以改用 `framing: 'ndjson'`（按换行分帧），但长文本/二进制仍推荐 `content-length`
+
+**自查**：先让对端用纯 ASCII 回显验证分帧正确，再换成含中文的 payload；若中文一加就坏，基本就是这里。排查其它错误码见 #25。

@@ -7,6 +7,23 @@
 
 > 代码位置写法：`src/…` 是仓库路径；其余短路径相对 `src/renderer/src/`（如 `core/host.ts`）。
 
+## 0. 运行位置：内置扩展在渲染进程（与用户扩展不同）
+
+obox 有两个扩展运行时。**内置扩展跑在渲染进程**（Renderer Runtime），用户扩展跑在 **Extension Host Process**（独立 Node 进程）：
+
+|              | **内置扩展**（本文，改 obox 仓库源码）                            | **用户扩展**（[guides-user.md](guides-user.md)，`.oix`）                    |
+| ------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 跑在哪       | **渲染进程**（与 UI 同一个进程）                                  | **Extension Host Process**（独立 Node 进程）                                |
+| Node         | **没有**（能力全部经注入的 `api` 走主进程）                       | **完整 Node**（`node:fs` / `node:child_process` / `node:sqlite` 都可用）    |
+| DOM          | **有**（可以直接写 Vue 组件 / 摸 `document`、`localStorage`）      | **没有**（`document` / `window` / `localStorage` 都不存在）                  |
+| 界面         | Vue SFC + `navItems[].view` 具名导出组件（本文 §5）                | `app://` 静态页（App 卡片 / overlay）+ 树视图数据源                         |
+| 激活         | **立即激活**，不参与懒激活（见下）                                | 按 `activationEvents` 懒激活（缺省 `*` = 立即）                             |
+
+- **`api` 交付方式相同**：入口 `export default function (api) {...}`，`api` 由宿主构造后传入。内置扩展跑在**渲染侧运行时**（Renderer Runtime，与 UI 同进程），所以跨进程序列化约束（函数/类实例过不去）**只对用户扩展生效**。
+- **内置扩展不能懒激活**：`core/host.ts` 在阶段二把它**立即激活**，清单里写 `activationEvents` 对内置扩展**无效**（ADR-0026 决策 6：只有用户扩展参与懒激活）。所以内置扩展的 `plugin(api)` 里别做重活——那会直接拖慢首屏。要"延后"请自己在 `plugin` 里用 `api.timer` / 空闲回调，而不是指望清单字段。
+- **内置扩展之间的事件是通的**（同一运行时）；但**收不到用户扩展的 `emit`**（用户扩展在另一个进程，`on`/`emit` 不跨运行时）。跨运行时的数据请走贡献点/`appStore` 与 `api.app.onMessage` 消息桥。
+- **`api.executeCommand` 执行不到内置扩展的命令**（命令表在宿主进程里，只有用户扩展的命令）——内置扩展之间请直接调函数或走贡献点。
+
 ## 1. 先读现状
 
 - 入口文件名**固定** `index.ts`：宿主用 Vite 的 `import.meta.glob('../extensions/*/index.ts')` 收集内置扩展（`core/loader.ts:15,34-39`），改名即不被收集。
