@@ -380,7 +380,13 @@ export class ExtensionHostRuntime {
           appInfo: this.appInfo,
           locale: this.locale,
           log: this.logger,
-          runSafely
+          runSafely,
+          // EH-B1：宿主 → main 的反向通道（net.fetch 读代理、clipboard 转给 main）。
+          // 用同一个 RpcClient：method 由 main 侧的 `extensionHostStarter.registerMethod()` 应答。
+          hostMain: {
+            request: (method: string, params?: unknown): Promise<unknown> =>
+              this.rpcClient.request(method, params)
+          }
         })
     })
     this.loader = loader

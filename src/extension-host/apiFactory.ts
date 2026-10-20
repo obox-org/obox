@@ -1,8 +1,12 @@
 /**
  * 扩展 API 工厂：宿主进程按 `extId` **现场构造** `api`（ADR-0026 决策 4：保持 `plugin(api)` 写法不变）。
  *
- * EH-A3 只落地两组真实能力（`fs` / `timer`）+ 三组只读信息（`appInfo` / `env` / `log`），
- * 其余一律**显式桩**：抛 `EH_INTERNAL` + 「该能力尚未迁移，见 docs/extension-host-migration.md 阶段 B」。
+ * 能力落地进度：
+ * - **EH-A3**：`fs`（readFile/writeFile/readDir/exists/remove）/ `timer` + 只读信息（`appInfo` /
+ *   `env` / `log`）；
+ * - **EH-B1**：IO 族补齐——`fs.watch` / `fs.unwatch` / `net.fetch` / `clipboard.*`，实现落在
+ *   `./capabilities/io.ts`（`env` 也搬过去，5 个成员在一处定义）；
+ * - 其余仍是**显式桩**：抛 `EH_INTERNAL` + 「该能力尚未迁移，见 docs/extension-host-migration.md 阶段 B」。
  *
  * 为什么桩也要显式写出来，而不是「先不提供这些命名空间」：
  * - 形状必须与 `src/api/types.ts` 的 `ExtensionActivationApi` 对齐——扩展代码是按那个类型写的，
@@ -18,6 +22,7 @@ import path from 'node:path'
 import type { Memento } from '../api/shared'
 import type { ExtensionActivationApi } from '../api/types'
 import type { HostedExtensionInfo, LogLevel } from '../shared/extensionHostProtocol'
+import { createIoCapabilities, resolveInsideDataDir, type HostMainBridge } from './capabilities/io'
 import { stubCapabilityError, toErrorMessage } from './errors'
 import type { HostLogger } from './log'
 import type { SafeRunner } from './safety'
@@ -119,28 +124,11 @@ export type HostedExtensionApi = ExtensionActivationApi & HostLoggingApi
 /* -------------------------------------------------------------------------------------------- */
 
 /**
- * 把扩展给的相对路径解析成**扩展 data 目录内**的绝对路径。
+ * 把 Node 的 errno 错误包成中文可读的错误（保留原始文本，便于排查）。
  *
- * 越界一律抛错（不钳制、不静默回落到根）：`..`、绝对路径、`C:` 盘符都拒绝。
- * 扩展与宿主同上下文、无沙箱（ADR-0015），`fs` 的作用域本来就只是「防手滑」而非安全边界，
- * 但「手滑写坏 userData 其它文件」是真实风险，所以这层校验必须硬。
+ * 路径白名单（`resolveInsideDataDir`）本文件不再自己实现，统一在 `./capabilities/io.ts`：
+ * `fs` 读写与 `fs.watch` 必须用**同一套**校验，抄两份迟早分叉。
  */
-function resolveInsideDataDir(root: string, rel: string): string {
-  if (typeof rel !== 'string' || rel.trim() === '') {
-    throw new Error('路径不能为空')
-  }
-  if (path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) {
-    throw new Error(`只允许扩展 data 目录内的相对路径，收到绝对路径：${rel}`)
-  }
-  const absolute = path.resolve(root, rel)
-  const relative = path.relative(root, absolute)
-  if (relative !== '' && (relative.startsWith('..') || path.isAbsolute(relative))) {
-    throw new Error(`路径越出扩展 data 目录：${rel}`)
-  }
-  return absolute
-}
-
-/** 把 Node 的 errno 错误包成中文可读的错误（保留原始文本，便于排查） */
 async function withFsError<T>(action: string, rel: string, task: () => Promise<T>): Promise<T> {
   try {
     return await task()
@@ -166,10 +154,18 @@ export interface ExtensionApiOptions {
   /** 宿主日志（`api.log` 的落点） */
   log: HostLogger
   /**
-   * 绑定了错误上报的隔离执行壳（`api.timer` 的回调经它跑）：
+   * 绑定了错误上报的隔离执行壳（`api.timer` / `api.fs.watch` 的回调经它跑）：
    * 扩展回调里抛错 → 落 `log` + 状态表，**不**升级成宿主级异常。
    */
   runSafely: SafeRunner
+  /**
+   * 宿主 → main 的请求通道（EH-B1）。
+   *
+   * 用途只有两处：`net.fetch` 读代理/忽略 SSL 设置（`host.proxyConfig`）、`clipboard` 转给 main
+   * （`host.clipboard`）。**可选**：缺省时 `net.fetch` 回落环境变量、`clipboard` 明确报错，
+   * 这样本文件在没有 main 侧的宿主里也能跑（单测与回退期都用这个分支）。
+   */
+  hostMain?: HostMainBridge
 }
 
 /** 构造结果：api + 对照表 + 清理 */
@@ -178,7 +174,7 @@ export interface BuiltExtensionApi {
   readonly api: HostedExtensionApi
   /** 已实现 / 桩 对照表（从 `api` 对象推导，供宿主自检与文档核对） */
   readonly implementation: ApiImplementationRow[]
-  /** 清掉该扩展的全部定时器（停用/退出时调用；幂等） */
+  /** 清掉该扩展的全部定时器与文件监听（停用/退出时调用；幂等） */
   dispose(): void
 }
 
@@ -226,6 +222,20 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     }
   }
 
+  /* ---------------------------------- 已实现：IO 族 ---------------------------------- */
+
+  // EH-B1：IO 族（fs.watch/unwatch、net、env、clipboard）的实现在 capabilities/io.ts。
+  // 这里只装配：白名单（root）、隔离执行壳、main 通道全部由本函数注入，io.ts 不含宿主状态。
+  const io = createIoCapabilities({
+    extId,
+    extensionDataDir: root,
+    appInfo: options.appInfo,
+    locale: options.locale,
+    log: options.log,
+    runSafely: options.runSafely,
+    hostMain: options.hostMain
+  })
+
   /* ---------------------------------- 已实现：fs ---------------------------------- */
 
   const fsApi: ExtensionActivationApi['fs'] = {
@@ -263,8 +273,8 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
         await rm(resolveInsideDataDir(root, rel), { recursive: true, force: true })
       })
     },
-    watch: stubAsync('fs.watch'),
-    unwatch: stubAsync('fs.unwatch')
+    watch: io.fsWatch.watch,
+    unwatch: io.fsWatch.unwatch
   }
 
   /* --------------------------------- 已实现：timer -------------------------------- */
@@ -302,7 +312,7 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     }
   }
 
-  /* ------------------------------ 已实现：appInfo/env/log ------------------------------ */
+  /* ------------------------------ 已实现：appInfo / log ------------------------------ */
 
   const appInfo: ExtensionActivationApi['appInfo'] = {
     async get(): Promise<{ name: string; version: string }> {
@@ -310,15 +320,8 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     }
   }
 
-  const env: ExtensionActivationApi['env'] = {
-    platform: process.platform,
-    arch: process.arch,
-    nodeVersion: process.versions.node,
-    language: options.locale,
-    async getOboxVersion(): Promise<string> {
-      return options.appInfo.version
-    }
-  }
+  // `env` 由 capabilities/io.ts 统一给出（5 个成员与 `src/api/types.ts` 的声明一一对应）。
+  const env: ExtensionActivationApi['env'] = io.env
 
   const log: HostLoggingApi['log'] = (message: string, level: LogLevel = 'info'): void => {
     options.log(level, `[${extId}] ${message}`)
@@ -414,7 +417,7 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     timer: timerApi,
     sqlite: { open: stubAsync('sqlite.open') },
     notification: { show: stubAsync('notification.show') },
-    net: { fetch: stubAsync('net.fetch') },
+    net: io.net,
     dialog: {
       showOpenDialog: stubAsync('dialog.showOpenDialog'),
       showSaveDialog: stubAsync('dialog.showSaveDialog'),
@@ -424,10 +427,7 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
       openExternal: stubAsync('shell.openExternal'),
       openPath: stubAsync('shell.openPath')
     },
-    clipboard: {
-      readText: stubAsync('clipboard.readText'),
-      writeText: stubAsync('clipboard.writeText')
-    },
+    clipboard: io.clipboard,
     env,
     theme: {
       getCurrent: stubSync('theme.getCurrent'),
@@ -460,6 +460,8 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     dispose(): void {
       if (disposed) return
       disposed = true
+      // 监听句柄必须真的关掉：漏一个 inotify/FSEvents 句柄会让宿主退出时被拖住
+      io.dispose()
       for (const id of [...timers.keys()]) clearTimer(id)
     }
   }

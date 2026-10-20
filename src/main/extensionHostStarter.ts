@@ -46,6 +46,10 @@ import {
   type HostedExtensionInfo,
   type ProtocolVersion
 } from '../shared/extensionHostProtocol'
+// 复用宿主侧同一个 RPC 服务端实现（EH-B1，见 `registerMethod`）：未知 method 的 `EH_INTERNAL`+可用列表、
+// handler 抛错 → `err` 带码、`cancel` → `EH_CANCELLED` 这几条语义只有一处实现，不会两边分叉。
+// `extension-host/rpc.ts` 是纯 Node 模块（不 import electron），main 可以安全复用。
+import { RpcServer, type RpcHandler } from '../extension-host/rpc'
 import { getMainWindow } from './window'
 
 /* -------------------------------------------------------------------------------------------- */
@@ -234,6 +238,15 @@ export interface ExtensionHostStarterDeps {
   logger: ExtensionHostLogger
 }
 
+/**
+ * 「宿主 → main」请求的处理函数（EH-B1 的反向通道）。
+ *
+ * `params` 是宿主发来的 JSON 值（宿主侧发 `req` 信封，参数过不了函数/类实例）；
+ * **返回值即 `res.result`，抛错即 `err`**（`EhProtocolError` 保留错误码，其它一律 `EH_INTERNAL`）。
+ * 处理函数可以是异步的：宿主等的是 `res`/`err`，不关心 main 内部怎么排队。
+ */
+export type HostRequestHandler = RpcHandler
+
 /* -------------------------------------------------------------------------------------------- */
 /* 对外接口                                                                                      */
 /* -------------------------------------------------------------------------------------------- */
@@ -307,6 +320,20 @@ export interface ExtensionHostStarter {
   send(envelope: Envelope): boolean
   /** 订阅宿主经 `host-main` 发来的信封（握手类信封也一并转发，订阅者自己筛） */
   onEnvelope(listener: (envelope: Envelope) => void): () => void
+  /**
+   * 注册「宿主 → main」请求的处理器（EH-B1）。返回注销函数。
+   *
+   * 宿主在能力实现里需要 main 的东西（`host.proxyConfig` / `host.clipboard`）时发 `req` 信封，
+   * 这里按 method 分发并回 `res` / `err`。**不进扩展 API 面**：扩展看到的是 `api.net.fetch` /
+   * `api.clipboard`，这两条只是宿主实现它们的内部手段，所以 `docs/extension-api/**` 不需要改。
+   *
+   * 语义与宿主侧 `RpcServer` 完全一致（直接复用它）：未知 method → `EH_INTERNAL` + 可用 method
+   * 列表；handler 抛错 → `err` 带码；宿主发 `cancel` → 该请求按 `EH_CANCELLED` 收尾。
+   * 重复注册同一 method **抛错**（静默覆盖会让"handler 没被调用"变成一次二小时的排查）。
+   */
+  registerMethod(method: string, handler: HostRequestHandler): () => void
+  /** 已注册的宿主请求 method（排序；诊断与日志用） */
+  registeredMethods(): string[]
   /** 立刻尝试把挂起的渲染侧端口投递出去；成功返回 true */
   flushRendererPort(): boolean
 }
@@ -391,6 +418,11 @@ class ExtensionHostStarterImpl implements ExtensionHostStarter {
   private readonly timerHandles = new Map<TimerSlot, unknown>()
   private readonly statusListeners = new Set<(status: ExtensionHostStatus) => void>()
   private readonly envelopeListeners = new Set<(envelope: Envelope) => void>()
+  /**
+   * 宿主 → main 的 RPC 服务端（EH-B1）：`req` 信封在这里按 method 分发、回 `res`/`err`。
+   * 与宿主侧用的是同一个 `RpcServer` 实现，因此未知 method / 取消 / 重复 id 的语义天然一致。
+   */
+  private readonly hostRpc: RpcServer
 
   constructor(options: ExtensionHostStarterOptions) {
     this.entryPoint = options.entryPoint
@@ -400,6 +432,17 @@ class ExtensionHostStarterImpl implements ExtensionHostStarter {
     this.extensions = options.extensions ?? []
     this.extraEnv = options.env ?? {}
     this.deps = { ...defaultDeps(), ...options.deps }
+    this.hostRpc = new RpcServer({
+      send: (envelope): void => {
+        this.postToHost(envelope)
+      },
+      log: (level, message, detail): void => {
+        this.deps.logger[level](
+          `[host-rpc] ${detail === undefined ? message : `${message}（${detail}）`}`
+        )
+      },
+      now: (): number => this.deps.timers.now()
+    })
   }
 
   /* ------------------------------ 对外：启动 / 停止 ------------------------------ */
@@ -463,6 +506,8 @@ class ExtensionHostStarterImpl implements ExtensionHostStarter {
     }
     this.statusListeners.clear()
     this.envelopeListeners.clear()
+    // 在途的宿主请求不再会有响应：按取消收尾（避免 handler 结束后再往已关闭的通道回帧）
+    this.hostRpc.dispose('扩展宿主启动器已释放')
     await this.stop()
     // `stop()` 里起的宽限定时器也要清掉：应用退出后没必要再留着强杀兜底
     this.stopTimers('grace')
@@ -527,6 +572,16 @@ class ExtensionHostStarterImpl implements ExtensionHostStarter {
     return () => {
       this.envelopeListeners.delete(listener)
     }
+  }
+
+  registerMethod(method: string, handler: HostRequestHandler): () => void {
+    const unregister = this.hostRpc.register(method, handler)
+    this.deps.logger.debug(`已注册宿主 → main 的请求处理：${method}`)
+    return unregister
+  }
+
+  registeredMethods(): string[] {
+    return this.hostRpc.registeredMethods()
   }
 
   flushRendererPort(): boolean {
@@ -621,15 +676,24 @@ class ExtensionHostStarterImpl implements ExtensionHostStarter {
         return
       case 'res':
       case 'err':
-      case 'cancel':
         this.onAck(envelope.id)
+        return
+      case 'cancel':
+        // 两个方向的 id 各自独立：既可能是「我们发出的 ping 被取消」，也可能是
+        // 「宿主取消它自己发出的请求」（后者交 hostRpc 按 EH_CANCELLED 收尾）。
+        this.onAck(envelope.id)
+        this.hostRpc.handleCancel(envelope)
+        return
+      case 'req':
+        // 宿主 → main 的请求（EH-B1）：method 由 `registerMethod()` 注册的处理器应答
+        this.hostRpc.handleRequest(envelope)
         return
       case 'log':
         // 宿主的结构化日志：主进程直接落到自己的日志里（A3/A4 也能从 onEnvelope 再收一份）
         this.deps.logger[envelope.level](`[host] ${envelope.message}`)
         return
       default:
-        // activate/deactivate/req/event 属于 A3/A4 的消费者，A2 只做透传
+        // activate/deactivate/event 属于 A3/A4 的消费者，A2 只做透传
         return
     }
   }

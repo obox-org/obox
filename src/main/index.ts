@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createWindow, getMainWindow, registerWindowIpc } from './window'
@@ -30,6 +30,7 @@ import { registerSqliteIpc } from './sqlite'
 import { registerTimerIpc } from './timer'
 import { registerNotificationIpc } from './notification'
 import { registerNetIpc } from './net'
+import { currentProxy } from './proxy'
 import { registerAiIpc } from './ai'
 import { registerFsIpc } from './fs'
 import { registerExtIpc } from './ext'
@@ -47,7 +48,14 @@ import {
   validateEnvelope,
   type HostedExtensionInfo
 } from '../shared/extensionHostProtocol'
-import type { ExtensionHostStartOutcome, ExtensionHostStatusSnapshot } from '../shared/types'
+// EH-B1：这两条是**宿主内部 RPC**（宿主进程 → main），不进扩展 API 面——扩展看到的是
+// `api.net.fetch` / `api.clipboard`，这里只是宿主实现它们时向 main 借的两样东西。
+import { CLIPBOARD_METHOD, PROXY_CONFIG_METHOD } from '../extension-host/capabilities/io'
+import type {
+  ExtensionHostStartOutcome,
+  ExtensionHostStatusSnapshot,
+  ProxyConfig
+} from '../shared/types'
 
 /**
  * 扩展宿主进程启动器（ADR-0026 / EH-A2）。**只注册、不启动**：`start()` 必须由渲染侧经
@@ -257,6 +265,42 @@ app.whenReady().then(() => {
   ipcMain.handle(EH_STATUS_IPC, (): ExtensionHostStatusSnapshot => starter.getStatus())
   // 状态迁移（idle → starting → ready → …）推给窗口：A5 / 扩展管理器据此展示 phase 与崩溃原因
   starter.onStatus(broadcastExtensionHostStatus)
+
+  // ---- EH-B1：宿主 → main 的两条内部 RPC（宿主能力实现用，不进扩展 API 面） ----
+  // 1) 代理配置：宿主进程没有 Chromium session，`net.fetch` 只能自己应用代理/忽略 SSL，
+  //    而唯一真相是 main 的 `currentProxy()`（渲染侧启动与改设置时经 `proxy:apply` 推入）。
+  starter.registerMethod(PROXY_CONFIG_METHOD, (): { proxy?: ProxyConfig; ignoreSSL: boolean } => {
+    const proxy = currentProxy()
+    // `ignoreSSL` 是**独立开关**（与 main 的 `applyProxyToSession` 一致）：只看 `ignoreSSL === true`、
+    // 不看 `enabled`，所以"关掉代理但仍忽略证书"这种组合也照原样继承过来。
+    return { proxy: proxy ?? undefined, ignoreSSL: proxy?.ignoreSSL === true }
+  })
+  // 2) 剪贴板：Electron `clipboard` 只在 main/renderer 可用，宿主进程（utilityProcess）没有该模块
+  starter.registerMethod(CLIPBOARD_METHOD, (params: unknown) => {
+    const record: { action?: unknown; text?: unknown } =
+      typeof params === 'object' && params !== null
+        ? (params as { action?: unknown; text?: unknown })
+        : {}
+    try {
+      if (record.action === 'read') return { ok: true, text: clipboard.readText() }
+      if (record.action === 'write') {
+        if (typeof record.text !== 'string') {
+          return { ok: false, error: '写入剪贴板需要字符串 text' }
+        }
+        clipboard.writeText(record.text)
+        return { ok: true }
+      }
+      return {
+        ok: false,
+        error: `未知的剪贴板操作（${String(record.action)}）：只支持 read / write`
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: `剪贴板操作失败：${error instanceof Error ? error.message : String(error)}`
+      }
+    }
+  })
 
   // 系统托盘（仅 Windows）：右键 打开/设置/关于/退出，双击打开（ADR-0019 决策 3/4）
   const SETTINGS_NAV_ID = 'settings.main' // 内置 settings 扩展声明的导航项 id
