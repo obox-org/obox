@@ -23,7 +23,7 @@ obox 有两个扩展运行时，**用户扩展与内置扩展的位置不同**�
 - **跨进程**：每次 `api.*` 都是 RPC。参数/返回值只过 **JSON 值 + 二进制旁路**（函数、类实例、循环引用、`Map`/`Set` 过不去，报 `EH_UNSERIALIZABLE`）。
 - **事件不跨运行时**：`api.on` / `api.emit` 只在用户扩展之间（或内置扩展之间）广播；`api.executeCommand` 也执行不了内置扩展的命令。
 - **界面必须在页面里**：宿主进程没有 DOM，所以"画东西"只能靠 App 卡片静态页 / overlay 页面（那些页面里**有** DOM 与自己的 `localStorage`，但与扩展入口**不是同一个文档**），通信走 `api.app.onMessage`。
-- **过渡期回退开关**：2.0 之前宿主进程默认**关**（`OBOX_EXTENSION_HOST=1` 才启用），关着时你的扩展仍在渲染进程执行、`activationEvents` 不生效。**但请按宿主进程写**（不碰 DOM/localStorage），否则开关一开就坏。
+- **默认与开关**：obox **2.0.0 起宿主进程默认开启**。用户可在 **设置 → 通用 → 「在独立进程中运行扩展」** 关掉（**需重启**），环境变量 `OBOX_EXTENSION_HOST=0` 是开发者兜底；优先级为 **设置项 > 环境变量 > 默认开**。关掉后扩展回到渲染进程执行、`activationEvents` 不生效。**请始终按宿主进程写**（不碰 DOM/localStorage），否则关掉开关就会坏。
 
 **运行时零依赖**：`.oix` 里只有你自己的文件（不带 `node_modules`），需要 Node 内置模块时直接 `import 'node:fs'`；第三方包不要指望（打包脚本会排除 `node_modules/`）。入口必须是**纯 ESM JavaScript**——宿主在**扩展进程里按 `file://` 动态 `import()`**（回退开关关闭时经 `app://` 在渲染进程 import），没有 Vite 转换，TypeScript 不能直接用。
 
@@ -217,7 +217,7 @@ node scripts/pack.mjs   # 产出 out/<name>-<version>.oix
 > **先看清断点打在哪一侧（ADR-0026 之后）**：用户扩展的代码跑在 **Extension Host Process**，而 `--remote-debugging-port`（CDP）attach 的是**渲染进程**。所以：
 >
 > - **宿主模式下**（`OBOX_EXTENSION_HOST=1`）入口与插件函数的断点**打不到**——宿主进程目前没有接线 `--inspect`（`src/main/extensionHostStarter.ts` 里没有 inspect 参数），宿主侧调试属于未完成项；
-> - **现阶段调试用户扩展**：① 靠日志（`api.output.createChannel` 写日志、`console.log` 会经 `log` 信封转发到渲染侧 console 与主进程终端）；② 或**临时关掉回退开关**（不设 `OBOX_EXTENSION_HOST`）让扩展回到渲染进程执行，再用下面的 CDP 链路打断点——这也是下面这份配置现在唯一可用的场景。
+> - **现阶段调试用户扩展**：① 靠日志（`api.output.createChannel` 写日志、`console.log` 会经 `log` 信封转发到渲染侧 console 与主进程终端）；② 或**临时关掉宿主执行**（设置 → 通用 → 「在独立进程中运行扩展」关掉，或临时设 `OBOX_EXTENSION_HOST=0`，**都需重启**）让扩展回到渲染进程执行，再用下面的 CDP 链路打断点——这也是下面这份配置现在唯一可用的场景。
 
 `--debug-extension` 把本地目录直接当扩展源加载，配合 CDP 端口即可对源码打断点：
 
