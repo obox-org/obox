@@ -46,7 +46,7 @@ import { createExtensionApi, type BuiltExtensionApi } from './apiFactory'
 import { toErrorDetail, toErrorMessage } from './errors'
 import { createEnvelopeLogger, createEnvelopeSink, type EnvelopeSink, type HostLogger } from './log'
 import { ExtensionLoader, type LoadedExtension } from './loader'
-import type { HostPort } from './port'
+import type { HostPort, HostRendererPortLike } from './port'
 import { RpcClient, RpcServer, systemRpcTimers, type RpcRequestOptions } from './rpc'
 import { createRunExtensionSafely, type ExtensionErrorReporter } from './safety'
 import { ExtensionStatusTable, type ExtensionStatus } from './status'
@@ -75,8 +75,16 @@ export interface HostStatusPayload {
 
 /** `ExtensionHostRuntime` 的构造参数（全部可注入，便于单测不起真进程） */
 export interface HostRuntimeOptions {
-  /** 消息端口（生产：`createHostPortFromParentPort(process.parentPort)`；测试：假端口） */
+  /** 消息端口（生产：`createHostPortsFromParentPort(process.parentPort).main`；测试：假端口） */
   port: HostPort
+  /**
+   * `host-renderer` 的 port1（EH-B3b-1）。它**随 `init` 的 transfer 才到达**，因此这里给的是
+   * 一个惰性读取器而不是端口本身；缺省（单测/回退期）⇒ 数据面能力明确报 `EH_NOT_READY`。
+   *
+   * 为什么由运行时透传而不是让能力工厂自己去摸 `process.parentPort`：扩展 API 工厂只该看到
+   * "一条端口"，端口从哪来是入口（`index.ts` → `port.ts`）的职责。
+   */
+  rendererPort?: () => HostRendererPortLike | null
   /** 宿主 id（缺省随机 UUID；日志与崩溃归因用） */
   hostId?: string
   /** 宿主 pid（缺省 `process.pid`；测试可伪造） */
@@ -332,6 +340,13 @@ export class ExtensionHostRuntime {
     this.unsubscribe()
     this.rpc.dispose('扩展宿主已关停')
     this.rpcClient.rejectAll('EH_CANCELLED', '扩展宿主已关停，在途请求已取消')
+    // `host-renderer` 端口也要关：不关的话渲染侧 port2 收不到 close，会一直以为链路还在
+    // （页面重载后 `hasPort()` 仍为 true，症状是"请求发出去永远没回"）。关两次是无害的。
+    try {
+      this.currentRendererPort()?.close?.()
+    } catch {
+      // 端口可能已随进程退出而失效：关闭是尽力而为
+    }
     if (this.graceTimer) {
       clearTimeout(this.graceTimer)
       this.graceTimer = null
@@ -385,6 +400,9 @@ export class ExtensionHostRuntime {
           locale: this.locale,
           log: this.logger,
           runSafely,
+          // EH-B3b-1：`host-renderer` 的 port1（UI 数据面）。此刻它一定已到——main 把它随
+          // `init` 一起 transfer 过来，而这里正是处理 `init` 的过程中。
+          rendererPort: this.currentRendererPort(),
           // EH-B1：宿主 → main 的反向通道（net.fetch 读代理、clipboard 转给 main）。
           // 用同一个 RpcClient：method 由 main 侧的 `extensionHostStarter.registerMethod()` 应答。
           hostMain: {
@@ -530,6 +548,11 @@ export class ExtensionHostRuntime {
 
   private get locale(): string {
     return this.options.locale ?? 'zh'
+  }
+
+  /** `host-renderer` 端口（`init` 之前是 `null`；每次读都是最新值） */
+  private currentRendererPort(): HostRendererPortLike | null {
+    return this.options.rendererPort?.() ?? null
   }
 
   /** 畸形信封：只对「看起来是 req 且 id 可配对」的回 `err`，其余仅记日志 */

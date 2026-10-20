@@ -100,4 +100,10 @@
 | 9 | **sidecar 分帧按字节计 `Content-Length`**（不是字符数） | B2（测试脚本踩过） | 写进扩展作者文档的注意事项（D1） |
 | 10 | **`ExtensionApiOptions.extensionDataDir` 已成纯未读字段** | B2 / R63 | 下次动 `runtime.ts` 时连同实参一起删（各 1 行） |
 | 11 | **`api-reference.md:576/:667` 的代理表述过时**（"环境变量无效"、"代理是 session 级"） | B1（宿主侧改为 main 优先 + env 兜底 + 宿主内自应用） | D1 文档重写时改 |
+| 12 | **宿主 fork 时没传 `OBOX_LOCALE`/`OBOX_APP_NAME`/`OBOX_APP_VERSION`** ⇒ 宿主侧 `api.env.language` 恒 `zh`、`api.appInfo` 恒 `obox 0.0.0`（B3b-1 只在 settings 快照到达后校准 i18n 语言） | B3b-1 残留 | 主进程 fork 时注入 env（或把 app 版本加进 `init` 信封 —— 那要升 `PROTOCOL_VERSION`）。**必须在 D 阶段发版前修** |
+| 13 | **宿主扩展创建的 overlay 收不到 `app.onMessage`**（`overlayOwners` 由渲染侧 `api.overlay.create` 回填，宿主模式创建走 `capabilities/host-main.ts`） | B3a + B3b-1（原 #7 的具体化） | B3b-2 或 D：`host.overlay.create` 成功后把 `(overlayId → extId)` 同步给渲染侧 |
+| 14 | **`api.executeCommand` 无法执行内置扩展的命令**（内置扩展仍在渲染侧，宿主命令表只有用户扩展） | B3b-1 残留（双运行时后的必然结果） | 若要支持，命令表需双向（渲染侧命令注册也同步给宿主一份） |
+| 15 | **`on`/`emit` 不再跨运行时**：内置扩展（渲染侧）与用户扩展（宿主）之间不再互通 | B3b-1 | 若确有跨运行时事件需求，做一条 host-renderer 事件桥 |
+| 16 | **`workspaceState` 与 `globalState` 现在是真隔离**（v1 两者指向同一 store） | B3b-1（**有意修正**的语义差异） | 无需退场，但要写进 D1 迁移说明：依赖"两者其实同一份"的扩展会感知到差异 |
+| 17 | **接缝缺陷的教训（已修，防复发）**：A2 把 `port1` 放进 `init` 的 transfer 列表、A3 的端口适配器只读 `event.data` ⇒ **真机上 host-renderer 端口从未到达宿主**，而两侧单测各自用假件全绿 | B3b-1 发现（R68 修复） | 已补 7 条接缝测试（含"端口为空 ⇒ `EH_NOT_READY`"与真实 runtime 端到端）。**后续每张跨侧卡都必须带接缝测试** |
 

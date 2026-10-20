@@ -1149,6 +1149,10 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     .map((row) => row.capability)
     .sort()
   assert.deepEqual(implemented, [
+    // EH-B3b-1：注册面数据面（28 项——app / i18n / navbar / on·emit / settings / statusBar /
+    // theme / views / workspaceState / globalState / registerCommand / executeCommand）
+    'app.onMessage',
+    'app.register',
     'appInfo.get',
     'clipboard.readText',
     'clipboard.writeText',
@@ -1157,11 +1161,13 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'dialog.showMessageBox',
     'dialog.showOpenDialog',
     'dialog.showSaveDialog',
+    'emit',
     'env.arch',
     'env.getOboxVersion',
     'env.language',
     'env.nodeVersion',
     'env.platform',
+    'executeCommand',
     'fs.exists',
     'fs.readDir',
     'fs.readFile',
@@ -1169,7 +1175,13 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'fs.unwatch',
     'fs.watch',
     'fs.writeFile',
+    'globalState.get',
+    'globalState.keys',
+    'globalState.update',
     'i18n.locale',
+    'i18n.onLocaleChanged',
+    'i18n.registerMessages',
+    'i18n.t',
     // EH-B2：ipc 全量 14 项 + python.run + sqlite.open（进程与存储族）
     'ipc.broadcast',
     'ipc.channels',
@@ -1186,42 +1198,60 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'ipc.onStderr',
     'ipc.request',
     'log',
+    'navbar.setBadge',
     'net.fetch',
     'notification.show',
+    'on',
     'overlay.create',
     'overlay.destroy',
     'overlay.setMouseThrough',
     'overlay.setPosition',
     'proxy.get',
     'python.run',
+    'registerCommand',
     'secrets.delete',
     'secrets.get',
     'secrets.set',
+    'settings.get',
+    'settings.onChanged',
+    'settings.register',
+    'settings.set',
     'shell.openExternal',
     'shell.openPath',
     'sqlite.open',
+    'statusBar.createItem',
+    'statusBar.hide',
+    'statusBar.setText',
+    'statusBar.setTooltip',
+    'statusBar.show',
+    'theme.getCurrent',
+    'theme.onChanged',
     'timer.clearInterval',
     'timer.clearTimeout',
     'timer.setInterval',
     'timer.setTimeout',
     'update.getVersion',
     'update.onEvent',
+    'views.registerTreeProvider',
     'window.close',
     'window.isFocused',
     'window.isMaximized',
     'window.minimize',
     'window.onFocusChanged',
     'window.setProgressBar',
-    'window.toggleMaximize'
+    'window.toggleMaximize',
+    'workspaceState.get',
+    'workspaceState.keys',
+    'workspaceState.update'
   ])
 
   const stubs = rows.filter((row) => row.status === 'stub')
   // 行数与分布锁死：阶段 B 把某个桩落地时这里会失败，提醒同步对照表（而不是悄悄少一行）
-  assert.equal(rows.length, 99, '对照表共 99 项（61 已实现 + 38 桩）')
+  assert.equal(rows.length, 99, '对照表共 99 项（89 已实现 + 10 桩）')
   assert.equal(
     stubs.length,
-    38,
-    '桩 38 项（阶段 B 待迁移；EH-B1 带走 5 项、EH-B2 带走 16 项、EH-B3a 带走 23 项）'
+    10,
+    '桩 10 项（ui 5 + output.createChannel 1 + update 4，全归 EH-B3b-2）'
   )
   assert.equal(
     rows.length,
@@ -1249,7 +1279,8 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
   }
 
   // 同步桩也当场抛（不是返回假值）
-  assert.throws(() => built.api.statusBar.setText('a', 'b'), /尚未迁移/)
+  // EH-B3b-1 之后 `statusBar` 不再是桩：本用例没给 `rendererPort`，抛的是「端口未到」而非「尚未迁移」
+  assert.throws(() => built.api.statusBar.setText('a', 'b'), /host-renderer 端口未到/)
   // EH-B3a 之后 `window.onFocusChanged` 已是真实现（订阅类 API 不抛错，只是没有事件源）
   assert.doesNotThrow(() => built.api.window.onFocusChanged(() => {}).dispose())
   assert.throws(() => built.api.output.createChannel('x'), /尚未迁移/)

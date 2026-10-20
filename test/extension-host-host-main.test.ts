@@ -10,7 +10,7 @@
  * - 事件源（R65）：`HostEventSource` 窄接口、**无订阅者不轮询**、只取新增事件（游标）、
  *   `dispose` 停轮询；
  * - 源码门禁：`HOST_MAIN_METHODS` 的每个 key 都在 `src/main/index.ts` 里注册；
- * - 对照表：EH-B3a 之后 **61 已实现 + 38 桩 = 99**。
+ * - 对照表：EH-B3b-1 之后 **89 已实现 + 10 桩 = 99**。
  *
  * 刻意**不进 Electron**：宿主能力层只认 `HostMainBridge`（`request`），因此全部用假桥
  * 断言"宿主发了什么、怎么翻译回来的"；main 侧的真实实现由既有测试覆盖
@@ -1026,10 +1026,10 @@ test('源码门禁：宿主能力文件不 import electron（extension-host.js �
 })
 
 /* -------------------------------------------------------------------------------------------- */
-/* 11. 对照表（EH-B3a 之后）                                                                       */
+/* 11. 对照表（EH-B3b-1 之后）                                                                     */
 /* -------------------------------------------------------------------------------------------- */
 
-test('对照表：EH-B3a 之后 61 已实现 + 38 桩 = 99（新增 23 条主进程类能力）', async (): Promise<void> => {
+test('对照表：EH-B3b-1 之后 89 已实现 + 10 桩 = 99（新增 28 条注册面数据面能力）', async (): Promise<void> => {
   const dir = await mkdtemp(path.join(tmpdir(), 'obox-eh-b3a-table-'))
   try {
     const built = createExtensionApi({
@@ -1053,6 +1053,10 @@ test('对照表：EH-B3a 之后 61 已实现 + 38 桩 = 99（新增 23 条主进
     const stubs = rows.filter((row) => row.status === 'stub')
 
     assert.deepEqual(implemented, [
+      // EH-B3b-1：注册面数据面（28 项——app / i18n / navbar / on·emit / settings / statusBar /
+      // theme / views / workspaceState / globalState / registerCommand / executeCommand）
+      'app.onMessage',
+      'app.register',
       'appInfo.get',
       'clipboard.readText',
       'clipboard.writeText',
@@ -1060,11 +1064,13 @@ test('对照表：EH-B3a 之后 61 已实现 + 38 桩 = 99（新增 23 条主进
       'dialog.showMessageBox',
       'dialog.showOpenDialog',
       'dialog.showSaveDialog',
+      'emit',
       'env.arch',
       'env.getOboxVersion',
       'env.language',
       'env.nodeVersion',
       'env.platform',
+      'executeCommand',
       'fs.exists',
       'fs.readDir',
       'fs.readFile',
@@ -1072,7 +1078,13 @@ test('对照表：EH-B3a 之后 61 已实现 + 38 桩 = 99（新增 23 条主进
       'fs.unwatch',
       'fs.watch',
       'fs.writeFile',
+      'globalState.get',
+      'globalState.keys',
+      'globalState.update',
       'i18n.locale',
+      'i18n.onLocaleChanged',
+      'i18n.registerMessages',
+      'i18n.t',
       'ipc.broadcast',
       'ipc.channels',
       'ipc.close',
@@ -1088,26 +1100,41 @@ test('对照表：EH-B3a 之后 61 已实现 + 38 桩 = 99（新增 23 条主进
       'ipc.onStderr',
       'ipc.request',
       'log',
+      'navbar.setBadge',
       'net.fetch',
       'notification.show',
+      'on',
       'overlay.create',
       'overlay.destroy',
       'overlay.setMouseThrough',
       'overlay.setPosition',
       'proxy.get',
       'python.run',
+      'registerCommand',
       'secrets.delete',
       'secrets.get',
       'secrets.set',
+      'settings.get',
+      'settings.onChanged',
+      'settings.register',
+      'settings.set',
       'shell.openExternal',
       'shell.openPath',
       'sqlite.open',
+      'statusBar.createItem',
+      'statusBar.hide',
+      'statusBar.setText',
+      'statusBar.setTooltip',
+      'statusBar.show',
+      'theme.getCurrent',
+      'theme.onChanged',
       'timer.clearInterval',
       'timer.clearTimeout',
       'timer.setInterval',
       'timer.setTimeout',
       'update.getVersion',
       'update.onEvent',
+      'views.registerTreeProvider',
       // EH-B3a：window 7 项
       'window.close',
       'window.isFocused',
@@ -1115,11 +1142,14 @@ test('对照表：EH-B3a 之后 61 已实现 + 38 桩 = 99（新增 23 条主进
       'window.minimize',
       'window.onFocusChanged',
       'window.setProgressBar',
-      'window.toggleMaximize'
+      'window.toggleMaximize',
+      'workspaceState.get',
+      'workspaceState.keys',
+      'workspaceState.update'
     ])
     assert.equal(rows.length, 99, '对照表共 99 项')
-    assert.equal(implemented.length, 61, '已实现 61 项（38 + EH-B3a 的 23）')
-    assert.equal(stubs.length, 38, '桩 38 项（ui 5 / output 1 / update 4 归 B3b，其余属 B5）')
+    assert.equal(implemented.length, 89, '已实现 89 项（61 + EH-B3b-1 的 28）')
+    assert.equal(stubs.length, 10, '桩 10 项（ui 5 / output 1 / update 4——全归 EH-B3b-2）')
 
     // 本卡落地的能力不许再抛「尚未迁移」
     await assert.rejects(built.api.secrets.get('k'), (error: unknown): boolean => {
