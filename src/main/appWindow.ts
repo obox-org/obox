@@ -388,7 +388,7 @@ function findOverlayOwner(overlayId: string): string | undefined {
   return undefined
 }
 
-function createOverlayWindow(extIdRaw: unknown, reqRaw: unknown): OverlayResult {
+export function createOverlayWindow(extIdRaw: unknown, reqRaw: unknown): OverlayResult {
   const problem = validateOverlayRequest(reqRaw, extIdRaw)
   if (problem) {
     console.warn(`[overlay] 创建被拒（${String(extIdRaw)}）：${problem}`)
@@ -501,7 +501,7 @@ function createOverlayWindow(extIdRaw: unknown, reqRaw: unknown): OverlayResult 
   return { ok: true, position: { x, y } }
 }
 
-function destroyOverlay(extIdRaw: unknown, idRaw: unknown): OverlayResult {
+export function destroyOverlay(extIdRaw: unknown, idRaw: unknown): OverlayResult {
   if (typeof extIdRaw !== 'string' || !extIdRaw) {
     return {
       ok: false,
@@ -532,7 +532,7 @@ function destroyOverlay(extIdRaw: unknown, idRaw: unknown): OverlayResult {
   return { ok: true }
 }
 
-function setOverlayMouseThrough(
+export function setOverlayMouseThrough(
   extIdRaw: unknown,
   idRaw: unknown,
   throughRaw: unknown
@@ -596,7 +596,7 @@ export function clampOverlayPosition(
   }
 }
 
-function setOverlayPosition(
+export function setOverlayPosition(
   extIdRaw: unknown,
   idRaw: unknown,
   xRaw: unknown,

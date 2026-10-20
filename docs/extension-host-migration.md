@@ -72,3 +72,32 @@
 - **序列化风险**：所有跨进程参数必须过 `plainProxyConfig` 之类的纯对象归一；测试要覆盖 reactive Proxy、类实例、循环引用三类输入被拒/降级的明确行为。
 - **热装卸风险**：`pendingInstall` 的补跑时机从"渲染进程启动"改为"宿主 ready"，需要一条专门的时序测试。
 - **调试风险**：宿主进程用 `--inspect` + 端口转发；文档要写清如何在 VS Code 里 attach。
+
+## 进度（随阶段推进更新）
+
+| 阶段 | 卡 | 状态 | 对照表（已实现 / 桩） |
+| --- | --- | --- | --- |
+| A | A1 协议 / A2 启动器与通道 / A3 宿主运行时 / A4 渲染侧桥 + 回退开关 | ✅ 已合并 | 17 / 82 |
+| B | B1 IO 族（fs.watch、net.fetch、env、clipboard） | ✅ 已合并 | 22 / 77 |
+| B | B2 进程与存储族（ipc、python、sqlite） | ✅ 已合并 | 38 / 61 |
+| B | B3a 主进程类（window/overlay/dialog/shell/notification/secrets/update/proxy） | ✅ 已合并 | **61 / 38** |
+| B | B3b 渲染侧数据面（statusBar/commands/views/settings/theme/i18n/app/stores/on·emit + ui/output + update 门控） | ⏳ 待做 | — |
+| C | C1 manifest（`activationEvents` + apiVersion 3）/ C2 激活与热装卸 | ⏳ 待做 | — |
+| D | D1 文档全量重写 / D2 README / D3–D7 五个扩展 / D8 实机验证 / D9 obox 2.0.0 | ⏳ 待做 | — |
+
+## 技术债登记（显式记录，避免"降级实现"悄悄变成长期方案）
+
+| # | 债 | 来源 | 退场条件 |
+| --- | --- | --- | --- |
+| 1 | **main→宿主用轮询代替推送**（`host.event.poll`，250ms 游标轮询） | R65 / B3a：协议没有 main→host 的信封，`runtime.ts` 会丢弃 `event` | 给协议加 `mainEvent` 信封（`PROTOCOL_VERSION` 1→2）后换成真推送；宿主侧已隔离在 `HostEventSource` 窄接口后，换实现只动一处 |
+| 2 | **`update` 的 4 条能力仍是桩**（`resolveFeed`/`check`/`download`/`install`） | R64 / B3a：门控真相 `update.provider` 只在渲染侧 | EH-B3b 由渲染侧权威判定（不把选择状态搬到 main） |
+| 3 | **`ui`(5) + `output.createChannel`(1) 是桩** | R67 / B3a：`uiStore`/`outputStore` 在渲染侧，main 不会渲染 UI | EH-B3b 的 host-renderer 数据面 |
+| 4 | **`ext.ts`/`secrets.ts`/`notification.ts` 的 handler 内联未导出** ⇒ B3a 在 `index.ts` 逐字重写四段（含 `safeStorage` 判定） | B3a 越界约束 | 做一次"main 能力函数导出化"重构，两处共用一份（现有门禁只防"明文回归"，防不了逻辑漂移） |
+| 5 | **`proxy.get` 改为 1 秒 TTL 缓存**（v1 是每次读最新） | B3a：该 API 是同步签名 × 异步 RPC | 协议支持同步快照或把 `proxy.get` 改成异步（属扩展 API 面变更，需升 apiVersion） |
+| 6 | **宿主发起的通知不遵循「设置-通知」的逐扩展开关** | B3a：`stateStore.isNotificationDisabled` 在渲染侧 | B3b/settings 卡把开关状态交给宿主（或由渲染侧代发） |
+| 7 | **overlay 的 `overlayOwners` 消息路由表未迁移**（`app.onMessage` 的 overlay→扩展寻址） | B3a 只做 `extId` 绑死与 main 越权校验 | B3b（app 注册与消息面） |
+| 8 | **`pipe + autoReconnect` 有实现无自动化用例** | B2 | 单开一条测试卡（确定性构造断线/重连） |
+| 9 | **sidecar 分帧按字节计 `Content-Length`**（不是字符数） | B2（测试脚本踩过） | 写进扩展作者文档的注意事项（D1） |
+| 10 | **`ExtensionApiOptions.extensionDataDir` 已成纯未读字段** | B2 / R63 | 下次动 `runtime.ts` 时连同实参一起删（各 1 行） |
+| 11 | **`api-reference.md:576/:667` 的代理表述过时**（"环境变量无效"、"代理是 session 级"） | B1（宿主侧改为 main 优先 + env 兜底 + 宿主内自应用） | D1 文档重写时改 |
+
