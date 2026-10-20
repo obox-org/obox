@@ -5,6 +5,11 @@
  */
 import type { ExtensionInfo, ExtensionManifest, ExtensionModule } from './types'
 import type { DebugExtensionEntry, ExtensionMeta } from '../../../shared/types'
+import {
+  parseActivationEvent,
+  type ActivationReason,
+  type HostedExtensionInfo
+} from '../../../shared/extensionHostProtocol'
 import { validateManifest } from './manifest'
 import type { ExtensionEntry } from './host'
 
@@ -112,6 +117,8 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
       id: entry.id,
       manifest,
       source: 'user',
+      // 宿主据此 `require`/`import` 入口（EH-A4 的清单交接要用它；只读展示路径不用）
+      path: entry.path,
       installedTimestamp: meta.installedTimestamp,
       pendingInstall: meta.pendingInstall,
       previousInstallVersion: meta.install?.version,
@@ -145,7 +152,8 @@ async function fetchExtensionMeta(id: string): Promise<ExtensionMeta> {
  */
 export async function buildUserExtensionEntry(id: string): Promise<ExtensionEntry | null> {
   const entries = await window.api.listUserExtensions()
-  if (!entries.some((e) => e.id === id)) return null
+  const listed = entries.find((e) => e.id === id)
+  if (!listed) return null
   const manifest = await fetchUserManifest(id)
   if (!manifest) return null
   if (validateManifest(manifest).some((v) => v.severity === 'error')) return null
@@ -154,12 +162,92 @@ export async function buildUserExtensionEntry(id: string): Promise<ExtensionEntr
     id,
     manifest,
     source: 'user',
+    // 同上：宿主加载入口需要绝对路径
+    path: listed.path,
     installedTimestamp: meta.installedTimestamp,
     pendingInstall: meta.pendingInstall,
     previousInstallVersion: meta.install?.version,
     load: () =>
       import(/* @vite-ignore */ `app://extensions/${encodeURIComponent(id)}/${manifest.main}`)
   }
+}
+
+/* -------------------------------------------------------------------------------------------- */
+/* 清单交接（EH-A4）：用户扩展 → 扩展宿主进程                                                     */
+/* -------------------------------------------------------------------------------------------- */
+
+/**
+ * 清单里缺失 `apiVersion` 时上报的版本。
+ *
+ * 协议要求 `apiVersion` 是 ≥1 的整数，而旧清单完全可能没有这个字段（`src/api/manifest.ts`：
+ * "缺失视为 0（兼容所有）"）。上报 **1** 而不是宿主当前的 3：宿主据此判定"该扩展不挑版本"，
+ * 报了 3 会让宿主以为它需要 v3 能力面。
+ */
+export const FALLBACK_HOSTED_API_VERSION = 1
+
+/**
+ * 清单里的激活事件字符串 → 宿主要的结构化 `ActivationReason[]`。
+ *
+ * `activationEvents` 目前还没进清单类型（EH-C1 会补校验），所以这里按**未知字段**防御读取：
+ * - 缺失 / 空数组 ⇒ `['*']`（今天的默认行为：立即激活）；
+ * - 认不出的字符串只告警并丢弃（C1 会把它升级成清单错误）；
+ * - 全部认不出 ⇒ 退回 `['*']`——宁可照旧立即激活，也不要因为清单写错让扩展永不激活。
+ */
+function hostedActivationEvents(manifest: ExtensionManifest): ActivationReason[] {
+  const raw = (manifest as ExtensionManifest & { activationEvents?: unknown }).activationEvents
+  if (!Array.isArray(raw) || raw.length === 0) return ['*']
+  const reasons: ActivationReason[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') {
+      console.warn(`[loader] 激活事件必须是字符串，忽略 ${JSON.stringify(item)}`)
+      continue
+    }
+    const parsed = parseActivationEvent(item)
+    if (!parsed) {
+      console.warn(
+        `[loader] 不支持的激活事件 ${JSON.stringify(item)}（只认 * / onStartupFinished / onCommand:<id> / onView:<id>），已忽略`
+      )
+      continue
+    }
+    reasons.push(parsed)
+  }
+  return reasons.length > 0 ? reasons : ['*']
+}
+
+/** 清单声明的 apiVersion（缺失/非法回落 `FALLBACK_HOSTED_API_VERSION`） */
+function hostedApiVersion(manifest: ExtensionManifest): number {
+  const declared = manifest.apiVersion
+  if (typeof declared === 'number' && Number.isInteger(declared) && declared >= 1) return declared
+  return FALLBACK_HOSTED_API_VERSION
+}
+
+/**
+ * 把用户扩展条目映射成宿主需要的清单摘要（`HostedExtensionInfo[]`，EH-A4 的交接载荷）。
+ *
+ * **纯映射，不读磁盘**：manifest 已在 `collectUserExtensions()` 里读好，`path` 由主进程的
+ * `extensions:list-user` 给出（绝对路径）。内置扩展与调试扩展**不进这份清单**：
+ * - 内置扩展继续在渲染进程执行（迁移计划的非目标：不改内置扩展构建方式）；
+ * - 调试扩展是本地 dev 路径（`--debug-extension`），留给实机验证卡再定。
+ */
+export function collectHostedExtensions(entries: ExtensionEntry[]): HostedExtensionInfo[] {
+  const hosted: HostedExtensionInfo[] = []
+  for (const entry of entries) {
+    if (entry.source !== 'user') continue
+    if (!entry.path) {
+      console.warn(`[loader] 用户扩展 ${entry.id} 没有目录路径（主进程清单缺 path），跳过清单交接`)
+      continue
+    }
+    const version = entry.manifest.version
+    hosted.push({
+      id: entry.id,
+      // 空/非字符串版本号会被信封校验拒掉（badText），这里先兜住
+      version: typeof version === 'string' && version.trim() !== '' ? version : '0.0.0',
+      path: entry.path,
+      activationEvents: hostedActivationEvents(entry.manifest),
+      apiVersion: hostedApiVersion(entry.manifest)
+    })
+  }
+  return hosted
 }
 
 /** 供扩展管理器使用的完整信息（含用户扩展的安装时间等由宿主管理） */

@@ -279,8 +279,15 @@ export interface RendererPortPayload {
 
 /** 启动器句柄 */
 export interface ExtensionHostStarter {
-  /** 启动（幂等）：已就绪直接回 ok；崩溃后手动调用 = 重置 5 分钟预算再试一次 */
-  start(): Promise<ExtensionHostStartResult>
+  /**
+   * 启动（幂等）：已就绪直接回 ok；崩溃后手动调用 = 重置 5 分钟预算再试一次。
+   *
+   * @param extensions 要交给宿主的扩展清单摘要（EH-A4）。**可选**：清单只在"渲染侧请求启动"
+   *   时才到手（`eh:start`），所以这里允许覆盖构造期给的清单；不传则沿用构造期的
+   *   （A2 的单测与"空清单"场景都走这个分支）。本参数只影响 `init.extensions` 这一处，
+   *   握手/崩溃计数/判活逻辑完全不变。
+   */
+  start(extensions?: HostedExtensionInfo[]): Promise<ExtensionHostStartResult>
   /** 主动停止（幂等）：先发 `terminate` + `kill()`，宽限 `TERMINATE_GRACE_MS` 后强杀 */
   stop(): Promise<void>
   /** 应用退出清理（幂等）：解绑窗口/注销 IPC/清定时器 + `stop()` */
@@ -343,7 +350,12 @@ class ExtensionHostStarterImpl implements ExtensionHostStarter {
   private readonly args: string[]
   private readonly apiVersion: number
   private readonly dataDir: string
-  private readonly extensions: HostedExtensionInfo[]
+  /**
+   * 要交给宿主的清单摘要（随 `init` 发出去）。**非 readonly**：EH-A4 起清单由渲染侧的
+   * `eh:start` 请求带来（main 构造启动器时还不知道用户装了哪些扩展），`start(extensions)`
+   * 会覆盖它；除此之外没有任何地方改这个字段。
+   */
+  private extensions: HostedExtensionInfo[]
   private readonly extraEnv: Record<string, string | undefined>
   private readonly deps: ExtensionHostStarterDeps
 
@@ -392,7 +404,10 @@ class ExtensionHostStarterImpl implements ExtensionHostStarter {
 
   /* ------------------------------ 对外：启动 / 停止 ------------------------------ */
 
-  async start(): Promise<ExtensionHostStartResult> {
+  async start(extensions?: HostedExtensionInfo[]): Promise<ExtensionHostStartResult> {
+    // EH-A4：清单由"渲染侧请求启动"带来。只覆盖入参，**不动**握手的任何一步——
+    // init 信封仍在 `onReady` 里按 this.extensions 组装。
+    if (extensions !== undefined) this.extensions = extensions
     if (this.disposed) {
       return {
         ok: false,

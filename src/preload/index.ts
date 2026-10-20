@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { MainApi, MainEvents, WindowAction } from '../shared/types'
+import type {
+  ExtensionHostBridgeSurface,
+  ExtensionHostPortArrival,
+  ExtensionHostPortBridge,
+  ExtensionHostPortStatus,
+  ExtensionHostStartOutcome,
+  ExtensionHostStatusSnapshot,
+  MainApi,
+  MainEvents,
+  WindowAction
+} from '../shared/types'
+import type { HostedExtensionInfo } from '../shared/extensionHostProtocol'
 
 // 渲染进程可调用的能力桥（经 contextBridge 暴露为 window.api）
 const api: MainApi = {
@@ -122,7 +133,14 @@ const api: MainApi = {
   recordInstallHook: (extId, version, ok) =>
     ipcRenderer.invoke('extension:record-install-hook', extId, version, ok),
   // 扩展自带的 Python 运行时（issue #51）：跑脚本（可选注册成 api.ipc 通道）
-  pythonRun: (extId, input) => ipcRenderer.invoke('python:run', extId, input)
+  pythonRun: (extId, input) => ipcRenderer.invoke('python:run', extId, input),
+  // ---- 扩展宿主进程（ADR-0026 / EH-A4）：开关打开时由渲染侧请求 main 启动宿主 ----
+  // 默认（开关关闭）这些方法一次都不会被调用：用户扩展继续在渲染进程执行。
+  ehStart: (extensions: HostedExtensionInfo[]): Promise<ExtensionHostStartOutcome> =>
+    ipcRenderer.invoke('eh:start', extensions),
+  ehGetPort: (): Promise<ExtensionHostPortStatus> => ipcRenderer.invoke('eh:get-port'),
+  ehGetStatus: (): Promise<ExtensionHostStatusSnapshot> => ipcRenderer.invoke('eh:get-status'),
+  ehStop: (): Promise<void> => ipcRenderer.invoke('eh:stop')
 }
 
 // 主进程 → 渲染进程事件订阅
@@ -136,12 +154,179 @@ const events: { on<K extends keyof MainEvents>(channel: K, listener: MainEvents[
     }
   }
 
+/* -------------------------------------------------------------------------------------------- */
+/* 扩展宿主渲染侧桥的暴露面（ADR-0026 / EH-A4）                                                  */
+/* -------------------------------------------------------------------------------------------- */
+
+/**
+ * 端口接收（A2 交付端的对侧）：main 在 fork 之后用
+ * `webContents.postMessage('eh:port', payload, [port2])` 把 MessagePort 交给本窗口。
+ *
+ * 时机链（写在这里，方便排查"端口到底到没到"）：
+ * 1. 渲染侧请求 `ehStart(清单)` → main `starter.start(清单)`；
+ * 2. main `launch()`：`MessageChannelMain` 建一对端口 → fork 宿主 → **立刻**尝试投递 port2；
+ * 3. 宿主回 `ready` → main 把 port1 随 `init` 一并 transfer 给宿主（信封字段里放不下端口）；
+ * 4. 宿主回 `initialized` → `phase = 'ready'`，链路正式可用。
+ *
+ * `port.start()` 必须在 `onmessage` 之前/同时调用：`MessagePort` 在 `start()` 之前不派发消息
+ * （宿主可能在 `ready` 之后就往端口里写过东西，那段是排队的，`start()` 后补发）。
+ *
+ * 为什么渲染世界拿到的是**端口代理**而不是 `MessagePort` 本身：`contextBridge` 不支持传
+ * transferable（`MessagePort` 过不了隔离世界），而端口又不能经 `ipcMain.handle` 返回（A2 已确认：
+ * `ipcMain.handle` 的返回值走结构化克隆，端口只认 `postMessage(channel, payload, [port])`）。
+ * 因此真端口留在 preload，渲染世界只拿到 `post` / `onMessage` / 窄端口对象（`postMessage` / `close`）。
+ */
+const ehPortState: { port: MessagePort | null; arrival: ExtensionHostPortArrival | null } = {
+  port: null,
+  arrival: null
+}
+
+const ehPortListeners = new Set<
+  (arrival: ExtensionHostPortArrival, port: ExtensionHostPortBridge) => void
+>()
+const ehMessageListeners = new Set<(raw: unknown) => void>()
+const ehStatusListeners = new Set<(status: ExtensionHostStatusSnapshot) => void>()
+
+/** `eh:port` 的载荷是 A2 的 `RendererPortPayload`；这里只挑需要的字段，坏形状兜成 null */
+function readPortArrival(raw: unknown): ExtensionHostPortArrival {
+  const record = (typeof raw === 'object' && raw !== null ? raw : {}) as {
+    v?: unknown
+    hostId?: unknown
+    pid?: unknown
+  }
+  const arrival: ExtensionHostPortArrival = {
+    hostId: typeof record.hostId === 'string' ? record.hostId : null,
+    pid: typeof record.pid === 'number' ? record.pid : null
+  }
+  if (typeof record.v === 'number') arrival.v = record.v
+  return arrival
+}
+
+/** 端口代理：跨 contextBridge 传的是这两个函数，不是 MessagePort */
+function ehPortProxy(port: MessagePort): ExtensionHostPortBridge {
+  return {
+    postMessage: (envelope: unknown): void => {
+      port.postMessage(envelope)
+    },
+    close: (): void => {
+      try {
+        port.close()
+      } catch {
+        // 端口已经关闭：close 是尽力而为
+      }
+      if (ehPortState.port === port) {
+        ehPortState.port = null
+        ehPortState.arrival = null
+      }
+    }
+  }
+}
+
+/** 把到达事件派给订阅者（单个订阅者抛错不得打断其它订阅者） */
+function notifyPortArrival(arrival: ExtensionHostPortArrival, port: MessagePort): void {
+  for (const listener of [...ehPortListeners]) {
+    try {
+      listener(arrival, ehPortProxy(port))
+    } catch (error) {
+      console.error('[eh] 端口订阅者抛错', error)
+    }
+  }
+}
+
+ipcRenderer.on('eh:port', (event, payload: unknown) => {
+  const port = event.ports?.[0]
+  if (!port) {
+    console.warn('[eh] eh:port 没有携带端口，已忽略（端口只能经 transfer 列表交付）')
+    return
+  }
+  // ★ 端口开始派发消息（之前宿主写进来的消息在这之后补发）
+  port.start()
+  ehPortState.port = port
+  ehPortState.arrival = readPortArrival(payload)
+  port.onmessage = (message: MessageEvent): void => {
+    for (const listener of [...ehMessageListeners]) {
+      try {
+        listener(message.data)
+      } catch (error) {
+        console.error('[eh] 消息订阅者抛错', error)
+      }
+    }
+  }
+  notifyPortArrival(ehPortState.arrival, port)
+})
+
+// 宿主状态（phase / 崩溃原因）：主进程每次迁移推一次；渲染侧桥再分发给订阅者
+ipcRenderer.on('eh:status', (_event, status: unknown) => {
+  if (typeof status !== 'object' || status === null) return
+  const snapshot = status as ExtensionHostStatusSnapshot
+  for (const listener of [...ehStatusListeners]) {
+    try {
+      listener(snapshot)
+    } catch (error) {
+      console.error('[eh] 状态订阅者抛错', error)
+    }
+  }
+})
+
+/**
+ * `window.eh`：扩展宿主桥的暴露面。**只做搬运**——开关判定、信封校验、请求配对、超时、
+ * 状态解释都在 `renderer/src/core/extensionHostBridge.ts`（那边能在单测里被假端口直接驱动）。
+ */
+const eh: ExtensionHostBridgeSurface = {
+  extensionHostFlag: process.env.OBOX_EXTENSION_HOST ?? null,
+  hasPort: (): boolean => ehPortState.port !== null,
+  onPort: (listener) => {
+    ehPortListeners.add(listener)
+    const port = ehPortState.port
+    const arrival = ehPortState.arrival
+    if (port && arrival) {
+      // 页面加载晚于端口投递（窗口创建即投递、渲染进程脚本后跑）：补发一次，别让订阅者永远等
+      queueMicrotask(() => {
+        if (!ehPortListeners.has(listener)) return
+        try {
+          listener(arrival, ehPortProxy(port))
+        } catch (error) {
+          console.error('[eh] 端口订阅者抛错', error)
+        }
+      })
+    }
+    return (): void => {
+      ehPortListeners.delete(listener)
+    }
+  },
+  onMessage: (listener) => {
+    ehMessageListeners.add(listener)
+    return (): void => {
+      ehMessageListeners.delete(listener)
+    }
+  },
+  post: (envelope: unknown): boolean => {
+    const port = ehPortState.port
+    // 端口未到就返回 false（不抛错）：中文可执行错误由渲染侧桥给，preload 不做文案
+    if (!port) return false
+    try {
+      port.postMessage(envelope)
+      return true
+    } catch (error) {
+      console.warn('[eh] 向扩展宿主发送失败', error)
+      return false
+    }
+  },
+  onStatus: (listener) => {
+    ehStatusListeners.add(listener)
+    return (): void => {
+      ehStatusListeners.delete(listener)
+    }
+  }
+}
+
 // Custom APIs for renderer
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('events', events)
+    contextBridge.exposeInMainWorld('eh', eh)
   } catch (error) {
     console.error(error)
   }
@@ -152,4 +337,6 @@ if (process.contextIsolated) {
   window.api = api
   // @ts-ignore (define in dts)
   window.events = events
+  // @ts-ignore (define in dts)
+  window.eh = eh
 }

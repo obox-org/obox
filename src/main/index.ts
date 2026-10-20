@@ -37,13 +37,52 @@ import { registerSecretsIpc } from './secrets'
 import { registerUiIpc } from './ui'
 import { registerIpcBridge } from './ipc'
 import { registerPythonIpc } from './python'
-import { createExtensionHostStarter, type ExtensionHostStarter } from './extensionHostStarter'
+import {
+  DEFAULT_HOST_API_VERSION,
+  createExtensionHostStarter,
+  type ExtensionHostStarter
+} from './extensionHostStarter'
+import {
+  createInitEnvelope,
+  validateEnvelope,
+  type HostedExtensionInfo
+} from '../shared/extensionHostProtocol'
+import type { ExtensionHostStartOutcome, ExtensionHostStatusSnapshot } from '../shared/types'
 
 /**
- * 扩展宿主进程启动器（ADR-0026 / EH-A2）。本卡**只注册**、不启动：`start()` 需要扩展清单，
- * 那是 EH-A4 的事。放在模块级是因为退出清理（`before-quit`）在 `whenReady` 之外。
+ * 扩展宿主进程启动器（ADR-0026 / EH-A2）。**只注册、不启动**：`start()` 必须由渲染侧经
+ * `eh:start` 主动请求（EH-A4 的交接），默认配置下永远不触发。
+ * 放在模块级是因为退出清理（`before-quit`）在 `whenReady` 之外。
  */
 let extensionHost: ExtensionHostStarter | null = null
+
+/* -------------------------------------------------------------------------------------------- */
+/* 扩展宿主 IPC（EH-A4）：名字与 preload 的 invoke 一一对应                                       */
+/* -------------------------------------------------------------------------------------------- */
+
+/** 渲染侧请求启动宿主（载荷 = `HostedExtensionInfo[]`） */
+export const EH_START_IPC = 'eh:start'
+
+/** 渲染侧主动停止宿主（幂等） */
+export const EH_STOP_IPC = 'eh:stop'
+
+/** 读状态快照（含崩溃原因）；端口状态另有 A2 的 `eh:get-port` */
+export const EH_STATUS_IPC = 'eh:get-status'
+
+/** 状态迁移的广播 channel（渲染侧 `window.eh.onStatus` 与 `window.events` 都听它） */
+export const EH_STATUS_CHANNEL = 'eh:status'
+
+/** 把宿主状态迁移广播给所有窗口（单个窗口抛错不得打断其它窗口） */
+function broadcastExtensionHostStatus(status: ExtensionHostStatusSnapshot): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    try {
+      win.webContents.send(EH_STATUS_CHANNEL, status)
+    } catch {
+      // 窗口正在销毁：这次状态没人收，等下一次迁移
+    }
+  }
+}
 
 /**
  * 确保主窗口存在并可见（启动、托盘"打开/设置"、第二实例唤前台与 macOS activate 共用）。
@@ -163,13 +202,61 @@ app.whenReady().then(() => {
 
   // 扩展宿主进程（ADR-0026 / EH-A2）的**注册接线**：通道 IPC（eh:get-port）+ 与主窗口同生共死
   // （closed ⇒ terminate/kill，宽限后强杀）。本卡不启动宿主，现有行为不变。
-  const host = createExtensionHostStarter({
+  const starter = createExtensionHostStarter({
     entryPoint: join(__dirname, 'extension-host.js'),
     dataDir: app.getPath('userData')
   })
-  host.registerIpc()
-  host.bindWindow(mainWindow)
-  extensionHost = host
+  starter.registerIpc()
+  starter.bindWindow(mainWindow)
+  extensionHost = starter
+
+  // ---- EH-A4：渲染侧请求式启动（回退开关的"开"这一半；"关"这一半在渲染侧，这里一次都不触发） ----
+  // 为什么不在 whenReady 里无条件 start()：宿主能力目前多数是桩（会抛 EH_INTERNAL），默认必须让
+  // 用户扩展继续在渲染进程执行。于是 main 只提供入口，**触发权在渲染侧的 `ehStart`**。
+  ipcMain.handle(
+    EH_START_IPC,
+    async (_event, rawExtensions: unknown): Promise<ExtensionHostStartOutcome> => {
+      if (!Array.isArray(rawExtensions)) {
+        return {
+          ok: false,
+          code: 'EH_INTERNAL',
+          message: 'eh:start 的载荷必须是用户扩展清单数组（HostedExtensionInfo[]）'
+        }
+      }
+      const extensions = rawExtensions as HostedExtensionInfo[]
+      // 形状兜底：借用协议自己的 init 信封校验（渲染侧已经校验过一遍，main 不信单侧）
+      const probe = validateEnvelope(
+        createInitEnvelope({
+          apiVersion: DEFAULT_HOST_API_VERSION,
+          dataDir: app.getPath('userData'),
+          extensions
+        })
+      )
+      if (!probe.ok) {
+        return {
+          ok: false,
+          code: probe.code,
+          message: '扩展清单形状不合法，已拒绝启动扩展宿主',
+          detail: probe.why
+        }
+      }
+      if (probe.env.t !== 'init') {
+        // 不可能发生（上面构造的就是 init），写出来只是为了让类型收窄成 InitEnvelope
+        return {
+          ok: false,
+          code: 'EH_INTERNAL',
+          message: '扩展清单校验没有产出 init 信封（内部实现错误）'
+        }
+      }
+      return await starter.start(probe.env.extensions)
+    }
+  )
+  ipcMain.handle(EH_STOP_IPC, async (): Promise<void> => {
+    await starter.stop()
+  })
+  ipcMain.handle(EH_STATUS_IPC, (): ExtensionHostStatusSnapshot => starter.getStatus())
+  // 状态迁移（idle → starting → ready → …）推给窗口：A5 / 扩展管理器据此展示 phase 与崩溃原因
+  starter.onStatus(broadcastExtensionHostStatus)
 
   // 系统托盘（仅 Windows）：右键 打开/设置/关于/退出，双击打开（ADR-0019 决策 3/4）
   const SETTINGS_NAV_ID = 'settings.main' // 内置 settings 扩展声明的导航项 id

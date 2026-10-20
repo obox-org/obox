@@ -19,6 +19,12 @@ import type {
 import { registry } from './registry'
 import { deferredHookResult, executeExtensionHook, hookFailureForActivation } from './hookRuntime'
 import { resolveIpcChannelDeclaration } from '../../../shared/ipcDeclaration'
+import {
+  connectExtensionHostBridge,
+  handOverToExtensionHost,
+  readExtensionHostFlag
+} from './extensionHostBridge'
+import { collectHostedExtensions } from './loader'
 import { contributesArray, makeExtensionInfo, topoSort } from './manifest'
 import { stateStore } from './state'
 import { appStore } from './appStore'
@@ -55,6 +61,12 @@ export interface ExtensionEntry {
   load: () => Promise<ExtensionModule>
   /** 来源：内置（随应用打包，只读）/ 用户（userData，可卸载）/ 调试（--debug-extension，不安装） */
   source: 'builtin' | 'user' | 'debug'
+  /**
+   * 扩展根目录的**绝对路径**（用户扩展由主进程 `extensions:list-user` 给出）。
+   * 只有 EH-A4 的清单交接用得到它：宿主按这个路径 `require`/`import` 扩展入口；
+   * 渲染进程自己经 `app://` 加载，不读这个字段。
+   */
+  path?: string
   /** 安装时间戳（用户扩展；.obox-meta.json 提供） */
   installedTimestamp?: number
   /** 待补跑的 install 钩子（安装时渲染进程不可用，下次启动补跑；见 issue #52） */
@@ -120,6 +132,15 @@ class ExtensionHost {
    * 见 main/appWindow.ts createOverlayWindow 的重复 id 拒绝）。
    */
   private overlayOwners = new Map<string, string>()
+
+  /**
+   * 扩展宿主模式（EH-A4 的回退开关，默认 `false`）。
+   *
+   * 只由 `start()` 按 `OBOX_EXTENSION_HOST` 决定一次：为 true 时**用户扩展的 `activateExtension`
+   * 交给宿主进程**（渲染侧只注册贡献点），`loadUserExtension`（热安装）也要跳过激活，
+   * 否则同一个扩展会在两个进程里各跑一遍。开关关闭时这个字段恒为 false，所有既有分支不变。
+   */
+  private extensionHostMode = false
 
   /** 宿主就绪：贡献点已注册完毕，UI 可查询 */
   readonly ready: Promise<void>
@@ -943,6 +964,35 @@ class ExtensionHost {
 
     for (const ext of all) this.extensions.set(ext.id, ext)
 
+    // ---- 扩展宿主交接（EH-A4）----
+    // 回退开关 `OBOX_EXTENSION_HOST`：**关（默认）⇒ 什么都不做**（一个 IPC 都不发，用户扩展照旧
+    // 在本进程激活）；开 ⇒ 把用户扩展清单交给 main，由它 start() 宿主，渲染侧跳过这些扩展的激活
+    // （贡献点仍在阶段一注册，导航/状态栏/命令照旧可用）。
+    // 子窗口（activateExtensions === false）一律传 null：扩展宿主只服务主窗口；子窗口也起宿主会把
+    // 同一批扩展再跑一遍（子窗口本来就只注册贡献点）。
+    const handover = handOverToExtensionHost({
+      flag: options.activateExtensions === false ? null : readExtensionHostFlag(),
+      extensions: collectHostedExtensions(
+        entries.filter((entry) => {
+          const info = this.extensions.get(entry.id)
+          return entry.source === 'user' && info !== undefined && info.enabled && info.isValid
+        })
+      )
+    })
+    this.extensionHostMode = handover.enabled
+    const hostedIds: ReadonlySet<string> | null = handover.enabled
+      ? new Set(handover.extensions.map((ext) => ext.id))
+      : null
+    if (handover.enabled) {
+      // 端口会在 start() 之后才到（main 先 fork、再 transfer）：桥自己处理"未到达"期间的状态，
+      // 这里只把它接起来（A5 / 扩展管理器用 getExtensionHostBridge() 订阅 phase 与崩溃原因）
+      connectExtensionHostBridge()
+      console.log(
+        `[host] 扩展宿主模式：${handover.extensions.length} 个用户扩展交给宿主进程，` +
+          '渲染侧只注册贡献点、不激活'
+      )
+    }
+
     // 清理孤儿 App 卡片：持久化里属于"已不存在的扩展"的卡片（如已卸载扩展的残留）
     const liveIds = new Set(all.map((e) => e.id))
     const orphans = appStore.items.filter((i) => !liveIds.has(i.extensionId))
@@ -1008,7 +1058,16 @@ class ExtensionHost {
 
     // ---- 4. 阶段二：依赖拓扑序激活（子窗口模式跳过，见 HostOptions.activateExtensions） ----
     const topo = topoSort(all.filter((e) => e.enabled && e.isValid))
-    const ordered = options.activateExtensions === false ? [] : topo.ordered
+    // 宿主模式：这些扩展已交给宿主进程激活，渲染侧**跳过**（否则两个进程各跑一遍）
+    const renderable = hostedIds
+      ? topo.ordered.filter((ext) => !hostedIds.has(ext.id))
+      : topo.ordered
+    if (hostedIds && renderable.length !== topo.ordered.length) {
+      console.log(
+        `[host] 宿主模式：跳过 ${topo.ordered.length - renderable.length} 个用户扩展的渲染侧激活`
+      )
+    }
+    const ordered = options.activateExtensions === false ? [] : renderable
     const cyclic = topo.cyclic
     if (options.activateExtensions === false) {
       console.log('[host] 子窗口模式：仅注册贡献点，不激活扩展')
@@ -1074,6 +1133,14 @@ class ExtensionHost {
     }
 
     // 激活（先按 extensionDependencies 顺序激活依赖，与冷启动阶段二的拓扑序语义一致）
+    if (this.extensionHostMode) {
+      // 宿主模式（EH-A4）：热安装只注册贡献点，**不**在本进程激活——否则该扩展会在渲染进程与
+      // 宿主里各跑一遍。把新清单热推给宿主属于 A5（扩展管理器的热装卸），这里要求重启。
+      console.warn(
+        `[host] 宿主模式：${id} 的贡献点已注册，但激活交给扩展宿主；请重启应用让它生效（热交接属于 A5）`
+      )
+      return info
+    }
     try {
       const module = await entry.load()
       await this.activateInDependencyOrder(info, module)
