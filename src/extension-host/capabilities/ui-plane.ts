@@ -127,6 +127,8 @@ import {
   checkFrameSize,
   checkSerializable,
   createEventEnvelope,
+  validateActivationReason,
+  type ActivationReason,
   type CancelEnvelope,
   type Envelope,
   type ErrorEnvelope,
@@ -167,6 +169,15 @@ export const UI_PLANE_RPC = {
   treeChildren: 'ui.treeChildren',
   /** 派发 App 子窗口消息（渲染侧消息桥寻址到某个宿主扩展后问回宿主） */
   appMessage: 'ui.appMessage',
+  /**
+   * **激活**（EH-C2，渲染侧 → 宿主）：渲染侧在执行命令 / 打开视图时发现目标属于宿主扩展且尚未
+   * 激活，就发这条请宿主按事件（`onCommand:<id>` / `onView:<id>`）激活，等它回来再继续。
+   *
+   * 名称刻意与 main 侧 `host.activate` RPC **同名**：两者语义完全一致（`Activator.activate()`），
+   * 区别只在端口 —— main 走 `parentPort`，渲染侧走 `host-renderer`。不同端口上各有一个
+   * `RpcServer`，同名不冲突；同名让"激活一个扩展"在全链路上只有一个名字可搜。
+   */
+  activate: 'host.activate',
   /**
    * `ui.withProgress` 的**取消**（EH-B3b-2，渲染侧 → 宿主）。
    *
@@ -539,6 +550,34 @@ export interface UiPlaneHubOptions {
   modalTimeoutMs?: number
 }
 
+/**
+ * 一次激活尝试的结果（EH-C2）。**结构上与 `../activator` 的 `ActivationResult` 逐字一致**，
+ * 这里重写一份而不是 `import type`：它是跨进程回包的载荷形状（协议面），且 `activator` 的类型面
+ * 会牵回 `apiFactory`（→ 本文件）绕成类型环。改字段要两边一起改（`test/extension-host-activation-triggers`
+ * 有端到端用例守着）。
+ */
+export interface ActivationHandlerResult {
+  extId: string
+  /** 触发原因（字符串形式；`onCommand:x` / `onView:y` / `*` / `onStartupFinished`） */
+  reason: string
+  /** `activated` 本次真的激活；`failed` 失败（看 `failure`）；`skipped` 已激活/不该激活 */
+  state: 'activated' | 'failed' | 'skipped'
+  /** 失败归类（`state === 'failed'` 时必有） */
+  failure?: { kind: string; message: string }
+}
+
+/**
+ * 宿主的激活入口（EH-C2）：`runtime.ts` 在 `init` 时把它挂到共享 hub 上，渲染侧的
+ * `host.activate` RPC 直接落到这里（= `Activator.activate()`，并发去重与状态表都在那边）。
+ *
+ * 谁挂：`ExtensionHostRuntime.handleInit()`（那时才建好 `Activator`）。
+ * 没挂（单测直连 hub / init 之前）：`host.activate` 回 `EH_INTERNAL` + 中文错误，不静默。
+ */
+export type ActivationHandler = (
+  extId: string,
+  reason: ActivationReason
+) => Promise<ActivationHandlerResult>
+
 /** `hub.forExtension()` 的参数 */
 export interface UiPlaneExtensionOptions {
   /** 扩展 id（所有数据按它隔离） */
@@ -609,6 +648,14 @@ export interface UiPlaneHub {
   commandCount(): number
   /** 处理一条来自渲染侧的原始信封（`event` 快照推送 / `req` 反向调用） */
   handleRendererMessage(raw: unknown): void
+  /**
+   * 挂上/摘掉宿主的激活入口（EH-C2；`null` = 没人能激活 ⇒ `host.activate` 回 `EH_INTERNAL`）。
+   *
+   * 为什么是"可换"而不是构造参数：hub 是**进程级单例**（命令表/事件总线/设置缓存都必须是同一份），
+   * 而 `Activator` 是每次 `init` 新建的。用构造参数的话，第二个 runtime（单测里很常见）会把
+   * 第一个 runtime 的激活器锁死在单例里；换成 setter 后"最后一次 init 说了算"，与真实语义一致。
+   */
+  setActivateHandler(handler: ActivationHandler | null): void
   /** 为某个扩展构造能力 */
   forExtension(options: UiPlaneExtensionOptions): UiPlaneExtension
   /** 关掉 hub（宿主退出时；幂等） */
@@ -655,6 +702,11 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
   let rendererPort: HostRendererPortLike | null = null
   let sent = 0
   let disposed = false
+  /**
+   * 宿主侧的激活入口（EH-C2）：由 `runtime.ts` 在 `init` 时挂上（那时 `Activator` 才存在）。
+   * `null` ⇒ 渲染侧的 `host.activate` 回 `EH_INTERNAL` + 中文错误（不静默、不假装成功）。
+   */
+  let activateHandler: ActivationHandler | null = null
 
   const sendEnvelope: EnvelopeSink = (envelope: Envelope): void => {
     const port = rendererPort
@@ -806,6 +858,43 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     }
     const channel = typeof record.channel === 'string' ? record.channel : ''
     return await handler(channel, record.payload)
+  })
+
+  /**
+   * `host.activate`（EH-C2，渲染侧 → 宿主）：按事件激活一个扩展并**等它真的激活完**再回包。
+   *
+   * 为什么必须等（而不是像 `ui.*` 那样 fire-and-forget）：渲染侧的下一条动作（执行命令 / 打开
+   * 视图）依赖"扩展的 `plugin(api)` 已经跑过"——命令 handler、树 provider 都是那时注册的。
+   * 回包形状是 {@link ActivationHandlerResult}（`failed` 也是**成功的 RPC 回包**：让渲染侧拿到
+   * 失败归因去拼中文错误，而不是只看到一个通用错误码）。
+   */
+  rpc.register(UI_PLANE_RPC.activate, async (params: unknown): Promise<ActivationHandlerResult> => {
+    const handler = activateHandler
+    if (!handler) {
+      throw new EhProtocolError(
+        'EH_NOT_READY',
+        '扩展宿主还没有可用的激活入口（宿主尚未 init 或激活器未装配）：这次激活请求没有执行。',
+        '渲染侧的 host.activate 必须落在 init 之后；若宿主刚崩溃重启，请等它 initialized 再重试'
+      )
+    }
+    const record = asRecord(params)
+    const extId = typeof record.extId === 'string' ? record.extId.trim() : ''
+    if (extId === '') {
+      throw new EhProtocolError(
+        'EH_INTERNAL',
+        'host.activate 需要非空的 extId（要激活哪个扩展）。',
+        `收到的 params：${JSON.stringify(record)}`
+      )
+    }
+    const checked = validateActivationReason(record.reason)
+    if (!checked.ok) {
+      throw new EhProtocolError(
+        'EH_INTERNAL',
+        `host.activate 的 reason 不合法：${checked.why}`,
+        '合法值：* / onStartupFinished / {command} / {view}（见 ADR-0026 决策 6）'
+      )
+    }
+    return await handler(extId, checked.reason)
   })
 
   /** 执行命令：先查宿主的命令表（跨扩展），没有就照 v1 的文案报错 */
@@ -1805,6 +1894,9 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     sentCount: (): number => sent,
     commandCount: (): number => commands.size,
     handleRendererMessage,
+    setActivateHandler(handler: ActivationHandler | null): void {
+      activateHandler = handler
+    },
     forExtension,
     dispose(): void {
       if (disposed) return

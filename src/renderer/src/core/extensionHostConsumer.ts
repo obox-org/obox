@@ -63,12 +63,32 @@
  * 渲染侧每个 UI handler 进来先过 {@link HOSTED_UI_WINDOW_MISSING} 的判定（`hasWindow()`，
  * 缺省看 `window`/`document` 是否存在，单测可注入）。没有窗口 ⇒ 回 `EH_NOT_READY` + 中文错误，
  * 宿主侧当场抛，不会让扩展的 Promise 永远挂着。
+ *
+ * ---
+ *
+ * # EH-C2 · 激活触发（本卡追加）
+ *
+ * 本卡给消费者加**唯一一个新方法**：{@link ExtensionHostConsumer.ensureActivated | ensureActivated}。
+ * 它把"某扩展该激活了"从渲染侧送到宿主（`host.activate` RPC，走同一个 `host-renderer` 端口），
+ * 并等宿主真的跑完 `plugin(api)` 再回来。
+ *
+ * 三条设计约束（都对应用例）：
+ * 1. **合并**：同一扩展的并发 `ensureActivated` 只有**一条**在途请求（按 extId 的 Map），
+ *    已确认激活过则零请求（`Set` 缓存）；宿主仍然有一层 `Activator` 的并发去重（双保险）。
+ * 2. **超时**：{@link ACTIVATION_TIMEOUT_MS}（10 秒，不是桥的 3 秒）——激活要读盘 + 跑用户代码，
+ *    3 秒的假超时会让用户看到"随机失败"，超时本身仍要能报错。
+ * 3. **失败响亮**：`failed` 回包 / 传输错误一律抛 `EhProtocolError`（中文，含 extId + 触发原因 +
+ *    宿主给的失败归类），调用方据此**中止**动作，不会拿一个没有实现的命令继续跑。
+ *
+ * 回退开关：关闭时消费者是空壳（`enabled: false`），`ensureActivated` 返回 `skipped` 且**零请求**；
+ * 调用方（`core/host.ts`）先看 `enabled`，关闭态根本不会走宿主路径。
  */
 import {
   EH_EVENT_CHANNELS,
   EhProtocolError,
   createEventEnvelope,
   validateEnvelope,
+  type ActivationReason,
   type Envelope,
   type RequestEnvelope
 } from '../../../shared/extensionHostProtocol'
@@ -115,8 +135,27 @@ export const HOSTED_UI_RPC = {
   treeChildren: 'ui.treeChildren',
   appMessage: 'ui.appMessage',
   /** EH-B3b-2：取消宿主侧的 `ui.withProgress`（宿主把它结算成 `EH_CANCELLED`） */
-  progressCancel: 'ui.progressCancel'
+  progressCancel: 'ui.progressCancel',
+  /**
+   * EH-C2：**激活**（渲染侧 → 宿主，走 `host-renderer` 端口）。与宿主侧 `UI_PLANE_RPC.activate`
+   * 逐字一致，也与 main 侧 `host.activate` **同名**——"激活一个扩展"在全链路上只有一个名字。
+   * 方向仍是"渲染侧 → 宿主"，所以放在这张表里（`test/extension-host-ui-plane2` 的两侧一致性
+   * 断言因此自动覆盖它）。
+   */
+  activate: 'host.activate'
 } as const
+
+/**
+ * 激活请求的超时（毫秒，EH-C2）。
+ *
+ * 为什么不复用桥的 3 秒（`ACK_TIMEOUT_MS`）：3 秒是**普通 RPC 往返**的预算（ping / 取树子节点 /
+ * 执行一条已经就绪的命令）。激活要走 `import()` 读盘 + `plugin(api)` 跑用户代码，冷启动 + 杀毒
+ * 软件扫描 + 扩展自己做初始化时，3 秒非常容易假超时；而假超时的后果是"命令报超时，但扩展随后
+ * 真的激活了"，用户看到的是随机失败。10 秒在本机上是"慢，但确实还在干活"的量级。
+ *
+ * 也不给无限：这是命令执行/视图打开的前置等待，卡死必须能报错（`EH_TIMEOUT`，文案要求重启宿主）。
+ */
+export const ACTIVATION_TIMEOUT_MS = 10_000
 
 /**
  * **宿主 → 渲染侧**的 RPC method（本卡新增，方向相反）。与宿主侧 `UI_RENDERER_RPC` 逐字一致，
@@ -157,6 +196,36 @@ function asRecord(value: unknown): Record<string, unknown> {
     : ({} as Record<string, unknown>)
 }
 
+/** 未知错误 → 一行中文可读文本（日志与错误文案共用） */
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * 激活原因 → 用户在日志/错误文案里能对照清单的那一行（`onCommand:foo` / `onView:bar`）。
+ * 与宿主 `status.ts` 的 `describeActivationReason` 同一份写法，但本文件不 import 宿主代码
+ * （跨侧 import 会把 `node:*` 带进渲染包）。
+ */
+function formatActivationReason(reason: ActivationReason): string {
+  if (reason === '*') return '*（启动即激活）'
+  if (reason === 'onStartupFinished') return 'onStartupFinished（启动完成后激活）'
+  if ('command' in reason) return `onCommand:${reason.command}`
+  return `onView:${reason.view}`
+}
+
+/**
+ * 宿主 `host.activate` 的回包（结构上 = 宿主侧 `ActivationHandlerResult` / `ActivationResult`）。
+ *
+ * 字段全部按 `unknown` 收：这是**跨进程来的数据**，形状不可信；校验在 `performActivation` 里做，
+ * 不合法就报 `EH_INTERNAL`（协议不匹配），绝不按 `as` 硬转后当真。
+ */
+interface HostedActivationResult {
+  extId?: unknown
+  reason?: unknown
+  state?: unknown
+  failure?: { kind?: unknown; message?: unknown }
+}
+
 /* -------------------------------------------------------------------------------------------- */
 /* 依赖接口（可注入，单测用假实现）                                                                */
 /* -------------------------------------------------------------------------------------------- */
@@ -180,8 +249,17 @@ export interface HostedUiTransport {
   post(envelope: Envelope): boolean
   /** 订阅宿主发来的原始信封 */
   onEnvelope(listener: (raw: unknown) => void): () => void
-  /** 发 `req` 并等 `res`（复用既有桥：3 秒超时、错误码、可传输性守卫都在那边） */
-  request<T = unknown>(method: string, params?: unknown): Promise<T>
+  /**
+   * 发 `req` 并等 `res`（复用既有桥：3 秒超时、错误码、可传输性守卫都在那边）。
+   *
+   * `options.timeoutMs`（EH-C2 新增，可选）：激活请求要等用户代码真的跑完，比普通 RPC 慢得多，
+   * 见 {@link ACTIVATION_TIMEOUT_MS}。缺省仍是桥的 3 秒（既有四条 method 的行为零变化）。
+   */
+  request<T = unknown>(
+    method: string,
+    params?: unknown,
+    options?: { timeoutMs?: number }
+  ): Promise<T>
   /** 端口到达通知（可选：默认实现接 preload 的 `eh.onPort`；缺省时只在启动推一次快照） */
   onPort?(listener: () => void): () => void
   /**
@@ -235,8 +313,36 @@ export interface ExtensionHostConsumerOptions {
   hasWindow?(): boolean
 }
 
+/**
+ * 一次 `ensureActivated` 的结果（EH-C2）。
+ *
+ * 只有两种"成功"：`activated` = 这次真的把它激活了；`skipped` = 宿主说它已经激活过（或开关关闭
+ * 时的空壳）。**失败一律抛错**（`EhProtocolError`，中文可执行文案），因为调用方（执行命令 /
+ * 打开视图）必须知道"目标没就绪"，不能拿着一个没有实现的命令往下走。
+ */
+export interface HostedActivationOutcome {
+  extId: string
+  /** 触发原因（原样带回，便于日志与断言） */
+  reason: ActivationReason
+  /** `activated` 本次激活；`skipped` 已激活（或消费者是关闭态的空壳） */
+  state: 'activated' | 'skipped'
+}
+
+/**
+ * 渲染侧需要的"激活触发"窄接口（EH-C2）。
+ *
+ * `core/host.ts` 只依赖这两个成员（`enabled` + `ensureActivated`），不 import 消费者的整张面：
+ * 宿主侧（`core/host.ts`）是"谁该激活"的判定方，消费者是"怎么让宿主激活"的执行方，两边只在这一处
+ * 相交。单测因此可以注入一个三行的假件，而不必造 Electron / 端口。
+ */
+export interface HostedActivationPort {
+  /** 开关是否打开（关 ⇒ `ensureActivated` 是空操作，调用方也不必走宿主路径） */
+  readonly enabled: boolean
+  ensureActivated(extId: string, reason: ActivationReason): Promise<HostedActivationOutcome>
+}
+
 /** 消费者的观察面 */
-export interface ExtensionHostConsumer {
+export interface ExtensionHostConsumer extends HostedActivationPort {
   /** 开关是否打开（关 ⇒ 下面所有方法都是空操作） */
   readonly enabled: boolean
   /** 退订一切（幂等） */
@@ -348,8 +454,11 @@ export function createWindowUiTransport(): HostedUiTransport {
     post: (envelope: Envelope): boolean => surface()?.post(envelope) === true,
     onEnvelope: (listener: (raw: unknown) => void): (() => void) =>
       surface()?.onMessage(listener) ?? noop,
-    request: <T = unknown>(method: string, params?: unknown): Promise<T> =>
-      getExtensionHostBridge().request<T>(method, params),
+    request: <T = unknown>(
+      method: string,
+      params?: unknown,
+      options?: { timeoutMs?: number }
+    ): Promise<T> => getExtensionHostBridge().request<T>(method, params, options),
     onPort: (listener: () => void): (() => void) => surface()?.onPort(() => listener()) ?? noop,
     // 宿主发起的 `req` 默认会被 A4 的桥回 EH_INTERNAL（它没有这个方向）：把它接到桥的接管口上。
     // 端口不在时桥同样不碰它（消费者根本没起来），不会留半条链路。
@@ -394,6 +503,13 @@ function disabledConsumer(): ExtensionHostConsumer {
     pushSnapshot: (): void => undefined,
     handleEnvelope: (): void => undefined,
     cancelProgress: (): boolean => false,
+    // EH-C2：开关关闭 ⇒ 一个请求都不发（"默认行为零变化"）。回 `skipped` 而不是抛错：
+    // 调用方（`core/host.ts`）根本不该在关闭态走到这里（它先看 `enabled`），万一走到了，
+    // "没有宿主这回事"也比"虚拟的激活失败"更接近事实。
+    ensureActivated: async (
+      extId: string,
+      reason: ActivationReason
+    ): Promise<HostedActivationOutcome> => ({ extId, reason, state: 'skipped' }),
     stats: () => ({
       runtimeStatusBarItems: 0,
       commands: 0,
@@ -494,6 +610,120 @@ export function createExtensionHostConsumer(
     const delivered = transport.post(createEventEnvelope(EH_EVENT_CHANNELS.settings, payload))
     if (!delivered) {
       logger.debug('设置快照没有发出去（host-renderer 端口未到），等端口到达后再推')
+    }
+  }
+
+  /* -------------------------- 激活触发（EH-C2，渲染侧 → 宿主） -------------------------- */
+
+  /** 已确认激活过的扩展（执行命令是高频动作，不能每次都问宿主一遍） */
+  const activatedExtensions = new Set<string>()
+  /**
+   * 在途的激活请求（extId → 同一个 Promise）。
+   *
+   * 合并的理由：同一扩展可能被**几乎同时**从多条路径触发（命令面板连点、快捷键 + 状态栏点击、
+   * 切到视图的同时执行它的命令）。宿主侧 `Activator` 已经有并发去重（`activating` 表），但渲染侧
+   * 不去重的话会白白多打几条 `host.activate`、多占几条超时预算，日志也会看起来像"激活了三次"。
+   * 这里按 extId 合并，保证一次激活只有**一条**在途请求。
+   */
+  const activatingRequests = new Map<string, Promise<HostedActivationOutcome>>()
+
+  /** 真正发一次激活请求并按回包给出结论（失败抛中文错误） */
+  const performActivation = async (
+    extId: string,
+    reason: ActivationReason
+  ): Promise<HostedActivationOutcome> => {
+    const reasonText = formatActivationReason(reason)
+    logger.info(`请求宿主激活扩展 ${extId}（${reasonText}）`)
+
+    let result: HostedActivationResult
+    try {
+      result = await transport.request<HostedActivationResult>(
+        HOSTED_UI_RPC.activate,
+        { extId, reason },
+        { timeoutMs: ACTIVATION_TIMEOUT_MS }
+      )
+    } catch (error) {
+      // 传输层/超时的错误码保留（EH_TIMEOUT / EH_NOT_READY 各有可执行文案），但必须补上
+      // "是哪个扩展、因为什么触发"——否则用户只看到"请求超时"，不知道该找哪个扩展。
+      throw new EhProtocolError(
+        error instanceof EhProtocolError ? error.code : 'EH_ACTIVATION_FAILED',
+        `宿主扩展 ${extId} 的激活请求没有成功（触发：${reasonText}）：${describeError(error)}`
+      )
+    }
+
+    if (result?.state === 'activated' || result?.state === 'skipped') {
+      activatedExtensions.add(extId)
+      logger.debug(
+        result.state === 'activated'
+          ? `宿主扩展 ${extId} 已激活（${reasonText}）`
+          : `宿主扩展 ${extId} 之前已激活过（宿主回 skipped，${reasonText}）`
+      )
+      return { extId, reason, state: result.state }
+    }
+
+    if (result?.state === 'failed') {
+      const kind = typeof result.failure?.kind === 'string' ? result.failure.kind : 'unknown'
+      const message =
+        typeof result.failure?.message === 'string' && result.failure.message !== ''
+          ? result.failure.message
+          : '宿主没有给出失败原因'
+      logger.error(`宿主扩展 ${extId} 激活失败（${kind}）：${message}`)
+      throw new EhProtocolError(
+        'EH_ACTIVATION_FAILED',
+        `宿主扩展 ${extId} 激活失败（触发：${reasonText}）：${message}（归类：${kind}）。` +
+          '这个扩展还没有注册任何实现，动作已中止；请修好扩展入口的 activate() 后在扩展管理器里重启扩展宿主。'
+      )
+    }
+
+    throw new EhProtocolError(
+      'EH_INTERNAL',
+      `宿主对扩展 ${extId} 的激活回包形状不对（${JSON.stringify(result)}）：既不是 activated/skipped，也不是 failed。`,
+      '这属于协议不匹配（宿主版本与渲染侧不一致？）'
+    )
+  }
+
+  /**
+   * **确保某个宿主扩展已激活**（EH-C2 的核心）。
+   *
+   * 语义（三条，缺一不可）：
+   * 1. **幂等 + 合并**：已确认激活过 ⇒ 立刻回 `skipped`（零请求）；在途 ⇒ 复用同一个 Promise；
+   * 2. **失败必须响亮**：`EH_ACTIVATION_FAILED` + 中文（含 extId、触发原因、宿主给的失败归类），
+   *    调用方据此中止动作（绝不能拿着一个没有实现的命令往下跑）；
+   * 3. **超时**：走 {@link ACTIVATION_TIMEOUT_MS}（10 秒），超时抛 `EH_TIMEOUT` + 扩展 id。
+   *
+   * 开关关闭时消费者本身是空壳（`enabled: false`），`ensureActivated` 一个请求都不发。
+   */
+  const ensureActivated = async (
+    extId: string,
+    reason: ActivationReason
+  ): Promise<HostedActivationOutcome> => {
+    if (stopped) {
+      throw new EhProtocolError(
+        'EH_CANCELLED',
+        '渲染侧的扩展宿主消费者已停止，这次激活请求没有发出。请重新加载页面后再试。'
+      )
+    }
+    const id = typeof extId === 'string' ? extId.trim() : ''
+    if (id === '') {
+      throw new EhProtocolError(
+        'EH_INTERNAL',
+        '激活请求需要非空的扩展 id（要激活哪个扩展）。',
+        `收到的 extId=${JSON.stringify(extId)}`
+      )
+    }
+    // 已经激活过：零请求（这是"不要请求风暴"的第一道闸）
+    if (activatedExtensions.has(id)) return { extId: id, reason, state: 'skipped' }
+
+    const inflight = activatingRequests.get(id)
+    if (inflight) return await inflight
+
+    const task = performActivation(id, reason)
+    activatingRequests.set(id, task)
+    try {
+      return await task
+    } finally {
+      // 只清自己那条（并发再次进入时可能有新的一条）
+      if (activatingRequests.get(id) === task) activatingRequests.delete(id)
     }
   }
 
@@ -892,6 +1122,9 @@ export function createExtensionHostConsumer(
     }
     appStore.deactivateExtension(extId)
     extensionSettingsStore.deactivateExtension(extId)
+    // EH-C2：停用即"没激活过"（否则停用后再次触发会命中本地缓存、永远不发激活请求）
+    activatedExtensions.delete(extId)
+    activatingRequests.delete(extId)
   }
 
   /* --------------------------------- 入站分派 --------------------------------- */
@@ -1013,12 +1246,16 @@ export function createExtensionHostConsumer(
       }
       for (const extId of [...traces.keys()]) cleanupExtension(extId)
       runtimeStatusBarItems.clear()
+      // EH-C2：激活缓存/在途请求都清掉（消费者停了就不该再认为任何扩展"已激活"）
+      activatedExtensions.clear()
+      activatingRequests.clear()
       for (const entry of outputChannels.values()) entry.handle.dispose()
       outputChannels.clear()
       uiServer.dispose('渲染侧消费者已停止')
     },
     pushSnapshot,
     handleEnvelope,
+    ensureActivated,
     cancelProgress: (progressId?: string): boolean => {
       if (progressId !== undefined && activeProgress?.progressId !== progressId) return false
       return cancelProgressNow(progressId === undefined ? '界面取消' : `界面取消（${progressId}）`)
