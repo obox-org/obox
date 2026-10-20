@@ -2,6 +2,7 @@
  * 主进程 / preload / 渲染进程 共享的 IPC 契约类型。
  * 扩展 API 类型见 src/api/（面向扩展作者；src/renderer/src/core/types.ts 再导出兼容）。
  */
+import type { EhErrorCode, HostedExtensionInfo } from './extensionHostProtocol'
 
 /** 窗口控制动作 */
 export type WindowAction = 'minimize' | 'toggle-maximize' | 'close'
@@ -557,6 +558,139 @@ export interface MainApi {
   // ---- 扩展自带的 Python 运行时（issue #51 / ADR-0018）----
   /** 跑一个随扩展分发的脚本；**默认不超时**（交互式脚本会等用户关窗）。宿主故障才 ok:false */
   pythonRun(extId: string, input: PythonRunInput): Promise<PythonRunOutcome>
+  // ---- 扩展宿主进程（ADR-0026 / EH-A4）：开关打开时渲染侧请求 main 启动宿主 ----
+  /**
+   * 请求 main 启动扩展宿主，并把用户扩展清单交给它（`init.extensions`）。
+   *
+   * **只有渲染侧主动调用才会 fork**（A2 的启动器本身不自动启动）：回退开关关闭时本方法
+   * 永远不该被调用，用户扩展继续在渲染进程里执行（默认行为零变化）。
+   * 结果永远 resolve，失败走 `ok:false`（`code` 为协议错误码）。
+   */
+  ehStart(extensions: HostedExtensionInfo[]): Promise<ExtensionHostStartOutcome>
+  /**
+   * 端口状态（**只有状态，没有端口**；端口只能经 `eh:port` 转移，A2 已确认）。
+   * 字段定义照 A2 的 `RendererPortDescription`，渲染侧桥据此判断"端口是否已到"。
+   */
+  ehGetPort(): Promise<ExtensionHostPortStatus>
+  /**
+   * 宿主状态快照（含最近一次崩溃原因，供 A5 / 扩展管理器展示）。
+   * 比 `ehGetPort` 多 `crashCount` 与 `lastCrash`：端口状态只用来说明"链路到没到"。
+   */
+  ehGetStatus(): Promise<ExtensionHostStatusSnapshot>
+  /** 主动停止宿主（幂等；页面重新加载后端口已随旧页面销毁时，这是重建链路的第一步） */
+  ehStop(): Promise<void>
+}
+
+/* -------------------------------------------------------------------------------------------- */
+/* 扩展宿主进程（ADR-0026 / EH-A4）：渲染侧看到的契约                                            */
+/* -------------------------------------------------------------------------------------------- */
+
+/**
+ * 宿主生命周期阶段。与 `src/main/extensionHostStarter.ts` 的 `ExtensionHostPhase` **同值**：
+ * 主进程是唯一权威（它 fork/判活/重启），渲染侧只读。
+ */
+export type ExtensionHostPhase =
+  'idle' | 'starting' | 'ready' | 'unresponsive' | 'crashed' | 'stopped'
+
+/** 最近一次崩溃/启动失败的原因（`code` 是退出码，或启动器合成的负数码） */
+export interface ExtensionHostCrashInfo {
+  code: number
+  /** 发生时间（ms epoch） */
+  at: number
+}
+
+/**
+ * 宿主状态快照（`eh:status` 事件载荷 / `eh:get-status` 返回值）。
+ * 与启动器的 `ExtensionHostStatus` 结构一致——渲染侧不能 import 主进程模块（会拖进 electron），
+ * 所以在共享层再声明一次；字段增删要两边一起改。
+ */
+export interface ExtensionHostStatusSnapshot {
+  phase: ExtensionHostPhase
+  /** 宿主自报的 id（握手成功后才有） */
+  hostId: string | null
+  /** 宿主进程 pid（握手成功后才有） */
+  pid: number | null
+  /** 5 分钟窗口内的崩溃次数（= 已用掉的自动重启预算） */
+  crashCount: number
+  /** 最近一次崩溃原因；从未失败为 `null` */
+  lastCrash: ExtensionHostCrashInfo | null
+  /** 最近一次收到宿主合法信封的时间（判活信号） */
+  lastAckAt: number | null
+}
+
+/** `eh:get-port` 的返回（A2 定义：**只有状态，没有端口**） */
+export interface ExtensionHostPortStatus {
+  phase: ExtensionHostPhase
+  /** 端口是否已交给某个渲染进程（true 而页面没有端口 = 页面在交付之后重新加载过） */
+  portDelivered: boolean
+  /** 端口是否还挂在启动器手里等窗口就绪 */
+  portPending: boolean
+  hostId: string | null
+  pid: number | null
+  /** 端口实际投递用的 channel（渲染侧 preload 照它监听） */
+  channel: string
+  /** 协议版本（错配时渲染侧桥可直接给出"需整包升级"） */
+  protocolVersion: number
+}
+
+/** `eh:start` 的结果：永远 resolve，失败走 `ok:false`（`code` 为协议错误码） */
+export type ExtensionHostStartOutcome =
+  | { ok: true; hostId: string; pid: number }
+  | { ok: false; code: EhErrorCode; message: string; detail?: string }
+
+/**
+ * `eh:port` 转移时随端口一起带来的描述（**不是信封**：端口靠 transfer 列表走，不塞字段）。
+ * 字段与 A2 的 `RendererPortPayload` 一致。
+ */
+export interface ExtensionHostPortArrival {
+  /** 协议版本（A2 目前是 1） */
+  v?: number
+  hostId: string | null
+  pid: number | null
+}
+
+/**
+ * 端口代理（preload 交付给渲染侧的**窄接口**）。
+ *
+ * ⚠️ 为什么不是真的 `MessagePort`：`contextBridge` 不支持传 `MessagePort`（transferable 不能跨
+ * 隔离世界），而端口又不能经 `ipcMain.handle` 返回（A2 已确认）。因此 preload 在隔离世界里持有
+ * 真端口，只把"发/停"两件事代理出来；渲染侧桥只依赖这个接口，单测可注入假端口。
+ */
+export interface ExtensionHostPortBridge {
+  /** 发送一个纯数据信封（不合形状/不可传输请在**渲染侧**先拦，别指望这里抛错可读） */
+  postMessage(envelope: unknown): void
+  /** 关闭端口（链路断开；之后的 send 会立刻失败而不是排队） */
+  close(): void
+}
+
+/**
+ * preload 暴露为 `window.eh` 的扩展宿主桥接口（EH-A4）。
+ *
+ * 分工：**preload 只做搬运**（端口生命周期 + `ipcRenderer` 事件 → 回调），判定逻辑
+ * （开关、校验、配对、超时、状态解释）全在 `renderer/src/core/extensionHostBridge.ts`，
+ * 这样桥能在 node 环境里被单测直接驱动。
+ */
+export interface ExtensionHostBridgeSurface {
+  /**
+   * 回退开关的**原文**（`process.env.OBOX_EXTENSION_HOST`，未设置时 `null`）。
+   * 由渲染侧解析（`isExtensionHostEnabled`）：开关判定只有一处，preload 不参与解释。
+   */
+  extensionHostFlag: string | null
+  /** 端口是否已到达（页面重新加载后为 false，此时端口已随旧页面销毁） */
+  hasPort(): boolean
+  /**
+   * 订阅端口到达；端口**已经先到**时用微任务补发一次（页面加载晚于投递的竞态）。
+   * 返回退订函数。
+   */
+  onPort(
+    listener: (info: ExtensionHostPortArrival, port: ExtensionHostPortBridge) => void
+  ): () => void
+  /** 订阅宿主 → 渲染侧的消息（原始值，由渲染侧桥校验后再分发） */
+  onMessage(listener: (raw: unknown) => void): () => void
+  /** 发送一个纯数据信封；端口未到时返回 `false`（不抛错，由调用方给中文错误） */
+  post(envelope: unknown): boolean
+  /** 订阅宿主状态变化（主进程 `eh:status`） */
+  onStatus(listener: (status: ExtensionHostStatusSnapshot) => void): () => void
 }
 
 /** 生命周期钩子阶段（与 renderer/core/hookState.ts 的 HookPhase 一致） */
@@ -778,4 +912,9 @@ export interface MainEvents {
   'ui:show': (e: { requestId: number; kind: string; payload: unknown }) => void
   /** 扩展 IPC 通道事件（通知 / 对端请求 / 对端日志 / 通道关闭） */
   'ipc:event': (e: IpcEvent) => void
+  /**
+   * 扩展宿主状态变化（ADR-0026 / EH-A4）：`idle → starting → ready → …` 的每次迁移各发一次，
+   * 载荷含最近崩溃原因。A5 / 扩展管理器订阅它做展示；渲染侧桥另经 `window.eh.onStatus` 收一份。
+   */
+  'eh:status': (status: ExtensionHostStatusSnapshot) => void
 }
