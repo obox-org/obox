@@ -257,3 +257,39 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 | 资产数 / 名称 | ✅ **7 项**：`obox-1.0.17-x64-setup.exe`（121,800,443 B）、`obox-1.0.17-arm64-setup.exe`（116,223,975 B）、`obox-1.0.17-setup.exe`（237,186,531 B，无架构后缀的"臃肿包"，成因见第 8 节与 9.2 节）、三份 `*.blockmap`（129,350 / 121,378 / 247,226 B）、`latest.yml`（654 B） |
 | `latest.yml` 的版本与一致性 | ✅ `version: 1.0.17`；`files` 三份安装包**尺寸与 release 资产逐一相等**（237186531 / 121800443 / 116223975），`path: obox-1.0.17-setup.exe`，顶层 `sha512` 与首项一致；`releaseDate: 2026-10-17T01:39:30.065Z`。**取回方式如实登记**：`objects.githubusercontent.com` 直连不通，本次 `Invoke-WebRequest` **显式经本机代理 `http://127.0.0.1:7897`** 才取回（654 B）；仍**未下载合计约 475 MB 产物本地重算 sha512**，一致性以"工作流内计算 + 尺寸逐项吻合"为准 |
 
+
+## 12. v2.0.0-rc.1 预发布数据（2026-10-20 发布）
+
+**性质**：Extension Host 迁移（ADR-0026）的**候选版**，故意发成 **prerelease**，用于真机验证；正式版 `v2.0.0` 在验证通过后再发。
+
+**触发方式**：本地 `git tag v2.0.0-rc.1` + `git push origin v2.0.0-rc.1` ⇒ `.github/workflows/release.yml`（`on.push.tags: v*`）在 `windows-latest` 构建；工作流第一步校验 tag 与 `package.json` 的 `version` 一致（`v2.0.0-rc.1` ↔ `2.0.0-rc.1`）。
+
+**本版相对 1.0.17 的关键变化**：`api` 99 项能力全部迁入 **Extension Host Process**（0 桩）；`apiVersion` 升 **3**；清单支持 `activationEvents`（4 类 + 缺省 `*`）；**2.0.0 起用户扩展默认在独立进程执行**（设置 → 通用可关，环境变量 `OBOX_EXTENSION_HOST` 兜底，启动失败自动回退渲染进程）。
+
+**发布资产**：预期 7 项（x64 / arm64 安装包、无架构后缀包、三份 `*.blockmap`、`latest.yml`）。
+
+**实测记录（发布后回读）**：
+
+| 项 | 结果 |
+| --- | --- |
+| tag → 工作流 | ✅ `Release`（run `39451196633`），`release` job `completed/success`（tag ↔ `package.json` 版本校验通过、双架构构建与上传） |
+| 资产数 / 名称 | ✅ **7 项**：`obox-2.0.0-rc.1-x64-setup.exe`（121,980,894 B）、`obox-2.0.0-rc.1-arm64-setup.exe`（116,404,393 B）、`obox-2.0.0-rc.1-setup.exe`（237,547,448 B，无架构后缀的"臃肿包"）、三份 `*.blockmap`（129,702 / 121,618 / 247,933 B）、`latest.yml`（674 B） |
+| `latest.yml` 的版本与一致性 | ✅ `version: 2.0.0-rc.1`；三份安装包**尺寸与 release 资产逐一相等**（237547448 / 121980894 / 116404393），`path: obox-2.0.0-rc.1-setup.exe`，顶层 `sha512` 与首项一致；`releaseDate: 2026-10-20T15:48:36.107Z`（本次 `latest.yml` 直连即可取回，未走代理） |
+| **预发布标记** | ✅ `prerelease = true`、`draft = false`（本次新加的 workflow 逻辑：标签名匹配 `-(alpha\|beta\|rc)\.` ⇒ 追加 `--prerelease`） |
+| **正式通道未被污染** | ✅ `/releases/latest` 仍指向 **`v1.0.17`** ⇒ 已安装 1.0.17 的用户**不会**被自动更新带到 rc（`electron-updater` 的 `/releases/latest` 语义只认非预发布） |
+| 门禁 | ✅ `npm run typecheck` 0 error、`npm run lint` 0 error（4 条既有 warning）、`npm test` **1229 passed + 5 skipped**、`npm run security:audit` 0 告警、Dependabot 开放告警 0 |
+
+**发版前修掉的一个缺陷（否则会出事）**：`release.yml` 原先创建 release 时**没有** `--prerelease`，若直接打 rc 标签会把 rc 当正式版发布，`/releases/latest` 指向它 ⇒ 所有 1.0.17 用户会被自动更新"升级"到预发布包。现按标签名判定，正式版行为不变。
+
+**rc 装上后必须验的项（本版全部基于单测，宿主链路尚未真机验证）**：
+
+| # | 验证项 | 期望 |
+| --- | --- | --- |
+| R1 | 扩展是否在宿主进程里激活 | 状态栏/命令/设置页照旧可用；日志出现 `[eh] 扩展宿主开关已打开…` |
+| R2 | 侧车进程（rdp / webapp 的 `ipcChannels`） | 由宿主 spawn，功能与 1.0.17 一致 |
+| R3 | `api.ui.showMessage` / `withProgress`（宿主 → 渲染侧 RPC） | 能弹 toast / 进度条 |
+| R4 | 宿主发起的通知、overlay（pet） | 与 1.0.17 一致 |
+| R5 | **回退开关**：设置 → 通用 关掉「在独立进程中运行扩展」并重启 | 扩展回到渲染进程执行，功能正常（这是出问题时的唯一退路） |
+| R6 | 宿主崩溃后的自动回退 | 关掉 `taskkill` 宿主进程，应自动回退并提示，不是"扩展全部消失" |
+
+**本轮未覆盖（如实登记）**：仅 Windows 双架构；未在 macOS/Linux 构建；D3–D7 的 5 个扩展改造（`apiVersion` 升级与 `activationEvents` 声明）尚未进行 —— 它们以 1/2/未声明版本在 2.0.0 上仍可加载，但尚未针对宿主模式做专门验证。
