@@ -841,6 +841,14 @@ function hostEntry(
 
 afterEach(() => {
   delete (globalThis as unknown as { window?: unknown }).window
+  // EH-D2a：开关优先级是「设置项 > 环境变量 > 默认开」，而设置项存在 localStorage 里。
+  // 不清理会让"某条用例写过设置=关"泄漏到后续用例，使它们解析成"关"（CI 上真实发生过：
+  // 「开关打开 ⇒ 只激活内置」那条曾因此变红）。
+  try {
+    localStorage.clear()
+  } catch {
+    /* 没有 localStorage 的环境（纯 node）忽略 */
+  }
 })
 
 describe('渲染侧 host.start()：开关关闭 ⇒ 默认行为零变化', () => {
