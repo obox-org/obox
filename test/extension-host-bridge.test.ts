@@ -844,8 +844,10 @@ afterEach(() => {
 })
 
 describe('渲染侧 host.start()：开关关闭 ⇒ 默认行为零变化', () => {
-  it('不 start 宿主、不交清单，用户扩展照旧在渲染进程激活', async () => {
-    const stub = installWindow({ flag: undefined }) // 未设置 OBOX_EXTENSION_HOST
+  it('显式关闭（OBOX_EXTENSION_HOST=0）⇒ 不 start 宿主、不交清单，用户扩展照旧在渲染进程激活', async () => {
+    // 2.0.0 起「未设置」= **默认开**（EH-D2a，见 test/extension-host-flag.test.ts 的优先级表），
+    // 所以"零变化"这条路径要用**显式关闭**来驱动。
+    const stub = installWindow({ flag: '0' })
     const activated: string[] = []
     const builtin = hostEntry('off.builtin', 'builtin', activated)
     const user = hostEntry('off.user', 'user', activated, '/extensions/off.user')

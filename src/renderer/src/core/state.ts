@@ -14,6 +14,15 @@
  */
 export const STORAGE_KEY = 'obox:state:v1'
 
+/**
+ * 「在独立进程中运行扩展」开关的设置键（EH-D2a）。
+ *
+ * 值只有三种有意义的状态：`true`（用户显式开）、`false`（用户显式关）、**键不存在**（从未设过）。
+ * 解析优先级（设置 > 环境变量 > 默认开）由 `core/extensionHostBridge.ts` 的
+ * `resolveExtensionHostSwitch()` 负责，这里只存"用户的显式选择"——存储层不掺业务判定。
+ */
+export const EXTENSION_HOST_SETTING_KEY = 'extensionHost.enabled'
+
 export interface PersistedState {
   disabledExtensions: string[]
   notificationDisabledExtensions: string[]
@@ -138,6 +147,28 @@ export const stateStore = {
   /** 统一设置存储：读取设置值 */
   getSetting<T>(key: string, defaultValue?: T): T | undefined {
     return key in state.settings ? (state.settings[key] as T) : defaultValue
+  },
+  /**
+   * 「在独立进程中运行扩展」的**显式设置值**（EH-D2a）。
+   *
+   * - `true` / `false`：用户亲手设过，开关解析里优先级最高（压过环境变量）；
+   * - `undefined`：从未设过（键不存在 **或** 存值不是布尔）——交给解析器回落到环境变量/默认开。
+   *
+   * 为什么只认布尔：`'false'` / `0` / `null` 这类脏值若参与判定，"显式设过"这件事就有多种含义，
+   * 优先级表会长出无数分支；统一按"未设过"处理，语义只剩一种。
+   */
+  getExtensionHostEnabled(): boolean | undefined {
+    const value = state.settings[EXTENSION_HOST_SETTING_KEY]
+    return typeof value === 'boolean' ? value : undefined
+  },
+  /**
+   * 写「在独立进程中运行扩展」的显式设置值（EH-D2a）。
+   *
+   * **不做热切换**：调用方（设置页）只落库 + 提示"重启后生效"；生效判定在下次启动时由
+   * `readExtensionHostSwitch()` 读取。
+   */
+  setExtensionHostEnabled(enabled: boolean): void {
+    this.setSetting(EXTENSION_HOST_SETTING_KEY, enabled)
   },
   /** 统一设置存储：写入设置值（undefined 删除），并通知订阅者（带变更的 key） */
   setSetting(key: string, value: unknown): void {

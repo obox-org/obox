@@ -7,12 +7,15 @@
  *
  * ## 它负责什么
  *
- * 1. **回退开关的判定**：`OBOX_EXTENSION_HOST` 为 `1` / `true` 才启用。开关关闭（默认）时
- *    本模块**什么都不做**：不交接、不发请求、不 start 宿主，用户扩展继续在渲染进程里执行
- *    （默认行为零变化，这是本卡第一原则）。
+ * 1. **开关判定（EH-D2a）**：设置项（用户显式设过）> 环境变量 `OBOX_EXTENSION_HOST`（`1`/`true`
+ *    显式开、`0`/`false` 显式关）> **默认 `true`**（2.0.0 起用户扩展默认在宿主进程里执行）。
+ *    判定是纯函数 `resolveExtensionHostSwitch()`，一处实现、可穷举；`readExtensionHostFlag()`
+ *    把结论编码成老契约的 `'1'`/`'0'`，让 `core/host.ts` 与 `core/extensionHostConsumer.ts`
+ *    不改接线就跟随同一个开关。开关关闭时本模块**什么都不做**：不交接、不发请求、不 start 宿主。
  * 2. **清单交接**：开关打开时，把 `loader.collectHostedExtensions()` 产出的
  *    `HostedExtensionInfo[]` 经 `ehStart` 交给 main，由 main `start()` 宿主（**main 不在启动时
- *    自动 start**）。交接本身永不 reject，失败只降级成日志 + `ok:false`。
+ *    自动 start**）。交接本身永不 reject，失败只降级成日志 + `ok:false` **+ 自动回退**
+ *    （`applyRendererFallback`：明确日志 + 会话标记 + 重新加载窗口，需求 4）。
  * 3. **RPC 客户端**：发送前 `validateEnvelope` + `checkSerializable`（失败给中文可执行错误并带
  *    字段路径）→ req/res 按 `id` 配对 → 默认 3 秒（`ACK_TIMEOUT_MS`）超时。
  * 4. **事件与日志**：`event` 信封按 `channel` 分发；`log` 信封转发到渲染侧 console（UI 可另订阅）。
@@ -55,6 +58,9 @@ import type {
   ExtensionHostStartOutcome,
   ExtensionHostStatusSnapshot
 } from '../../../shared/types'
+// 设置项的显式值（EH-D2a）：开关解析要读"用户是否设过"，而 state 是唯一存它的地方。
+// 单向依赖（state 不认识桥），不会形成环。
+import { stateStore } from './state'
 
 declare global {
   interface Window {
@@ -74,22 +80,94 @@ declare global {
 /* 常量                                                                                          */
 /* -------------------------------------------------------------------------------------------- */
 
-/** 回退开关的环境变量名（值为 `1` / `true` 才启用；其余一切取值都算关闭） */
+/**
+ * 扩展宿主开关的环境变量名（**开发者/兜底**手段，不再是对外唯一开关）。
+ *
+ * 2.0.0 起用户开关是「设置 → 通用 → 在独立进程中运行扩展」；本环境变量只在没有显式设置值时
+ * 参与判定（`1`/`true` 显式开，`0`/`false` 显式关，其余取值视为未设）。
+ */
 export const EXTENSION_HOST_ENV = 'OBOX_EXTENSION_HOST'
 
 /** `event.channel` 的通配订阅键（收到任意 channel 都会回调；给 A5 做"日志面板/调试视图"用） */
 export const ANY_EVENT_CHANNEL = '*'
 
+/**
+ * 「上次启动宿主失败、本窗口已回退到渲染进程」的**会话级**标记（sessionStorage）。
+ *
+ * 为什么是 sessionStorage 而不是设置项：它只描述"这一个窗口这一次会话"的事实，不能污染
+ * 用户的持久化设置；窗口关闭（= 应用退出）后会自然清掉，下次启动重新尝试宿主。
+ * 存的值同时也是给用户看的中文提示（`extensionHostFallbackNotice()`）。
+ */
+export const EXTENSION_HOST_FALLBACK_KEY = 'obox:extension-host:renderer-fallback'
+
 /* -------------------------------------------------------------------------------------------- */
-/* 回退开关                                                                                      */
+/* 开关解析（EH-D2a）：设置项 > 环境变量 > 默认开                                                  */
 /* -------------------------------------------------------------------------------------------- */
 
+/** 开关的判定来源（日志/设置页展示用；`fallback` = 启动失败后的临时回退） */
+export type ExtensionHostSwitchSource = 'setting' | 'env' | 'default' | 'fallback'
+
+/** 开关判定结果 */
+export interface ExtensionHostSwitchDecision {
+  /** 是否让用户扩展在扩展宿主进程里执行 */
+  enabled: boolean
+  /** 结论来自哪一级（排查"为什么现在是渲染进程"时唯一的线索） */
+  source: ExtensionHostSwitchSource
+}
+
+/** 来源 → 中文说明（日志与设置页共用**同一份**文案，避免两处描述打架） */
+export const EXTENSION_HOST_SOURCE_TEXT: Record<ExtensionHostSwitchSource, string> = {
+  setting: '设置项',
+  env: `环境变量 ${EXTENSION_HOST_ENV}`,
+  default: '默认（2.0.0 起默认开）',
+  fallback: '启动失败后的临时回退（重启后重新尝试）'
+}
+
 /**
- * 回退开关判定（**唯一一处**）。
+ * 解析环境变量原文（**纯函数**）。
  *
- * 只有 `1` / `true`（大小写与首尾空白不敏感）才启用；空串、`0`、`false`、未设置全部按关闭处理。
- * 刻意不做"任意非空即启用"：误把 `OBOX_EXTENSION_HOST=0` 当成启用会让用户扩展在宿主里跑一半
- * ——宿主能力目前多数是桩（会抛 `EH_INTERNAL`），默认必须继续走渲染进程。
+ * - `1` / `true`（大小写与首尾空白不敏感）⇒ `true`（显式开）；
+ * - `0` / `false` ⇒ `false`（显式关，"显式关也认"是本卡与旧实现的差别之一）；
+ * - 未设置 / 空串 / 全空白 / 认不出的值 ⇒ `undefined` = **当作未设**，交给下一级（默认开）。
+ *
+ * 为什么认不出的值不再等同于"关"：优先级表只有"显式开/显式关/未设"三种状态；拼错
+ * （`OBOX_EXTENSION_HOST=no`）若被当成显式关，用户会以为"我明明设了却没反应"。
+ */
+export function parseExtensionHostEnv(env: string | null | undefined): boolean | undefined {
+  if (typeof env !== 'string') return undefined
+  const normalized = env.trim().toLowerCase()
+  if (normalized === '') return undefined
+  if (normalized === '1' || normalized === 'true') return true
+  if (normalized === '0' || normalized === 'false') return false
+  return undefined
+}
+
+/**
+ * **开关判定的唯一出处**（纯函数，可穷举）。
+ *
+ * 优先级：设置项（用户显式设过）> 环境变量（显式开/关都认）> **默认 `true`**。
+ *
+ * 与 preload 是否暴露环境变量**解耦**：`env` 拿不到（`undefined` / `null` / 非字符串）就等同"未设"，
+ * 直接落到默认开，绝不会因为"读不到 env"而把扩展关回渲染进程。
+ */
+export function resolveExtensionHostSwitch(input: {
+  /** 设置项的值：`true`/`false` = 用户显式设过；`undefined` = 从未设过 */
+  setting?: boolean | undefined
+  /** 环境变量原文（`process.env.OBOX_EXTENSION_HOST`）；拿不到就传 `null`/`undefined` */
+  env?: string | null | undefined
+}): ExtensionHostSwitchDecision {
+  if (typeof input.setting === 'boolean') return { enabled: input.setting, source: 'setting' }
+  const fromEnv = parseExtensionHostEnv(input.env)
+  if (fromEnv !== undefined) return { enabled: fromEnv, source: 'env' }
+  return { enabled: true, source: 'default' }
+}
+
+/**
+ * 解析**已判定的**开关编码（只认 `1` / `true` 为开）。
+ *
+ * 它不再做优先级判定——判定在 `resolveExtensionHostSwitch()`；本函数只负责把
+ * `'1'`/`'0'` 这种老契约（`core/host.ts` 与 `core/extensionHostConsumer.ts` 认的形态）解释成布尔。
+ * 保留"不认识就算关"的保守语义：调用方手里只有这两个合法取值。
  */
 export function isExtensionHostEnabled(flag: string | null | undefined): boolean {
   if (typeof flag !== 'string') return false
@@ -97,9 +175,213 @@ export function isExtensionHostEnabled(flag: string | null | undefined): boolean
   return normalized === '1' || normalized === 'true'
 }
 
-/** 读 preload 暴露的开关原文（`process.env.OBOX_EXTENSION_HOST`；非 Electron 环境为 `null`） */
+/**
+ * 读**当前生效**的开关（含来源）：设置项 > 环境变量 > 默认开；本窗口启动失败过 ⇒ 临时回退。
+ *
+ * 回退标记优先级最高（压过设置项）是刻意的：否则"用户显式开着 + 宿主启动即崩"会在每次
+ * 重新加载时再崩一次——那是崩溃循环，不是回退。
+ */
+export function readExtensionHostSwitch(): ExtensionHostSwitchDecision {
+  if (isRendererFallbackActive()) return { enabled: false, source: 'fallback' }
+  return resolveExtensionHostSwitch({
+    setting: stateStore.getExtensionHostEnabled(),
+    env: windowSurface()?.extensionHostFlag ?? null
+  })
+}
+
+/**
+ * 读 preload 暴露的**当前生效开关**，按老契约编码成 `'1'` / `'0'`。
+ *
+ * 为什么还返回字符串：`core/host.ts` 与 `core/extensionHostConsumer.ts` 只认
+ * `isExtensionHostEnabled(flag)` 这一个入口，而它们不在本卡所有权内。把"设置 > env > 默认开"
+ * 的解析收在这里，两个消费者就自动跟随同一个开关，不需要改它们的接线。
+ * （`window.eh.extensionHostFlag` 本身仍是 preload 读到的**原始** env，本函数不写它。）
+ */
 export function readExtensionHostFlag(): string | null {
-  return windowSurface()?.extensionHostFlag ?? null
+  return readExtensionHostSwitch().enabled ? '1' : '0'
+}
+
+/* -------------------------------------------------------------------------------------------- */
+/* 启动失败回退（EH-D2a 需求 4）                                                                   */
+/* -------------------------------------------------------------------------------------------- */
+
+/** 一个明确的中文提示：为什么回退了、扩展现在在哪跑、怎么恢复（设置页与日志共用同一句话） */
+export function rendererFallbackNoticeText(reason: string): string {
+  return (
+    `扩展宿主没有启动成功（${reason}），已自动回退：扩展继续在主界面进程执行（兼容旧行为）。` +
+    '重启 Obox 后会再次尝试在独立进程中运行扩展。'
+  )
+}
+
+/** sessionStorage 读（无浏览器环境 / 被禁用时返回 null，绝不抛错） */
+function sessionGet(key: string): string | null {
+  try {
+    if (typeof sessionStorage === 'undefined') return null
+    return sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+/** sessionStorage 写（返回是否真的写进去了；无浏览器环境 / 被禁用时返回 false） */
+function sessionSet(key: string, value: string): boolean {
+  try {
+    if (typeof sessionStorage === 'undefined') return false
+    sessionStorage.setItem(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** sessionStorage 删（同上，静默） */
+function sessionRemove(key: string): void {
+  try {
+    if (typeof sessionStorage === 'undefined') return
+    sessionStorage.removeItem(key)
+  } catch {
+    // 同上
+  }
+}
+
+/** 本窗口是否处于"启动失败已回退"状态（是 ⇒ 开关判定恒为关，见 `readExtensionHostSwitch`） */
+export function isRendererFallbackActive(): boolean {
+  return extensionHostFallbackNotice() !== null
+}
+
+/**
+ * 回退提示原文（没有回退过 ⇒ `null`；设置页据此渲染一行红字）。
+ *
+ * 唯一事实来源是 sessionStorage：它才能跨"自动重载"活下来——而回退的自动生效正是靠重载
+ * （见 `applyRendererFallback`）。没有 sessionStorage 时本窗口就没有回退状态
+ * （不重载、也不假装回退），只留日志，绝不制造"重载 → 还是起不来 → 再重载"的循环。
+ */
+export function extensionHostFallbackNotice(): string | null {
+  const stored = sessionGet(EXTENSION_HOST_FALLBACK_KEY)
+  if (typeof stored !== 'string') return null
+  return stored.trim() === '' ? null : stored
+}
+
+/**
+ * 记下"本窗口回退到渲染进程"并返回给用户看的提示。
+ *
+ * 幂等：重复调用只覆盖提示文案。**不清设置项**——用户的选择照旧保留，重启后重新尝试。
+ */
+export function activateRendererFallback(reason: string): string {
+  const notice = rendererFallbackNoticeText(reason)
+  sessionSet(EXTENSION_HOST_FALLBACK_KEY, notice)
+  return notice
+}
+
+/**
+ * 清掉回退标记（用户主动改开关时调用）。
+ *
+ * 为什么需要：回退标记压过设置项（见 `readExtensionHostSwitch`），若不提供"清标记"，
+ * 用户在设置页点开关会看起来毫无反应——那才是真正的坏体验。
+ */
+export function clearRendererFallback(): void {
+  sessionRemove(EXTENSION_HOST_FALLBACK_KEY)
+  fallbackApplied = false
+}
+
+/** 一个窗口生命周期内"回退动作"（日志 + 重载）只做一次，避免崩溃/失败重复触发重载循环 */
+let fallbackApplied = false
+
+/** 回退动作的参数 */
+interface RendererFallbackOptions {
+  /** 失败原因（一句话，进提示文案） */
+  reason: string
+  /** 更详细的一手信息（错误码/退出码，进日志） */
+  detail: string
+  /** 被交接给宿主的用户扩展数（0 ⇒ 没有需要"救回来"的扩展，不必重载） */
+  hostedCount: number
+  /** 即使没有清单也强制重载（宿主**运行中**崩溃时用它：扩展已经随宿主没了） */
+  forceReload?: boolean
+  logger: ExtensionHostBridgeLogger
+  /** 重载动作（默认 `window.location.reload()`；`null` = 不重载，单测用） */
+  reload?: (() => void) | null
+}
+
+/**
+ * 执行回退：留一条明确日志 → 记标记 → **重新加载本窗口**。
+ *
+ * 为什么必须重载：`core/host.ts` 在 `start()` 里**同步**用交接结果算出了"哪些扩展跳过渲染侧
+ * 激活"，这个决定发生在我们知道 `ehStart` 成败之前。于是失败后唯一的"自动回退"通路是让
+ * `start()` 再跑一遍——这次开关判定读到回退标记 ⇒ 走渲染进程路径 ⇒ 用户在用的扩展照旧全部在。
+ * 重载只发生一次（`fallbackApplied` + 标记本身都阻止循环）。
+ */
+function applyRendererFallback(options: RendererFallbackOptions): string {
+  const notice = rendererFallbackNoticeText(options.reason)
+  // 写标记的**成败**决定了能不能重载：写不进去就无法在重载后保持回退（见下方注释）
+  const persisted = sessionSet(EXTENSION_HOST_FALLBACK_KEY, notice)
+  if (fallbackApplied) return notice
+  fallbackApplied = true
+  options.logger.error(
+    `扩展宿主启动失败，已自动回退到主界面进程：${options.reason}（${options.detail}）；` +
+      `本窗口接下来按渲染进程执行扩展（${options.hostedCount} 个用户扩展，兼容旧行为），` +
+      '不会再尝试扩展宿主；重启 Obox 后会再次尝试。'
+  )
+  // 只有"标记真的存下来了"才重载：存不下来就无法在重载后保持回退，重载只会变成
+  // "起不来 → 重载 → 还是起不来"的循环。此时只留日志，让用户手动重启。
+  if (!persisted) {
+    options.logger.warn(
+      '回退标记无法持久化（sessionStorage 不可用），本次不自动重新加载；请手动重启 Obox 让扩展回到主界面进程执行。'
+    )
+    return notice
+  }
+  if (options.hostedCount > 0 || options.forceReload === true) reloadWindow(options.reload)
+  return notice
+}
+
+/** 重新加载当前窗口（默认实现；单测注入 spy 或 `null` 关掉） */
+function reloadWindow(reload: (() => void) | null | undefined): void {
+  if (reload === null) return
+  if (typeof reload === 'function') {
+    try {
+      reload()
+    } catch (error) {
+      console.warn(`[eh] 回退重载失败：${describeError(error)}（请手动重启 Obox）`)
+    }
+    return
+  }
+  if (typeof window === 'undefined') return
+  try {
+    window.location.reload()
+  } catch (error) {
+    console.warn(`[eh] 回退重载失败：${describeError(error)}（请手动重启 Obox）`)
+  }
+}
+
+/**
+ * 宿主 **运行中崩溃** ⇒ 同样回退到渲染进程（EH-D2a 需求 4 的后半句）。
+ *
+ * 启动期就崩会走 `ehStart` 的 `ok:false`（启动器在握手期退出即返回失败）；这里覆盖"已经
+ * ready 之后又崩"的情形——扩展已经随宿主一起没了，不处理就是用户看到"所有扩展消失"。
+ * 返回给用户看的提示（phase 不是 `crashed` 时返回 `null`，完全不动作）。
+ */
+export function handleExtensionHostCrash(
+  status: ExtensionHostStatusSnapshot,
+  options: {
+    logger?: ExtensionHostBridgeLogger
+    reload?: (() => void) | null
+  } = {}
+): string | null {
+  if (status.phase !== 'crashed') return null
+  const logger = options.logger ?? consoleLogger
+  const reason = status.lastCrash
+    ? `宿主进程崩溃（退出码 ${status.lastCrash.code}）`
+    : '宿主进程异常退出'
+  return applyRendererFallback({
+    reason,
+    detail: status.lastCrash
+      ? `崩溃时间 ${new Date(status.lastCrash.at).toISOString()}`
+      : '没有崩溃详情',
+    hostedCount: 0,
+    // 宿主崩了 = 交给它的扩展已经没了，必须重载才能把它们救回渲染进程
+    forceReload: true,
+    logger,
+    reload: options.reload
+  })
 }
 
 /* -------------------------------------------------------------------------------------------- */
@@ -275,8 +557,9 @@ export function notReadyMessage(status: ExtensionHostStatusSnapshot): string {
   switch (status.phase) {
     case 'idle':
       return (
-        `${head}当前宿主从未启动（phase=idle）：请用 ${EXTENSION_HOST_ENV}=1 启动应用，` +
-        '或在扩展管理器里点"启动扩展宿主"；默认配置下用户扩展在渲染进程执行，不需要本桥。'
+        `${head}当前宿主从未启动（phase=idle）：请确认「设置 → 通用 → 在独立进程中运行扩展」是打开的` +
+        `（2.0.0 起默认开）并重启 Obox；开发者也可以临时用 ${EXTENSION_HOST_ENV}=1 启动，` +
+        '或在扩展管理器里点"启动扩展宿主"。若开关已关掉，用户扩展在主界面进程执行，不需要本桥。'
       )
     case 'starting':
       return `${head}宿主正在启动（phase=starting，握手未完成）：请等 1-2 秒后重试；若一直如此，看主进程日志里的握手失败原因。`
@@ -752,7 +1035,9 @@ export function getExtensionHostBridge(): ExtensionHostBridge {
 /**
  * 交接成功后调用（幂等）：把状态迁移写进渲染侧日志并校准一次当前快照。
  *
- * 只在开关打开时被 `host.start()` 调用一次；开关关闭时**永远不会**走到这里（默认零变化）。
+ * 只在开关打开时被 `host.start()` 调用一次；开关关闭时**永远不会**走到这里。
+ * 另外接上"运行中崩溃 ⇒ 自动回退"（EH-D2a 需求 4）：`phase=crashed` 时走
+ * `handleExtensionHostCrash()`，与启动失败同一条回退通路。
  */
 export function connectExtensionHostBridge(): ExtensionHostBridge {
   const bridge = getExtensionHostBridge()
@@ -764,6 +1049,8 @@ export function connectExtensionHostBridge(): ExtensionHostBridge {
     lastPhase = status.phase
     const crash = status.lastCrash ? `，最近崩溃：${describeCrash(status.lastCrash)}` : ''
     console.info(`[eh] 扩展宿主状态：${status.phase}${crash}`)
+    // 已经 ready 之后又崩：扩展随宿主一起没了，必须回退并把它们救回渲染进程（见 handleExtensionHostCrash）
+    if (status.phase === 'crashed') handleExtensionHostCrash(status)
   })
   void bridge.refreshStatus()
   return bridge
@@ -775,13 +1062,24 @@ export function connectExtensionHostBridge(): ExtensionHostBridge {
 
 /** 交接参数 */
 export interface ExtensionHostHandoverOptions {
-  /** 回退开关原文（`window.eh.extensionHostFlag`；单测直接传） */
+  /**
+   * **已判定的**开关编码（`readExtensionHostFlag()` 返回的 `'1'` / `'0'`；单测直接传原文）。
+   *
+   * 优先级判定不在这里做（唯一出处是 `resolveExtensionHostSwitch()`）：传进来的就是结论，
+   * 本函数只把 `1`/`true` 认成开。传 `null`/`undefined` 一律按关（子窗口不交接宿主）。
+   */
   flag: string | null | undefined
   /** 用户扩展清单（`collectHostedExtensions()` 产出；开关关闭时逐字不使用） */
   extensions: HostedExtensionInfo[]
   /** 发起 start 的 IPC（默认 `window.api.ehStart`） */
   start?(extensions: HostedExtensionInfo[]): Promise<ExtensionHostStartOutcome>
   logger?: ExtensionHostBridgeLogger
+  /**
+   * 启动失败后用**重新加载本窗口**来让回退真正生效（默认 `window.location.reload()`）。
+   *
+   * 传 `null` = 不重载（单测/无浏览器环境）；传函数 = 用它替代默认实现。
+   */
+  reload?: (() => void) | null
 }
 
 /** 交接结果：**开关关闭时 `started` 恒为 `null`、`extensions` 恒为空** */
@@ -805,11 +1103,13 @@ async function defaultStart(extensions: HostedExtensionInfo[]): Promise<Extensio
 /**
  * **交接**：开关打开时把用户扩展清单交给 main 并请它 `start()` 宿主。
  *
- * 开关关闭（默认）时返回 `{ enabled: false, extensions: [], started: null }`，**不读 window、
- * 不发 IPC、不 start**——这就是"默认行为零变化"的那一半。
+ * 开关关闭时返回 `{ enabled: false, extensions: [], started: null }`，**不读 window、
+ * 不发 IPC、不 start**（2.0.0 起"默认开"，所以这条路径只在用户关掉设置项 / 环境变量显式关 /
+ * 本窗口已回退时走到；语义与旧实现逐字相同）。
  *
- * 交接结果永不 reject：`ehStart` 失败只降级成日志 + `ok:false`，否则会打断
- * `host.start()` 后续的贡献点注册（UI 会整个起不来）。
+ * 交接结果永不 reject：`ehStart` 失败只降级成日志 + `ok:false` + **自动回退**
+ * （`applyRendererFallback`：一次明确日志 + 会话标记 + 重新加载窗口），否则会打断
+ * `host.start()` 后续的贡献点注册（UI 会整个起不来），或者让用户看到"所有扩展消失"。
  */
 export function handOverToExtensionHost(
   options: ExtensionHostHandoverOptions
@@ -821,8 +1121,10 @@ export function handOverToExtensionHost(
 
   const extensions = [...options.extensions]
   const start = options.start ?? defaultStart
+  // 日志带**来源**：用户报"为什么扩展跑在主界面进程"时，这一行就是答案
+  const source = readExtensionHostSwitch().source
   logger.info(
-    `回退开关打开（${EXTENSION_HOST_ENV}=${String(options.flag).trim()}）：` +
+    `扩展宿主开关已打开（来源：${EXTENSION_HOST_SOURCE_TEXT[source]}）：` +
       `${extensions.length} 个用户扩展交给扩展宿主，渲染侧只注册贡献点、不激活`
   )
 
@@ -831,17 +1133,27 @@ export function handOverToExtensionHost(
       const outcome = await start(extensions)
       if (outcome.ok) {
         logger.info(`扩展宿主已启动（hostId=${outcome.hostId} pid=${outcome.pid}）`)
-      } else {
-        logger.error(
-          `扩展宿主启动失败（${outcome.code}）：${outcome.message}` +
-            `${outcome.detail ? ` / ${outcome.detail}` : ''}`
-        )
+        return outcome
       }
+      // 启动失败 ⇒ 自动回退到渲染进程（需求 4）。降级不抛错，调用方照旧继续启动 UI。
+      applyRendererFallback({
+        reason: `启动失败 ${outcome.code}`,
+        detail: outcome.message + (outcome.detail ? ` / ${outcome.detail}` : ''),
+        hostedCount: extensions.length,
+        logger,
+        reload: options.reload
+      })
       return outcome
     } catch (error) {
       // IPC 本身失败（handler 未注册 / 窗口正在关闭）：不抛出去，避免打断 host.start()
       const detail = describeError(error)
-      logger.error(`扩展宿主启动请求失败：${detail}`)
+      applyRendererFallback({
+        reason: '启动请求失败',
+        detail,
+        hostedCount: extensions.length,
+        logger,
+        reload: options.reload
+      })
       return { ok: false, code: 'EH_INTERNAL', message: `扩展宿主启动请求失败：${detail}` }
     }
   })()
