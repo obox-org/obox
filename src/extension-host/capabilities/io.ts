@@ -92,7 +92,12 @@ export const MAX_REDIRECTS = 5
  * `extensionHostStarter.registerMethod()` 负责。`reject` 即 main 回 `err`（或链路断开）。
  */
 export interface HostMainBridge {
-  request(method: string, params?: unknown): Promise<unknown>
+  /**
+   * @param options.timeoutMs 单次请求的超时覆盖（缺省用 `ACK_TIMEOUT_MS`）。
+   * **用于长操作**：`update.download` / `update.install` 在 main 侧要等整段下载/安装包下载，
+   * 3 秒的默认 ack 超时必然先触发（表现为扩展收到 `EH_TIMEOUT` 而操作其实还在跑）。
+   */
+  request(method: string, params?: unknown, options?: { timeoutMs?: number }): Promise<unknown>
 }
 
 /* -------------------------------------------------------------------------------------------- */

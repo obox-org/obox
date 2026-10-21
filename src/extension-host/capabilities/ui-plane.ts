@@ -107,6 +107,20 @@
  * 非空字符串，注释明说"新增已知 channel 时同步补到协议常量与文档"），而本卡所有权不含
  * `src/shared/extensionHostProtocol.ts`，因此这里用**局部常量** {@link UI_PLANE_EVENT_CHANNELS}
  * 声明 `output`，两侧逐字一致并由测试断言；把它并回协议常量是 D1 文档卡的一行活。
+ *
+ * # EH-D8b · overlay 归属（技术债 #13）
+ *
+ * 宿主进程里 `api.overlay.create` 由 main 建窗，**渲染侧的 `overlayOwners` 不会被回填**，于是页面
+ * 消息（`extension:message`，按 `appId`/`overlayId` 路由）永远找不到归属，`app.onMessage` 一律拿到
+ * 「扩展未注册消息处理器」（实测症状：宠物窗口看得见、动画在播，但面板空、点击全部无效）。
+ *
+ * 本卡补的就是那一条缝：宿主侧 create 成功后 **同步**发一条 `overlay-owner` 事件（`bind`），
+ * `destroy` 成功与扩展停用时发 `unbind`；渲染侧 `extensionHostConsumer` 收到后登记/注销
+ * `core/host.ts` 的 `overlayOwners`。协议零扩展（复用既有 `event` 信封 + 新 channel 名），
+ * `PROTOCOL_VERSION` 不变。
+ *
+ * 时序与失败姿态见 {@link UiPlaneHub.notifyOverlayOwner}：端口没到 ⇒ `EH_NOT_READY` 抛给
+ * `overlay.create`，让创建**明确失败**而不是建一个收不到消息的哑窗口。
  */
 import { mkdirSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -216,7 +230,7 @@ export const UI_RENDERER_RPC = {
 } as const
 
 /**
- * 本卡新增的 `event` channel（只有一条）。
+ * 本文件新增的 `event` channel（渠道名**集中在这一张表**，宿主与渲染侧各写一份逐字相同的常量）。
  *
  * 为什么不加进 `EH_EVENT_CHANNELS`：那是 `src/shared/extensionHostProtocol.ts` 的常量表，本卡
  * 所有权不含它；而协议**不限制** `event.channel` 的取值（`validateEnvelope` 只校验非空字符串，
@@ -225,7 +239,15 @@ export const UI_RENDERER_RPC = {
  */
 export const UI_PLANE_EVENT_CHANNELS = {
   /** 输出通道：create / append / appendLine / show / clear / dispose / disposeExtension */
-  output: 'output'
+  output: 'output',
+  /**
+   * **overlay 归属**（EH-D8b / 技术债 #13）：`bind` / `unbind` + `extId` + `overlayId`。
+   *
+   * 为什么单开一条而不是塞进 `app.register`：`app.register` 的载荷是"卡片/消息处理器"的注册面，
+   * 而这里描述的是**窗体的路由归属**（`overlayId → extId`）；混在一起会让"卡片 dispose"和
+   * "窗口销毁"两种生命周期互相干扰。协议不设 channel 白名单，所以新增一条是零协议成本的。
+   */
+  overlayOwner: 'overlay-owner'
 } as const
 
 /**
@@ -343,6 +365,25 @@ export interface UiModalResult {
  */
 export type UiUpdateGateResult =
   { ok: true; feedUrl?: string } | { ok: false; code: 'not-provider'; error: string }
+
+/* -------------------------------------------------------------------------------------------- */
+/* 载荷类型 · EH-D8b（overlay 归属；渲染侧 consumer 有结构相同的定义）                              */
+/* -------------------------------------------------------------------------------------------- */
+
+/**
+ * `overlay` 归属通道的载荷（宿主 → 渲染侧）。
+ *
+ * 语义：`bind` = 「overlayId 这个窗体属于 extId，页面消息按它寻址」；`unbind` = 「这个归属作废」。
+ * **extId 由宿主绑定**（扩展 API 里根本没有 extId 参数），渲染侧只做登记、不做信任判断——
+ * 它无法被页面/扩展伪造，因为这条事件只从宿主进程发出。
+ *
+ * `unbind` **幂等**：渲染侧只在"表里那条归属确实属于这个 extId"时才删（与 v1 `core/host.ts`
+ * 的 `if (this.overlayOwners.get(id) === ext.id) delete` 同一判据），所以重复/迟到的 unbind
+ * 不会误删别人的路由项。
+ */
+export type OverlayOwnerPayload =
+  | { v: 1; op: 'bind'; extId: string; overlayId: string }
+  | { v: 1; op: 'unbind'; extId: string; overlayId: string }
 
 /* -------------------------------------------------------------------------------------------- */
 /* 扩展清单（宿主自己读；与 ipc.ts 的 R61 同一先例）                                                */
@@ -656,6 +697,18 @@ export interface UiPlaneHub {
    * 第一个 runtime 的激活器锁死在单例里；换成 setter 后"最后一次 init 说了算"，与真实语义一致。
    */
   setActivateHandler(handler: ActivationHandler | null): void
+  /**
+   * **overlay 归属**（EH-D8b / 技术债 #13）：宿主创建的 overlay 也要能被渲染侧的 `app.onMessage`
+   * 寻址。
+   *
+   * 谁会调它：`apiFactory` 把它交给 `capabilities/host-main.ts` 的 overlay 路径（宿主进程里
+   * `api.overlay.create` / `destroy` / 停用回收时各发一条）。`extId` 由调用方（装配处）绑定，
+   * 扩展侧拿不到这个参数，因此归属**不可被扩展伪造**。
+   *
+   * 端口没到 ⇒ **抛 `EH_NOT_READY`**（与 `emit` 同一口径，不静默）：调用方（overlay.create）
+   * 据此让创建明确失败，而不是留下一个"页面消息永远找不到归属"的哑窗口。
+   */
+  notifyOverlayOwner(extId: string, overlayId: string, op: 'bind' | 'unbind'): void
   /** 为某个扩展构造能力 */
   forExtension(options: UiPlaneExtensionOptions): UiPlaneExtension
   /** 关掉 hub（宿主退出时；幂等） */
@@ -763,6 +816,30 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     if (!rendererPort) {
       throw new EhProtocolError('EH_NOT_READY', HOST_RENDERER_PORT_MISSING)
     }
+  }
+
+  /**
+   * overlay 归属登记/注销（EH-D8b）：把「overlayId 属于 extId」告诉渲染侧。
+   *
+   * 三个决定：
+   * 1. **端口没到 ⇒ 抛 `EH_NOT_READY`**（`requirePort`）：宿主创建 overlay 时拿不到渲染侧通道，
+   *    渲染侧的 `overlayOwners` 就永远补不上，窗口会变成"看得见、消息永远寻址不到"的哑窗口
+   *    （技术债 #13 的症状）。宁可让 `overlay.create` 当场失败，也不静默建一个假的成功。
+   * 2. **空 id 不发声**：`extId`/`overlayId` 都不是非空字符串时发一条脏事件毫无意义（渲染侧只会
+   *    丢弃并告警）。真正的参数校验在调用方与 main（`validateOverlayRequest`）。
+   * 3. **不缓存、不重放**：端口挂上之前的绑定不能事后补发——那时窗口可能已经被回收，
+   *    补发会留下一条指向死窗口的路由项。
+   */
+  const notifyOverlayOwner = (extId: string, overlayId: string, op: 'bind' | 'unbind'): void => {
+    if (typeof extId !== 'string' || extId.trim() === '') return
+    if (typeof overlayId !== 'string' || overlayId.trim() === '') return
+    requirePort()
+    emit(UI_PLANE_EVENT_CHANNELS.overlayOwner, {
+      v: UI_PLANE_PAYLOAD_VERSION,
+      op,
+      extId,
+      overlayId
+    })
   }
 
   const stateOf = (extId: string): ExtensionPlaneState | undefined => extensions.get(extId)
@@ -1662,6 +1739,26 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       return typeof gate.feedUrl === 'string' && gate.feedUrl !== '' ? gate.feedUrl : undefined
     }
 
+    /**
+     * 长操作的 ack 超时覆盖（R72）。
+     *
+     * 默认 `ACK_TIMEOUT_MS` 是 3 秒——那是"普通往返"的预算。`update.download` / `update.install`
+     * 在 main 侧要等**整段下载**（几十 MB～几百 MB），3 秒必然先超时：扩展会收到 `EH_TIMEOUT`
+     * 而操作其实还在跑。这类失败还会连带丢掉"3 秒后才发生"的真实错误原因（sha512 不匹配、写盘失败），
+     * 于是状态栏只能停在「下载安装包中…」。`update.check` 也要拉一次 release 元数据（可走代理），
+     * 给 60 秒。
+     */
+    const updateRpcTimeout = (method: string): number | undefined => {
+      if (
+        method === HOST_MAIN_METHODS.updateDownload ||
+        method === HOST_MAIN_METHODS.updateInstall
+      ) {
+        return 15 * 60 * 1000
+      }
+      if (method === HOST_MAIN_METHODS.updateCheck) return 60 * 1000
+      return undefined
+    }
+
     /** 发一条宿主 → main 的请求（缺桥 ⇒ 与 secrets/clipboard 同一句中文错误） */
     const callUpdateMain = async (
       api: string,
@@ -1677,7 +1774,9 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
         )
       }
       try {
-        return asRecord(await bridge.request(method, params))
+        return asRecord(
+          await bridge.request(method, params, { timeoutMs: updateRpcTimeout(method) })
+        )
       } catch (error) {
         if (error instanceof EhProtocolError) throw error
         throw new Error(`${api} 失败：${toErrorMessage(error)}`)
@@ -1897,6 +1996,7 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     setActivateHandler(handler: ActivationHandler | null): void {
       activateHandler = handler
     },
+    notifyOverlayOwner,
     forExtension,
     dispose(): void {
       if (disposed) return

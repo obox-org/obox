@@ -51,6 +51,21 @@
  * 里根本没有 extId 参数**，因此扩展无法指定别人的 id；越权判定完全复用 main 里那一份，
  * 不在这里抄第二份（抄一份就是让安全语义漂一份）。
  *
+ * ## overlay 的归属通知（EH-D8b / 技术债 #13）
+ *
+ * 宿主创建的 overlay 由 main 建窗，**渲染侧的 `overlayOwners` 不会被回填**：页面消息按
+ * `overlayId` 找不到所属扩展，`app.onMessage` 一律回「扩展未注册消息处理器」（实测症状：
+ * 宠物窗口看得见、动画在播，但面板永远空、点击全部无效）。
+ *
+ * 收口方式是**一条已有的 `event` 信封**（不加协议信封、不升 `PROTOCOL_VERSION`）：
+ * - `create` 成功之后、把结果回给扩展之前，**同步**发 `bind`（`overlayId → extId`）；
+ * - `destroy` 成功与 `dispose` 回收时发 `unbind`；
+ * - 出口由**装配处**注入（{@link HostMainCapabilitiesOptions.notifyOverlayOwner} ⇒
+ *   `capabilities/ui-plane.ts` 的 `notifyOverlayOwner`），因此 `extId` 的绑定仍然只在这里
+ *   一处，扩展无法自称属于别人；
+ * - 通知**送不到就抛**（端口未到 ⇒ `EH_NOT_READY`）：create 明确失败并尽力回收刚建的窗口，
+ *   绝不留一个"页面消息永远寻址不到"的哑窗口。
+ *
  * ## main → 宿主的事件：**轮询降级**（R65）
  *
  * 有 3 条能力是"订阅"语义：`window.onFocusChanged`、`update.onEvent`、`notification.show` 的
@@ -588,6 +603,23 @@ export interface HostMainCapabilitiesOptions {
    * 过期后的第一次 `get()` 会顺手发起后台刷新（下一次读就到新值）。单测传 `0` 可让每次读都刷新。
    */
   proxyCacheTtlMs?: number
+  /**
+   * **overlay 归属**的通知出口（EH-D8b / 技术债 #13）。
+   *
+   * 为什么必须有：宿主进程创建的 overlay 由 main 建窗，渲染侧的 `overlayOwners`
+   * （`overlayId → extId`）只在渲染进程自己的 `api.overlay.create` 路径里回填，于是页面消息
+   * 永远寻址不到该扩展（症状：窗口看得见，`app.onMessage` 全收不到）。
+   *
+   * 语义约定（调用点负责）：
+   * - `bind` 在 `overlay.create` **成功之后、返回结果之前同步发出**——页面能发第一条消息时归属已在表里；
+   * - `unbind` 在 `destroy` 成功与 `dispose` 回收时发出（幂等，渲染侧只删自己那条）；
+   * - **抛错 = 归属没送到**（生产由 ui-plane 的 `emit` 抛 `EH_NOT_READY`）：create 会因此失败并
+   *   尽力回收刚建的窗口，而不是留一个哑窗口。
+   *
+   * 缺省（不传）⇒ 不通知。只有**单测直连本工厂**时会这样；生产装配在 `apiFactory` 里把
+   * ui-plane 的 emit 出口接进来（`extId` 在那里绑定，扩展侧拿不到该参数 ⇒ 归属不可伪造）。
+   */
+  notifyOverlayOwner?: (overlayId: string, op: 'bind' | 'unbind') => void
 }
 
 /** 主进程类能力族 */
@@ -773,8 +805,25 @@ export function createHostMainCapabilities(
   /* --------------------------------------- overlay --------------------------------------- */
 
   /**
+   * 尽力销毁一个 overlay（**不抛错**）：只用于"归属通知失败后的回收"。
+   * 失败只记日志——回收失败也不该把真正的失败原因（归属没送到渲染侧）盖掉。
+   */
+  const destroyQuietly = async (id: string): Promise<void> => {
+    const target = bridge
+    if (target === undefined) return
+    try {
+      await target.request(HOST_MAIN_METHODS.overlayDestroy, { extId, id })
+    } catch (error) {
+      log('warn', `[${extId}] 归属通知失败后回收 overlay 失败：${id}`, toErrorMessage(error))
+    }
+  }
+
+  /**
    * overlay 四方法：`extId` 由本工厂绑定，扩展侧 API 没有这个参数。
    * 越权判定（`[overlay] 越权被拒`）**只在 main**：那里有真正的 `overlays` 归属表。
+   *
+   * **EH-D8b（技术债 #13）**：create 成功后同步发一条**归属通知**（`overlayId → extId`），
+   * 渲染侧据此登记 `overlayOwners`——否则宿主创建的窗口收到的页面消息永远寻址不到扩展。
    */
   const overlayApi: ExtensionActivationApi['overlay'] = {
     async create(request: CreateOverlayRequest): Promise<OverlayResult> {
@@ -785,7 +834,23 @@ export function createHostMainCapabilities(
         await call('overlay.create', HOST_MAIN_METHODS.overlayCreate, { extId, request }),
         'overlay.create'
       )
-      if (!result.ok && id !== '') createdOverlays.delete(id)
+      if (!result.ok) {
+        if (id !== '') createdOverlays.delete(id)
+        return result
+      }
+      // 顺序是契约：**建窗成功之后、把结果回给扩展之前**同步发出归属通知，于是"页面能发第一条
+      // 消息"（窗口加载完才可能）时路由项已经在渲染侧表里（ADR-0026 / 技术债 #13 的时序要求）。
+      if (id !== '') {
+        try {
+          options.notifyOverlayOwner?.(id, 'bind')
+        } catch (error) {
+          // 归属没送到（生产：ui-plane 抛 EH_NOT_READY）⇒ 窗口已经建出来，但它永远收不到页面
+          // 消息 = 哑窗口。不静默降级：尽力回收窗体，再把错误抛给调用方让 create 明确失败。
+          createdOverlays.delete(id)
+          await destroyQuietly(id)
+          throw error
+        }
+      }
       return result
     },
     async destroy(id: string): Promise<OverlayResult> {
@@ -795,7 +860,20 @@ export function createHostMainCapabilities(
         'overlay.destroy'
       )
       // ok 覆盖"销毁成功"与"幂等：本就不存在"；越权被拒时不动别人的登记
-      if (result.ok) createdOverlays.delete(target)
+      if (result.ok) {
+        createdOverlays.delete(target)
+        // EH-D8b：归属跟着窗体一起注销（渲染侧幂等：只删属于本扩展的那条）。
+        // 端口可能已经不在（页面正在销毁）⇒ 只记日志，不把"窗体确实销毁了"变成 destroy 失败。
+        try {
+          options.notifyOverlayOwner?.(target, 'unbind')
+        } catch (error) {
+          log(
+            'warn',
+            `[${extId}] 注销 overlay 归属失败（渲染侧可能留一条指向已销毁窗体的路由）：${target}`,
+            toErrorMessage(error)
+          )
+        }
+      }
       return result
     },
     async setMouseThrough(id: string, through: boolean): Promise<OverlayResult> {
@@ -1141,14 +1219,20 @@ export function createHostMainCapabilities(
       hub.dispose()
       // 回收本扩展创建过的 overlay（v1：停用/卸载即销毁窗体；这里是"尽力而为"，失败只记日志）
       const target = bridge
-      if (target !== undefined) {
-        for (const id of [...createdOverlays]) {
-          void target
-            .request(HOST_MAIN_METHODS.overlayDestroy, { extId, id })
-            .catch((error: unknown): void => {
-              log('warn', `[${extId}] 停用时销毁 overlay 失败：${id}`, toErrorMessage(error))
-            })
+      for (const id of [...createdOverlays]) {
+        // EH-D8b：**先注销归属**（渲染侧 overlayOwners 里不留脏 id），再销毁窗体。
+        // 端口已经不在（页面销毁 / 宿主退出）时只记日志：清理不该因一条事件送不出去而中断。
+        try {
+          options.notifyOverlayOwner?.(id, 'unbind')
+        } catch (error) {
+          log('warn', `[${extId}] 停用时注销 overlay 归属失败：${id}`, toErrorMessage(error))
         }
+        if (target === undefined) continue
+        void target
+          .request(HOST_MAIN_METHODS.overlayDestroy, { extId, id })
+          .catch((error: unknown): void => {
+            log('warn', `[${extId}] 停用时销毁 overlay 失败：${id}`, toErrorMessage(error))
+          })
       }
       createdOverlays.clear()
       // 轮询源也一并关掉：停用后不该还有在途请求（幂等）

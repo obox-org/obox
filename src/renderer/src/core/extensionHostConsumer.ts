@@ -82,6 +82,24 @@
  *
  * 回退开关：关闭时消费者是空壳（`enabled: false`），`ensureActivated` 返回 `skipped` 且**零请求**；
  * 调用方（`core/host.ts`）先看 `enabled`，关闭态根本不会走宿主路径。
+ *
+ * ---
+ *
+ * # EH-D8b · overlay 归属（技术债 #13）
+ *
+ * 宿主进程里 `api.overlay.create` 由 main 建窗，**渲染侧的 `overlayOwners` 不会被回填**——那张表
+ * 只在渲染进程自己的 `api.overlay.create` 路径里写。于是页面消息（`extension:message`，按
+ * `appId`/`overlayId` 路由）永远找不到所属扩展，`app.onMessage` 一律回「扩展未注册消息处理器」
+ * （实测：宠物窗口看得见、动画在播，但面板永远空、点击全无效）。
+ *
+ * 本卡给消费者加**第四条入口**（不新增 RPC、不改协议）：收 `overlay-owner` 事件
+ * （{@link HOSTED_UI_EVENT_CHANNELS}），把 `bind` / `unbind` 转成
+ * `HostedUiHostAdapter.registerHostedOverlayOwner()` 的登记/注销（落到 `core/host.ts` 的
+ * `overlayOwners`）。扩展停用时（`disposeExtension`）连同归属一起撤，避免表里留脏 id。
+ *
+ * 时序：宿主在 `overlay.create` 成功之后、把结果回给扩展之前**同步**发 `bind`，所以"页面能发
+ * 第一条消息"（窗口加载完才可能）时路由项已经在表里；端口未到时宿主侧抛 `EH_NOT_READY`，
+ * 让 `overlay.create` 明确失败（不建哑窗口）。
  */
 import {
   EH_EVENT_CHANNELS,
@@ -174,7 +192,14 @@ export const HOSTED_RENDERER_RPC = {
 
 /** 本卡新增的 `event` channel（与宿主侧 `UI_PLANE_EVENT_CHANNELS` 逐字一致） */
 export const HOSTED_UI_EVENT_CHANNELS = {
-  output: 'output'
+  output: 'output',
+  /**
+   * **overlay 归属**（EH-D8b / 技术债 #13）：宿主创建的 overlay 的 `overlayId → extId`。
+   *
+   * 没有它，宿主模式下 `core/host.ts` 的 `overlayOwners` 永远不会回填（回填只发生在渲染进程
+   * 自己的 `api.overlay.create` 里），页面消息一律得到「扩展未注册消息处理器」。
+   */
+  overlayOwner: 'overlay-owner'
 } as const
 
 /** 渲染侧**没有窗口**时的中文错误（与宿主侧 `UI_WINDOW_MISSING` 同一句） */
@@ -276,9 +301,12 @@ export interface HostedUiTransport {
 /**
  * 宿主侧（`core/host.ts`）要提供的那一点点内部入口。
  *
- * 目前**只有一条**：把宿主扩展的 `app.onMessage` 处理器挂进既有消息桥的归属路由
- * （`appMessageHandlers`）。其余数据消费者直接落到 store——那本来就是"唯一的真相"，
- * 多绕一层 host 反而会造出第二份状态（host.ts 保持最小侵入）。
+ * 只有两条，都是"渲染侧消息桥的归属表"：
+ * 1. `app.onMessage` 处理器（`appMessageHandlers`）——宿主扩展的消息实现；
+ * 2. **overlay 归属**（`overlayOwners`，EH-D8b）——宿主创建的 overlay 的 `overlayId → extId`。
+ *
+ * 其余数据消费者直接落到 store——那本来就是"唯一的真相"，多绕一层 host 反而会造出第二份状态
+ * （host.ts 保持最小侵入）。
  */
 export interface HostedUiHostAdapter {
   /** 登记一个宿主扩展的 App 消息处理器（返回注销函数） */
@@ -286,6 +314,17 @@ export interface HostedUiHostAdapter {
     extensionId: string,
     handler: (channel: string, payload: unknown) => unknown | Promise<unknown>
   ): () => void
+  /**
+   * 登记一个**宿主进程创建的 overlay** 的归属（EH-D8b / 技术债 #13；返回注销函数）。
+   *
+   * 为什么需要：宿主模式的 overlay 由宿主的 `api.overlay.create` 经 main 建窗，渲染进程自己的
+   * `api.overlay.create`（唯一会回填 `overlayOwners` 的地方）根本没被调用，于是页面消息寻址不到
+   * 该扩展——症状是"窗口看得见、动画在播，但面板空、点击全无效"。
+   *
+   * **可选**：渲染侧适配器可能还没有这一条（旧版 `core/host.ts`、或单测的假适配器）。缺省时收到
+   * 归属事件只记一条 warn（响亮，不静默——否则又变成"看起来什么都没配"）。
+   */
+  registerHostedOverlayOwner?(extensionId: string, overlayId: string): () => void
 }
 
 /** 消费者的构造参数 */
@@ -435,6 +474,19 @@ type OutputPayload =
   | { v: 1; op: 'dispose'; extId: string; id: string }
   | { v: 1; op: 'disposeExtension'; extId: string }
 
+/**
+ * `overlay-owner` 通道的统一信封体（EH-D8b；与宿主侧 `OverlayOwnerPayload` 结构一致）。
+ *
+ * `op` 只有 `bind` / `unbind` 两种：前者登记 `overlayId → extId`，后者注销。
+ * `extId` **来自宿主注入**，渲染侧只登记、不做信任判断（扩展无法指定别人的 id）。
+ */
+interface OverlayOwnerPayload {
+  v: 1
+  op: 'bind' | 'unbind'
+  extId: string
+  overlayId: string
+}
+
 /* -------------------------------------------------------------------------------------------- */
 /* 默认实现                                                                                      */
 /* -------------------------------------------------------------------------------------------- */
@@ -493,6 +545,11 @@ interface ExtensionTraces {
   readonly appCards: Map<string, () => void>
   /** `app.onMessage` 的注销函数 */
   appMessageHandler: (() => void) | null
+  /**
+   * 宿主创建的 overlay 归属注销函数（overlayId → off；EH-D8b）。
+   * 扩展停用（`disposeExtension`）时逐个调用，避免 `core/host.ts` 的 `overlayOwners` 里留下脏 id。
+   */
+  readonly overlayOwners: Map<string, () => void>
 }
 
 /** 空消费者（开关关闭时返回；所有方法都是空操作） */
@@ -558,7 +615,8 @@ export function createExtensionHostConsumer(
       commands: new Map(),
       treeProviders: new Map(),
       appCards: new Map(),
-      appMessageHandler: null
+      appMessageHandler: null,
+      overlayOwners: new Map()
     }
     traces.set(extId, created)
     return created
@@ -1071,6 +1129,75 @@ export function createExtensionHostConsumer(
     logger.warn(`未知的 app.register 子操作 ${String((payload as { op?: unknown }).op)}`)
   }
 
+  /* --------------------------------- overlay 归属（EH-D8b） --------------------------------- */
+
+  /**
+   * 宿主说"这个 overlay 属于这个扩展"（`bind`）/ "这个归属作废"（`unbind`）：登记/注销到
+   * `core/host.ts` 的 `overlayOwners`（页面消息按 `overlayId` 寻址 `app.onMessage` 的那张表）。
+   *
+   * 三条语义：
+   * 1. **只登记、不做信任判断**：`extId` 由宿主注入（扩展 API 里没有这个参数），页面与扩展都
+   *    无法伪造归属；渲染侧没有任何"再校验一次"的余地，也不需要；
+   * 2. **幂等**：`unbind` 只处理自己那条（没有登记就 no-op）；重复的 `bind` 先撤旧再登记，
+   *    保证表里同一个 overlayId 永远只有一条注销函数；
+   * 3. **响亮**：载荷不合法 / 适配器没有 `registerHostedOverlayOwner` ⇒ warn + 丢弃。绝不静默——
+   *    静默的表现正是技术债 #13 那个"看起来什么都没配、实际消息全丢"。
+   */
+  const applyOverlayOwner = (payload: OverlayOwnerPayload): void => {
+    const extId = typeof payload.extId === 'string' ? payload.extId.trim() : ''
+    const overlayId = typeof payload.overlayId === 'string' ? payload.overlayId.trim() : ''
+    const op = payload.op
+    if (extId === '' || overlayId === '' || (op !== 'bind' && op !== 'unbind')) {
+      logger.warn(
+        `overlay-owner 载荷不合法（op=${String(op)} extId=${String(payload.extId)} ` +
+          `overlayId=${String(payload.overlayId)}），已丢弃`
+      )
+      return
+    }
+    const hostAdapter = options.host
+    const register = hostAdapter?.registerHostedOverlayOwner
+    if (!hostAdapter || register === undefined) {
+      logger.warn(
+        `宿主报告了 overlay ${overlayId} 属于扩展 ${extId}，但渲染侧的 host 适配器没有 ` +
+          'registerHostedOverlayOwner：该窗口的页面消息会被回「扩展未注册消息处理器」'
+      )
+      return
+    }
+    if (op === 'unbind') {
+      // 没登记过就什么都不做（重复/迟到的 unbind 不是错误）。这里用 `traces.get` 而不是
+      // `traceOf`：这个扩展可能刚被 `cleanupExtension` 整体清理过，不能为了注销一条归属又
+      // 凭空造出一个空痕迹（那会让 `stats()` 与后续清理多出一条无主记录）。
+      const owner = traces.get(extId)?.overlayOwners.get(overlayId)
+      if (owner === undefined) return
+      traces.get(extId)?.overlayOwners.delete(overlayId)
+      try {
+        owner()
+      } catch (error) {
+        logger.warn(`注销 overlay 归属失败（${extId}/${overlayId}）：${describeError(error)}`)
+      }
+      return
+    }
+    const trace = traceOf(extId)
+    // `bind` 可重复（宿主重建窗口）：先撤旧再登记，避免旧注销函数把新归属删掉
+    const existing = trace.overlayOwners.get(overlayId)
+    if (existing !== undefined) {
+      trace.overlayOwners.delete(overlayId)
+      try {
+        existing()
+      } catch (error) {
+        logger.warn(
+          `重建 overlay 归属前撤销旧登记失败（${extId}/${overlayId}）：${describeError(error)}`
+        )
+      }
+    }
+    try {
+      // 用 `call` 绑回适配器：`core/host.ts` 的方法是实例方法（`this.overlayOwners`）
+      trace.overlayOwners.set(overlayId, register.call(hostAdapter, extId, overlayId))
+    } catch (error) {
+      logger.warn(`登记 overlay 归属失败（${extId}/${overlayId}）：${describeError(error)}`)
+    }
+  }
+
   /* --------------------------------- 设置页与设置值 --------------------------------- */
 
   const applySettings = (payload: SettingsHostPayload): void => {
@@ -1118,6 +1245,15 @@ export function createExtensionHostConsumer(
       for (const dispose of trace.treeProviders.values()) dispose()
       for (const dispose of trace.appCards.values()) dispose()
       trace.appMessageHandler?.()
+      // EH-D8b：overlay 归属也撤（window 由宿主回收；渲染侧路由表不该留下指向死窗口的 id）
+      for (const off of trace.overlayOwners.values()) {
+        try {
+          off()
+        } catch (error) {
+          logger.warn(`停用 ${extId} 时注销 overlay 归属失败：${describeError(error)}`)
+        }
+      }
+      trace.overlayOwners.clear()
       traces.delete(extId)
     }
     appStore.deactivateExtension(extId)
@@ -1153,6 +1289,10 @@ export function createExtensionHostConsumer(
       case HOSTED_UI_EVENT_CHANNELS.output:
         // EH-B3b-2：输出通道（协议常量里没有 output 语义的通道，本卡用局部常量声明，见文件头）
         applyOutput(payload as OutputPayload)
+        return
+      case HOSTED_UI_EVENT_CHANNELS.overlayOwner:
+        // EH-D8b：宿主创建的 overlay 的归属（页面消息按 overlayId 寻址 app.onMessage）
+        applyOverlayOwner(payload as OverlayOwnerPayload)
         return
       case EH_EVENT_CHANNELS.theme:
       case EH_EVENT_CHANNELS.bubble:
