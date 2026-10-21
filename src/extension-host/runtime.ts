@@ -419,9 +419,14 @@ export class ExtensionHostRuntime {
           rendererPort: this.currentRendererPort(),
           // EH-B1：宿主 → main 的反向通道（net.fetch 读代理、clipboard 转给 main）。
           // 用同一个 RpcClient：method 由 main 侧的 `extensionHostStarter.registerMethod()` 应答。
+          // `options.timeoutMs` 透传：`update.download` / `update.install` 这类长操作要放宽
+          // 默认的 3 秒 ack 超时（否则扩展必先收到 EH_TIMEOUT，而操作其实还在跑）。
           hostMain: {
-            request: (method: string, params?: unknown): Promise<unknown> =>
-              this.rpcClient.request(method, params)
+            request: (
+              method: string,
+              params?: unknown,
+              options?: { timeoutMs?: number }
+            ): Promise<unknown> => this.rpcClient.request(method, params, options)
           }
         })
     })

@@ -118,3 +118,35 @@
 | 22 | **宿主进程没有 `--inspect` 接线**：CDP 断点只能打在渲染进程侧，宿主侧调试只能靠日志 | D1 发现 | `extensionHostStarter` 支持 inspect 端口透传 + 文档写 attach 步骤 |
 | 23 | **脚手架不写 `apiVersion`**（`skills/obox-ext-init/scripts/create-*.mjs`） | D1 发现 | 已裁定：**保持不声明**（更兼容旧宿主），在 skill 文档注明「用到宿主专有能力时才改 3」 |
 
+
+## 阶段 D 记录（2.0.0-rc.1 → 正式版之间）
+
+### 五个用户扩展的宿主适配（D3–D7，均已在各自仓库发版）
+
+| 扩展 | 新版本 | 关键修复 | apiVersion / activationEvents |
+| --- | --- | --- | --- |
+| obox-updater | **1.1.2** | 3 秒 ack 超时不再被当成失败；`getVersion` 补 catch | 1 / 缺省 `*` |
+| rdp | **1.0.5** | 卡片页面 URL 由 `file://` 改为 `app://extensions/<目录名>/…`（否则白窗）；补 sidecar/cwd/分帧审计用例 | 1 / 缺省 `*` |
+| todo | **1.1.0** | 数据迁到宿主 `api.globalState`（页面 localStorage 降级为兜底）+ 卡片 URL 修复；**并入远端同期新功能**（截止时间、循环任务、提前完成确认、到期提醒） | 3 / ["*"] |
+| webapp | **1.0.7** | 卡片页面 URL 修复；冷缓存下两处不可逆动作（清空进度改强制写、默认根回填加闸门防覆盖用户外部根） | 1 / 缺省 `*` |
+| pet | **2.0.1** | 浮层页面 URL 修复（否则宠物整窗不出现）；README 补宿主模式已知不可用项 | 2 / 缺省 `*` |
+
+判据统一是"**不改会怎样**"：`apiVersion` 只在真依赖宿主专有能力时升（本批只有 todo 升 3）；
+`activationEvents` 只在有明确懒激活入口时才写（本批全部保持缺省 `*`——它们都需要启动即注册
+卡片/状态栏/消息处理器，写 `onCommand:` 会导致卡片永不出现）。
+
+### 宿主侧修的两个真缺陷（D8b / R72）
+
+1. **技术债 #13 收口**：宿主创建的 overlay 现在能被 `app.onMessage` 寻址（见上表 #13 退场）。
+   pet 的 6 条页面→入口通道因此恢复，宿主模式下宠物可交互。
+2. **长操作 ack 超时**：`update.download` / `update.install` 单独放宽到 15 分钟，`check` 60 秒
+   （见技术债 #25：这是给预算，不是根治）。
+
+### 验证现状
+
+- **`test/extension-host-real-extensions.test.ts`（D8a，14 条）**：用**磁盘上的真实清单与真实入口文件**
+  驱动**真实宿主运行时**（loader 真 import、apiFactory 全生产能力），5 个扩展全部 active、
+  plugin(api) 全部执行、零抛错。这是本轮最有价值的一条证据——此前所有测试都用 ESM 夹具，
+  从未加载过真扩展。
+- **仍未做的**：GUI 层面实机验证（宠物浮层是否真的画出来、卡片子窗口是否真的打开、sidecar 真实
+  spawn 后的行为）。`docs/update-and-release-verification.md` 第 12 节列了 R1–R6 六项。
