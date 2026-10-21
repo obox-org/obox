@@ -140,6 +140,9 @@ class ExtensionHost {
    * （resolveMessageExtId）——桌面宠物一类**后台扩展**不注册 App 卡片，页面把自己的
    * overlayId 当 appId 发消息（design D-3/D-11；overlayId 全局唯一由主进程创建时保证，
    * 见 main/appWindow.ts createOverlayWindow 的重复 id 拒绝）。
+   *
+   * **宿主模式（EH-D8b / 技术债 #13）**：宿主进程里 `api.overlay.create` 不经过这里，所以它的
+   * 归属由消费者经 {@link ExtensionHost.registerHostedOverlayOwner} 登记（同一张表、同一条路由）。
    */
   private overlayOwners = new Map<string, string>()
 
@@ -766,9 +769,9 @@ class ExtensionHost {
    * （那些 store 就是唯一真相，多绕一层 host 只会造出第二份状态）。本卡对 host.ts 的侵入
    * 就这一条方法——`handleExtensionMessage` 与 `overlayOwners` 一律不动。
    *
-   * 已知残留（技术债 #7）：宿主扩展创建的 overlay 收不到 `app.onMessage`——overlay 的归属表
-   * （`overlayOwners`）由渲染侧 `api.overlay.create` 回填，而宿主模式的 overlay 创建在宿主侧
-   * （EH-B3a 的 `capabilities/host-main.ts`），本卡不改那个文件。
+   * 技术债 #13（宿主创建的 overlay 收不到 `app.onMessage`）由
+   * {@link ExtensionHost.registerHostedOverlayOwner} 收口：处理器表与归属表各补一个入口，
+   * `handleExtensionMessage` 与 `resolveMessageExtId` 仍然一行不改。
    */
   registerHostedAppMessageHandler(
     extensionId: string,
@@ -786,6 +789,35 @@ class ExtensionHost {
       if (this.appMessageHandlers.get(extensionId) === handler) {
         this.appMessageHandlers.delete(extensionId)
       }
+    }
+  }
+
+  /**
+   * **EH-D8b 的唯一内部入口**：登记「宿主进程创建的 overlay」的归属（`overlayId → 扩展 id`）。
+   *
+   * 为什么需要它（技术债 #13）：`overlayOwners` 原本只在渲染侧的 `buildOverlayApi().create`
+   * 成功时回填；宿主模式的 overlay 走宿主的 `api.overlay.create` → main 的 `createOverlayWindow`，
+   * 渲染侧根本没有一次 `create` 调用，于是页面消息按 `overlayId` 查不到所属扩展、一律回
+   * 「扩展未注册消息处理器」（症状：宠物窗口看得见、动画在播，但面板空、点击全无效）。
+   *
+   * 谁会调它：`core/extensionHostConsumer.ts` 收到宿主的 `overlay-owner` 事件后调用
+   * （`bind` ⇒ 本方法，`unbind` ⇒ 返回值）。归属的 `extId` **由宿主绑定**、扩展侧 API 里没有这个
+   * 参数，渲染侧只登记不做信任判断——所以它不可被页面/扩展伪造。
+   *
+   * 只碰 `overlayOwners`：路由（`resolveMessageExtId`）与回包（`handleExtensionMessage`）**一行不改**，
+   * 于是宿主窗口与渲染侧创建的窗口走**同一条**消息路径。
+   */
+  registerHostedOverlayOwner(extensionId: string, overlayId: string): () => void {
+    if (typeof extensionId !== 'string' || extensionId.trim() === '') {
+      throw new Error('registerHostedOverlayOwner 的 extensionId 必须是非空字符串')
+    }
+    if (typeof overlayId !== 'string' || overlayId.trim() === '') {
+      throw new Error(`registerHostedOverlayOwner(${extensionId}) 的 overlayId 必须是非空字符串`)
+    }
+    this.overlayOwners.set(overlayId, extensionId)
+    return (): void => {
+      // 只在"这条归属仍属于这个扩展"时删：宿主重建/热重载后到达的旧注销函数不该误删新归属
+      if (this.overlayOwners.get(overlayId) === extensionId) this.overlayOwners.delete(overlayId)
     }
   }
 

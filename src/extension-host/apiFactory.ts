@@ -19,6 +19,10 @@
  *   同样落在 `./capabilities/ui-plane.ts`（宿主建 `RpcClient` → 渲染侧 `RpcServer`：UI 由渲染侧
  *   `uiStore` 渲染、通道落到 `outputStore`、更新门控由渲染侧 `updaterStore` 权威判定）。
  *   **到这里对照表 99 实现 + 0 桩**——本文件不再有桩，`STUB_MARK` 仅作为"将来若再加桩"的推导口径保留。
+ * - **EH-D8b**：**overlay 归属**（技术债 #13）——数据面 hub 提前到 host-main 之前装配，把
+ *   ui-plane 的 `notifyOverlayOwner` 出口交给 `./capabilities/host-main.ts` 的 overlay 路径，
+ *   于是**宿主创建的 overlay** 也能被渲染侧登记进 `overlayOwners`、被 `app.onMessage` 寻址
+ *   （此前只有渲染进程自己 `api.overlay.create` 的窗口才在表里）。协议零扩展。
  *
  * ## 扩展 data 目录（R62）：唯一计算点
  *
@@ -323,6 +327,17 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
 
   /* ------------------------- 已实现：主进程类能力族（EH-B3a） ------------------------- */
 
+  // EH-D8b：数据面 hub 必须**先于** host-main 造出来（EH-B3b-1 起它原本在更下面），因为要把
+  // "overlay 归属"的 emit 出口交给 overlay 路径（宿主创建的 overlay 也要能被 `app.onMessage`
+  // 寻址，技术债 #13）。`rendererPort` 由 runtime 从 `createHostPortsFromParentPort()` 透传；
+  // 缺省 ⇒ 明确 EH_NOT_READY。
+  const uiPlane: UiPlaneHub =
+    options.uiPlane ??
+    getSharedUiPlaneHub({
+      rendererPort: options.rendererPort ?? null,
+      log: options.log
+    })
+
   // EH-B3a：window / overlay / dialog / shell / notification / secrets /
   // update.getVersion / update.onEvent / proxy.get 的实现全部在 capabilities/host-main.ts。
   // 这些能力只在 main 有实现（宿主进程没有 Electron 模块），所以统一走宿主内部 RPC；
@@ -331,7 +346,13 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     extId,
     log: options.log,
     hostMain: options.hostMain,
-    runSafely: options.runSafely
+    runSafely: options.runSafely,
+    // EH-D8b（技术债 #13）：宿主创建的 overlay 成功后必须让渲染侧登记 `overlayId → extId`，
+    // 否则页面消息永远寻址不到本扩展（宠物窗口"看得见但点不动"）。`extId` 在这里绑定 ——
+    // 扩展侧 API 没有这个参数，所以归属**不可被扩展伪造**；渲染侧只登记、不做信任判断。
+    notifyOverlayOwner: (overlayId: string, op: 'bind' | 'unbind'): void => {
+      uiPlane.notifyOverlayOwner(extId, overlayId, op)
+    }
   })
 
   /* ---------------------------------- 已实现：fs ---------------------------------- */
@@ -429,13 +450,7 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
 
   // EH-B3b-1：statusBar / navbar / commands / views / settings / theme / i18n / app / on·emit
   // 全部在 capabilities/ui-plane.ts（宿主 → 渲染侧的 host-renderer 通道 + 宿主内命令表/事件总线）。
-  // `rendererPort` 由 runtime 从 `createHostPortsFromParentPort()` 透传；缺省 ⇒ 明确 EH_NOT_READY。
-  const uiPlane: UiPlaneHub =
-    options.uiPlane ??
-    getSharedUiPlaneHub({
-      rendererPort: options.rendererPort ?? null,
-      log: options.log
-    })
+  // hub 本身在上面的 EH-B3a 之前就造好了（EH-D8b：overlay 归属通知要用它的 emit 出口）。
   const plane = uiPlane.forExtension({
     extId,
     extensionDir,
