@@ -5,6 +5,7 @@
 import { reactive } from 'vue'
 import type { ThemeContribution } from './types'
 import { stateStore } from './state'
+import { HOST_THEME_TOKEN_NAMES, collectThemeTokens } from './appTheme'
 
 export interface RegisteredTheme extends ThemeContribution {
   extensionId: string
@@ -74,12 +75,36 @@ class ThemeStore {
       if (!nextKeys.has(key)) root.style.removeProperty(key)
     }
     this.appliedTokenKeys = nextKeys
+    this.pushTokensToHost()
   }
 
   /** 应用当前持久化主题（启动时调用） */
   applyCurrent(): void {
     const theme = this.current
     if (theme) this.apply(theme)
+    // 没有主题扩展时也要推一次：浮层窗口需要 `main.css` 的默认 token，
+    // 否则它自己那份 `:root` 里没有这些变量（页面是独立文档）。
+    else this.pushTokensToHost()
+  }
+
+  /**
+   * 把**当前生效**的 token（含 `main.css` 默认值，不是主题声明值）上报给主进程，
+   * 由它下发给所有 overlay 浮层窗口（2.0.1）。
+   *
+   * 为什么读 `getComputedStyle` 而不是 `theme.tokens`：主题可能只声明部分 token，
+   * 其余要回落到默认值——浮层页要的是"最终生效值"这一份完整快照。
+   * 失败一律吞掉：主题下发不了不能影响主界面。
+   */
+  private pushTokensToHost(): void {
+    try {
+      const tokens = collectThemeTokens(
+        (name) => getComputedStyle(document.documentElement).getPropertyValue(name),
+        HOST_THEME_TOKEN_NAMES
+      )
+      window.api?.themePushTokens?.({ themeId: this.current?.id ?? '', tokens })
+    } catch {
+      // 忽略：极端情况下（如 DOM 尚未就绪）下次主题变更会再推一次
+    }
   }
 
   /** 供子窗口注入：当前主题的 token 组 */

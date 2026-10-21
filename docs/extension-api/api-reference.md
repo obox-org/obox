@@ -396,6 +396,18 @@ overlay 页面里**没有 `api` 对象**（扩展入口只跑在主窗口），�
 - **overlay 不参与 `api.ui` 模态框转发**：主进程 `ui.ts` 的 `isChild` 判定按 `obox-window=app` 命中，overlay 不命中 ⇒ `api.ui.showForm` 一类回**主窗口**本地渲染（`{ local: true }`）。这是**预期取舍**而不是 bug（overlay 页面本身没有 api 对象、也开不了模态框，`src/renderer/src/AppWindow.vue:307-313`、`src/renderer/src/main.ts:18-19`）。
 - **60s 请求超时（overlay 复用）**：`app:extension-message` 桥的超时仍是 **60s**（`src/main/appWindow.ts:185-193`；`60_000` 这个值全文件只设定在这一处），overlay 走同一条逻辑。因此扩展若用**长轮询 hold**（入口 hold 到状态变化或超时再 reply）做"入口 → 页面"的状态同步，**hold 必须小于 60s**（宠物扩展用 25s，`extensions/pet/lib/constants.js:38-40`，其 `test/bridge.test.js:131-133` 把"`SUBSCRIBE_HOLD_MS` < `HOST_REQUEST_TIMEOUT_MS`"钉成断言）。`destroy` 时该窗口的 pending 请求由 `flushPendingReplies` **立即**以「overlay 窗体已销毁」结算，不用空等 60s（`:162-170,475-480`）。
 
+#### 主题 token（overlay 页面拿不到主窗口的 CSS 变量）
+
+overlay 是**独立文档**（`app://extensions/<id>/dist/index.html` 由主进程建窗加载）：CSS 自定义属性
+**不跨文档继承**，App 子窗口那条 `obox-theme` postMessage 也送不到它。所以**宿主会在页面就绪后
+把 25 个主题 token 下发到该窗口的 `documentElement` 上**（2.0.1 起）：
+
+- 渲染侧主题生效/变更后上报一份"当前生效 token 快照" → 主进程缓存并广播给所有 overlay；
+  新建的 overlay 在 `dom-ready` 时补发缓存的那一份；
+- preload 收到后写到 `document.documentElement.style`（内联样式，优先级高于页面自己的 `:root`）；
+- **扩展侧无需做任何事**：直接写 `var(--bg-panel)` / `var(--fg)` 即可；但页面**必须自带兜底值**
+  或保证在 token 到达前不依赖它们渲染关键内容（首帧可能早于下发）。
+- 只接受 `--x` 形状的 token 名（`shared/themeTokens.ts` 校验），其它属性名会被丢弃。
 #### 透明窗体的五处绘制点（宿主外壳侧）
 
 透明 overlay 要"完全透出桌面"，宿主侧一共改了**五处**，任一处漏改都会得到不透明窗体（排查清单见 [troubleshooting.md 第 34 条](troubleshooting.md#34-透明-overlay-窗体看起来不透明)）：

@@ -3,6 +3,11 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { getUserExtensionsDir } from './capabilities'
 import type { CreateOverlayRequest, OverlayAnchor, OverlayResult } from '../shared/types'
+import {
+  OVERLAY_THEME_CHANNEL,
+  isThemeTokensPayload,
+  type ThemeTokensPayload
+} from '../shared/themeTokens'
 
 /** 打开子窗口的请求（渲染进程 App 视图发起） */
 export interface OpenAppWindowRequest {
@@ -249,6 +254,43 @@ interface OverlayEntry {
 }
 const overlays = new Map<string, OverlayEntry>()
 
+/**
+ * 最近一次从渲染进程收到的主题 token（2.0.1）。
+ *
+ * 为什么 main 要缓存：浮层是主进程建的独立文档，页面加载完成时才知道自己需要 token；
+ * 而主题只在渲染侧生效/变更时产生 ⇒ "建窗后 dom-ready 补发一份缓存"是唯一可靠时序。
+ */
+let overlayThemePayload: ThemeTokensPayload = { themeId: '', tokens: {} }
+
+/**
+ * 渲染进程主题生效后调用：缓存并**立即广播**给所有已存在的 overlay 窗口。
+ *
+ * 校验不过就丢弃（跨进程边界不接受任意 `style.setProperty` 属性名）。
+ */
+export function setOverlayTheme(payload: unknown): void {
+  if (!isThemeTokensPayload(payload)) {
+    console.warn('[overlay] 主题 token 载荷非法，已忽略')
+    return
+  }
+  overlayThemePayload = payload
+  let sent = 0
+  for (const entry of overlays.values()) {
+    const wc = entry.win.webContents
+    if (wc.isDestroyed()) continue
+    try {
+      wc.send(OVERLAY_THEME_CHANNEL, overlayThemePayload)
+      sent += 1
+    } catch (error) {
+      console.warn(`[overlay] 主题 token 下发失败（${entry.extId}/${entry.overlayId}）`, error)
+    }
+  }
+  console.log(
+    `[overlay] 主题 token 已更新：themeId=${payload.themeId || '(默认)'} tokens=${
+      Object.keys(payload.tokens).length
+    } 个，已下发给 ${sent} 个浮层窗口`
+  )
+}
+
 const overlayKey = (extId: string, overlayId: string): string => `${extId}:${overlayId}`
 
 /** anchor 合法值白名单（与 shared/types.ts 的 OverlayAnchor 联合一致；越界值直接拒绝） */
@@ -455,6 +497,18 @@ export function createOverlayWindow(extIdRaw: unknown, reqRaw: unknown): Overlay
   })
 
   void win.loadURL(urlForChild(overlayQuery(extId, req.id, req.url)))
+
+  // 浮层的主题 token：页面是独立文档（CSS 变量不跨文档继承），所以每次 dom-ready 都补发一份
+  // main 缓存的 payload（2.0.1）。放在 ready-to-show 之前，面板首帧就能拿到颜色。
+  win.webContents.on('dom-ready', () => {
+    const wc = win.webContents
+    if (wc.isDestroyed()) return
+    try {
+      wc.send(OVERLAY_THEME_CHANNEL, overlayThemePayload)
+    } catch (error) {
+      console.warn(`[overlay] 主题 token 补发失败（${extId}/${req.id}）`, error)
+    }
+  })
 
   // 创建后**默认鼠标穿透**（design D-2）：透明 overlay 不应一出现就吞掉其覆盖区域的桌面点击；
   // forward:true 让悬停移动仍转发给页面——页面据此做命中测试，命中精灵/面板时再调

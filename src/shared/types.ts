@@ -579,6 +579,17 @@ export interface MainApi {
   ehGetStatus(): Promise<ExtensionHostStatusSnapshot>
   /** 主动停止宿主（幂等；页面重新加载后端口已随旧页面销毁时，这是重建链路的第一步） */
   ehStop(): Promise<void>
+  /**
+   * 把当前生效的主题 token 上报给主进程（**overlay 浮层窗口的主题下发**，2.0.1）。
+   *
+   * 为什么需要：浮层是主进程 new BrowserWindow 加载的独立文档，CSS 自定义属性不跨文档继承，
+   * App 子窗口那条 `obox-theme` postMessage 也送不到它 ⇒ 浮层页里的 `var(--bg-panel)` 全部
+   * 解析为空、面板透明。链路：渲染侧主题生效后调用本方法 → 主进程缓存并向所有 overlay
+   * `webContents.send('theme:tokens')` → preload 写到 documentElement。
+   *
+   * 载荷只接受 `--x` 形状的 token 名与字符串值（`shared/themeTokens.ts` 校验）。
+   */
+  themePushTokens(payload: { themeId: string; tokens: Record<string, string> }): void
 }
 
 /* -------------------------------------------------------------------------------------------- */
