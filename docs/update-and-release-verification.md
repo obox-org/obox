@@ -293,3 +293,29 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 | R6 | 宿主崩溃后的自动回退 | 关掉 `taskkill` 宿主进程，应自动回退并提示，不是"扩展全部消失" |
 
 **本轮未覆盖（如实登记）**：仅 Windows 双架构；未在 macOS/Linux 构建；D3–D7 的 5 个扩展改造（`apiVersion` 升级与 `activationEvents` 声明）尚未进行 —— 它们以 1/2/未声明版本在 2.0.0 上仍可加载，但尚未针对宿主模式做专门验证。
+## 13. v2.0.0 正式版数据（2026-10-21 发布）
+
+把 obox **2.0.0**（Extension Host 迁移正式版）的发版实测数据落到
+`docs/update-and-release-verification.md` 第 13 节：
+
+- **预发布转正**：`v2.0.0` 的 `prerelease=false`、`draft=false`，`/releases/latest` 由
+  `v1.0.17` 变为 **`v2.0.0`**；`v2.0.0-rc.1` 仍保留为 prerelease 作为历史。
+- **资产 7 项**：`obox-2.0.0-x64-setup.exe`（122,001,093 B）、`obox-2.0.0-arm64-setup.exe`
+  （116,424,741 B）、`obox-2.0.0-setup.exe`（237,587,986 B，无架构后缀的"臃肿包"）、
+  三份 `*.blockmap`、`latest.yml`（649 B）。
+- **`latest.yml` 一致性**：`version: 2.0.0`，三份安装包**尺寸与 release 资产逐一相等**，
+  `path: obox-2.0.0-setup.exe`，顶层 `sha512` 与首项一致，`releaseDate: 2026-10-21T04:43:44.725Z`。
+- **发版前置修复**：CI 在 `security:audit` 步骤拦下一条**新披露的高危告警**（`vite 7.0.0–7.3.6`
+  的 launch-editor 三条 Windows 命令注入：GHSA-698v-4r3x-3vcv / GHSA-r825-w8mm-5pxw /
+  GHSA-587h-7wmj-h5pm），已升 `vite 7.3.7` 并把 `package.json` 的最小版本提到 `^7.3.7`
+  （只改 lock 会被下一次 `npm install` 落回旧版）。这一条是**发版前**被 CI 挡住、而不是发出去才
+  发现 —— 也说明"本地 `npm audit` 为 0"不能替代 CI（告警库当时刚更新，本地尚未同步）。
+- **本版包含**：`api` 99 项能力全部在宿主进程实现（0 桩）、`apiVersion` 3、`activationEvents`
+  四类 + 缺省 `*`、宿主执行默认开（设置可关 + 启动失败自动回退）、技术债 #13 收口
+  （宿主创建的 overlay 可被 `app.onMessage` 寻址 ⇒ 宠物在宿主模式下可交互）、
+  5 个用户扩展同步发版（updater 1.1.2 / rdp 1.0.5 / todo 1.1.0 / webapp 1.0.7 / pet 2.0.1）。
+- **验证**：`npm test` **1260 passed + 5 skipped**（含 `test/extension-host-real-extensions.test.ts`：
+  用磁盘上的真实清单与真实入口驱动真实宿主运行时，5 个扩展全部 active、零抛错）；
+  `npm run security:audit` 0 告警、Dependabot 开放告警 0、合并后工作区 clean。
+- **仍未做**：GUI 层面的人工验证（第 12 节 R1–R6）——包括"设置里关掉开关后重启是否真的回到
+  渲染进程执行"这条退路，以及宠物浮层/卡片子窗口/真实 sidecar spawn 的可见行为。
