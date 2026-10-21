@@ -38,8 +38,10 @@ import {
   createOverlayWindow,
   destroyOverlay,
   setOverlayMouseThrough,
-  setOverlayPosition
+  setOverlayPosition,
+  setOverlayTheme
 } from './appWindow'
+import { THEME_TOKENS_PUSH_CHANNEL } from '../shared/themeTokens'
 // EH-B3a：dialog 的两个**纯函数**（属性归一 / 目录模式判定）是既有的，复用而不是重写规则
 import { isDirectoryProperties, normalizeDialogProperties } from './ext'
 import { registerOixIpc } from './oix'
@@ -539,6 +541,14 @@ app.whenReady().then(() => {
   ipcMain.handle(EH_STATUS_IPC, (): ExtensionHostStatusSnapshot => starter.getStatus())
   // 状态迁移（idle → starting → ready → …）推给窗口：A5 / 扩展管理器据此展示 phase 与崩溃原因
   starter.onStatus(broadcastExtensionHostStatus)
+
+  // ---- 主题 token 下发（overlay 浮层，2.0.1）----
+  // 渲染侧主题生效后上报一份"当前生效 token"快照；这里缓存并广播给所有浮层窗口。
+  // 浮层是主进程建的独立文档，拿不到主窗口 documentElement 上的 CSS 变量（这就是
+  // "宠物面板透明"的根因）；载荷形状与 token 名校验在 shared/themeTokens.ts。
+  ipcMain.on(THEME_TOKENS_PUSH_CHANNEL, (_event, payload: unknown): void => {
+    setOverlayTheme(payload)
+  })
 
   // ---- EH-B1：宿主 → main 的两条内部 RPC（宿主能力实现用，不进扩展 API 面） ----
   // 1) 代理配置：宿主进程没有 Chromium session，`net.fetch` 只能自己应用代理/忽略 SSL，

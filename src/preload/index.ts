@@ -12,6 +12,13 @@ import type {
   WindowAction
 } from '../shared/types'
 import type { HostedExtensionInfo } from '../shared/extensionHostProtocol'
+import {
+  OVERLAY_THEME_CHANNEL,
+  THEME_TOKENS_PUSH_CHANNEL,
+  applyThemeTokens,
+  isThemeTokensPayload,
+  type ThemeTokensPayload
+} from '../shared/themeTokens'
 
 // 渲染进程可调用的能力桥（经 contextBridge 暴露为 window.api）
 const api: MainApi = {
@@ -140,7 +147,19 @@ const api: MainApi = {
     ipcRenderer.invoke('eh:start', extensions),
   ehGetPort: (): Promise<ExtensionHostPortStatus> => ipcRenderer.invoke('eh:get-port'),
   ehGetStatus: (): Promise<ExtensionHostStatusSnapshot> => ipcRenderer.invoke('eh:get-status'),
-  ehStop: (): Promise<void> => ipcRenderer.invoke('eh:stop')
+  ehStop: (): Promise<void> => ipcRenderer.invoke('eh:stop'),
+  // 主题 token 上报（overlay 浮层，2.0.1）：fire-and-forget，不等回复
+  themePushTokens: (payload: { themeId: string; tokens: Record<string, string> }): void => {
+    try {
+      if (!isThemeTokensPayload(payload)) {
+        console.warn('[theme] themePushTokens 载荷非法，已忽略')
+        return
+      }
+      ipcRenderer.send(THEME_TOKENS_PUSH_CHANNEL, payload)
+    } catch (error) {
+      console.warn('[theme] themePushTokens 发送失败', error)
+    }
+  }
 }
 
 // 主进程 → 渲染进程事件订阅
@@ -319,6 +338,26 @@ const eh: ExtensionHostBridgeSurface = {
     }
   }
 }
+
+// ---- 主题 token 下发（overlay 浮层，2.0.1）----
+// 浮层是独立文档，CSS 变量不跨文档继承 ⇒ 由主进程把 token 送到每个窗口，这里写到 documentElement。
+// 主窗口也会收到（main 定向广播时会跳过它的可能性由主进程决定），重复写同样的值是无害的。
+let appliedThemeTokens: string[] = []
+ipcRenderer.on(OVERLAY_THEME_CHANNEL, (_event, payload: unknown) => {
+  if (!isThemeTokensPayload(payload)) {
+    console.warn('[theme] 收到非法的主题 token 载荷，已忽略')
+    return
+  }
+  try {
+    appliedThemeTokens = applyThemeTokens(
+      document,
+      payload as ThemeTokensPayload,
+      appliedThemeTokens
+    )
+  } catch (error) {
+    console.warn('[theme] 应用主题 token 失败', error)
+  }
+})
 
 // Custom APIs for renderer
 if (process.contextIsolated) {

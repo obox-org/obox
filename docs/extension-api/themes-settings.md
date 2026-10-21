@@ -66,6 +66,12 @@ for (const ms of [0, 300, 1000]) {
 
 > 收到推送后可以停掉后续重试（记一个 `received` 标志）。`scripts/create-user-extension.mjs` 生成的骨架已内置这段逻辑（`installAppThemeBridge()`）。
 
+### overlay（浮层）窗口的主题下发
+
+App **子窗口/iframe** 走上面的 `obox-theme` postMessage；**overlay 浮层窗口**是独立文档、拿不到
+主窗口的 CSS 变量，因此宿主在 2.0.1 起改为**直接下发到该窗口的 `documentElement`**（详见
+`api-reference.md` 的 `overlay` 一节「主题 token」）。两条链路的差别只有"送到哪儿"，
+token 名与取值完全一致，所以同一个组件的 `var(--…)` 写法在两种容器里都能生效。
 ### Token 全量参考
 
 | Token             | 默认值（Dark）                 | 说明                                          |
