@@ -319,3 +319,45 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
   `npm run security:audit` 0 告警、Dependabot 开放告警 0、合并后工作区 clean。
 - **仍未做**：GUI 层面的人工验证（第 12 节 R1–R6）——包括"设置里关掉开关后重启是否真的回到
   渲染进程执行"这条退路，以及宠物浮层/卡片子窗口/真实 sidecar spawn 的可见行为。
+
+## 14. v2.0.1 / v2.0.2 补丁发版数据（2026-10-21 → 10-28）
+
+两个补丁版都是**2.0.0 真机反馈**驱动，且都由 CI 拦下最后一次门禁后才发出。
+
+### v2.0.1 —— overlay 浮层拿不到主题 token（宠物面板透明）
+
+- **触发方式**：`git tag v2.0.1` + push ⇒ `release.yml`（`on.push.tags: v*`）。
+- **资产 7 项**：`obox-2.0.1-x64-setup.exe`（122,004,200 B）、`obox-2.0.1-arm64-setup.exe`
+  （116,427,732 B）、`obox-2.0.1-setup.exe`（237,594,093 B）、三份 blockmap、`latest.yml`（649 B）；
+  `latest.yml` 的 `version: 2.0.1`，三份安装包尺寸与资产逐一相等。
+- **修的问题**：浮层是主进程建的独立文档，CSS 自定义属性不跨文档继承，而宿主只把 token 注入主窗口
+  ⇒ 浮层里 `var(--bg-panel)` 全解析为空。改为渲染侧上报"当前生效 token 快照" → main 缓存并广播给
+  所有 overlay → 新窗 `dom-ready` 补发 → preload 写到 `documentElement`。
+
+### v2.0.2 —— 升级丢档 + 管理器提示 + 依赖告警
+
+- **资产 7 项**：`obox-2.0.2-x64-setup.exe`（121,761,399 B）、`obox-2.0.2-arm64-setup.exe`
+  （116,491,994 B）、`obox-2.0.2-setup.exe`（237,415,561 B）、三份 blockmap、`latest.yml`（649 B）；
+  `latest.yml` 的 `version: 2.0.2`，尺寸逐一相等；`/releases/latest` = **v2.0.2**。
+- **修的问题**：
+  1. **升级后旧目录数据不继承**（真缺陷）：安装目录名从 `<manifest.name>` 改为
+     `<name>_<author>`，升级时程序进新目录、数据留旧目录 ⇒ 表现为"存档全丢"。现于**启动扫描期**
+     把旧 `data/` 递归**复制**到新目录（只补、不删、不覆盖；新目录有数据则完全不动）。
+  2. 管理器显示「待重启生效」徽标（`pendingInstall` 不再被误判成"清单无效"）。
+  3. 无效清单卡片显示**第一条具体错误**（此前只有"清单无效（N）"，排查时多轮猜测）。
+  4. **依赖告警 5 条**（告警库更新后暴露的既有依赖，非本版代码引入）：
+     `electron 44.6.0 → 44.10.0`（high，eMudhra 中间证书缓解）、
+     `undici 6.29.0 → 6.29.1` 与 `7.30.0 → 7.30.1`（high，EventSource 无界内存等 DoS）、
+     `vitest 4.1.11 → 4.1.12`（moderate）、`fast-uri 3.1.8 → 3.1.9`（moderate）。
+     全部为补丁级升级，并把 `package.json` 的最低版本钉到已修版本（避免下次 `npm install` 落回旧版）。
+- **门禁**：`npm ci` 重装后 `npm audit --audit-level=moderate` **0 告警**；`npm run typecheck` 0 error；
+  `npm run lint` 0 error（4 条既有 warning）；`npm test` **1277 passed + 5 skipped**；`npm run build` 成功。
+
+### 三个版本并存的关系
+
+`v2.0.0` / `v2.0.1` / `v2.0.2` 均为正式版（`prerelease=false`），各 7 项资产；
+`/releases/latest` 指向 **v2.0.2**。`v2.0.0-rc.1` 保留为 prerelease 作为历史。
+
+> 教训（三次都成立）：**"单测全绿"不等于"用户能用"**。这三个真机问题（浮层主题、热安装状态误判、
+> 升级丢档）都只能靠装包运行暴露；而依赖告警两次都是**告警库更新后**才出现，靠本地 `npm audit`
+> 的一次快照不足以证明"没告警"——所以 CI 的 `security:audit` 是必经门禁，不是形式。
