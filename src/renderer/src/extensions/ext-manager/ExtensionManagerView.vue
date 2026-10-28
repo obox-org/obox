@@ -60,6 +60,18 @@ function showNotice(msg: string): void {
   setTimeout(() => (notice.value = ''), 5000)
 }
 
+/**
+ * 卡片上展示的第一条错误文案。
+ *
+ * 为什么不能只显示"清单无效（N）"：那条信息无法区分**版本门槛过高**、**字段拼错**、
+ * **安装未完成**这三类完全不同的原因。2.0.0 上排查过一个"宠物清单无效"的现场，
+ * 就是因为卡片不显示原因而绕了很久（磁盘上的清单其实是合法的）。
+ */
+function firstErrorMessage(ext: ExtensionInfo): string {
+  const first = ext.validations.find((v) => v.severity === 'error') ?? ext.validations[0]
+  return first?.message ?? ''
+}
+
 /** 立即重启渲染进程（VS Code Reload Window 语义） */
 function reloadWindow(): void {
   window.location.reload()
@@ -291,11 +303,20 @@ const sourceLabel = (s: string): string =>
             {{ t('common.debug') }}
           </span>
           <span v-if="!ext.enabled" class="badge disabled">{{ t('common.disabled') }}</span>
+          <!-- 待补跑安装钩子（重装/升级时装完但钩子没跑）：清单是合法的、能正常加载，
+               只是要重启才生效。不给徽标时用户会把"待生效"误判成"包坏了"（2.0.0 上发生过）。 -->
+          <span v-else-if="ext.pendingInstall" class="badge pending">
+            {{ t('extManager.states.pendingRestart') }}
+          </span>
         </div>
         <div class="card-author">{{ ext.manifest.author ?? t('extManager.unknownAuthor') }}</div>
         <div class="card-desc">{{ ext.manifest.description ?? t('extManager.noDescription') }}</div>
+        <!-- 无效时把**第一条具体错误**也显示出来：只有"清单无效（N）"时，用户与排查者
+             都无法判断是版本门槛、字段拼错还是安装未完成。 -->
         <div v-if="!ext.isValid" class="card-error">
-          {{ t('extManager.invalidManifest') }}（{{ ext.validations.length }}）
+          {{ t('extManager.invalidManifest') }}（{{ ext.validations.length }}）：{{
+            firstErrorMessage(ext)
+          }}
         </div>
       </div>
       <div v-if="filtered.length === 0" class="empty">{{ t('common.empty') }}</div>
@@ -568,6 +589,10 @@ const sourceLabel = (s: string): string =>
 .badge.disabled {
   background: #5a5a5a;
   color: var(--fg, #cccccc);
+}
+.badge.pending {
+  background: #7d6a33;
+  color: #ffffff;
 }
 .detail {
   flex: 1;
