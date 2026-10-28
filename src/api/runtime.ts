@@ -38,6 +38,13 @@ export interface ExtensionInfo {
   activationError?: string
   /** 是否需重启生效（状态刚变更，尚未重启） */
   requiresRestart?: boolean
+  /**
+   * 待补跑的 install 钩子（安装时渲染进程不可用 → 下次启动补跑）。
+   *
+   * 管理器据此显示「待重启生效」徽标：这类扩展**清单合法、能正常加载**，只是安装钩子还没跑；
+   * 不给徽标时，用户很容易把"待生效"误判成"包坏了"（2.0.0 上就发生过）。
+   */
+  pendingInstall?: { version: string; at: number; previousVersion?: string }
   /** 安装时间戳（用户扩展） */
   installedTimestamp?: number
 }

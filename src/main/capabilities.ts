@@ -3,6 +3,7 @@ import { promises as fs } from 'fs'
 import { join, basename } from 'path'
 import { spawn } from 'child_process'
 import type { AppInfo, UserExtensionEntry } from '../shared/types'
+import { migrateLegacyExtensionData } from './extensionDataMigration'
 import {
   normalizeExtensionId,
   refreshScannedExtensions,
@@ -43,6 +44,15 @@ async function listUserExtensionIds(): Promise<string[]> {
     try {
       await fs.access(join(root, id, 'manifest.json'))
       valid.push(id)
+      // 旧目录名的数据继承（2.0.2）：安装目录名曾是 `<manifest.name>`，现在是
+      // `<name>_<author>`；从旧版升级上来的用户数据会留在旧目录里 ⇒ 这里补一次复制。
+      // 放在扫描期而不是只在安装时：**已经升级过**的用户下次启动也能自动迁移。
+      const migration = await migrateLegacyExtensionData(root, id)
+      if (migration.migrated) {
+        console.log(
+          `[capabilities] 已继承旧目录数据：${id} ⇐ ${migration.from}（${migration.files ?? 0} 个文件）`
+        )
+      }
     } catch {
       console.warn(`[capabilities] 跳过没有 manifest.json 的目录: ${id}（扩展数据目录或调试扩展）`)
     }

@@ -276,7 +276,10 @@ export function makeExtensionInfo(
   manifest: ExtensionManifest,
   source: ExtensionSource,
   enabled: boolean,
-  extra?: { installedTimestamp?: number }
+  extra?: {
+    installedTimestamp?: number
+    pendingInstall?: { version: string; at: number; previousVersion?: string }
+  }
 ): ExtensionInfo {
   const validations = validateManifest(manifest)
   return {
@@ -287,7 +290,8 @@ export function makeExtensionInfo(
     validations,
     enabled,
     isActive: false,
-    installedTimestamp: extra?.installedTimestamp
+    installedTimestamp: extra?.installedTimestamp,
+    pendingInstall: extra?.pendingInstall
   }
 }
 

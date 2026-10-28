@@ -1109,7 +1109,8 @@ class ExtensionHost {
     for (const entry of entries) {
       const enabled = !stateStore.isDisabled(entry.id)
       const info = makeExtensionInfo(entry.id, entry.manifest, entry.source, enabled, {
-        installedTimestamp: entry.installedTimestamp
+        installedTimestamp: entry.installedTimestamp,
+        pendingInstall: entry.pendingInstall
       })
       all.push(info)
       if (enabled && info.isValid) this.loaders.set(entry.id, entry.load)
@@ -1274,7 +1275,8 @@ class ExtensionHost {
 
     const enabled = !stateStore.isDisabled(id)
     const info = makeExtensionInfo(id, entry.manifest, 'user', enabled, {
-      installedTimestamp: entry.installedTimestamp
+      installedTimestamp: entry.installedTimestamp,
+      pendingInstall: entry.pendingInstall
     })
     this.extensions.set(id, info)
 
