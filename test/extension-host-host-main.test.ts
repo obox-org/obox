@@ -1032,7 +1032,7 @@ test('源码门禁：宿主能力文件不 import electron（extension-host.js �
 /* 11. 对照表（EH-B3b-1 之后）                                                                     */
 /* -------------------------------------------------------------------------------------------- */
 
-test('对照表：EH-B3b-2 之后 101 已实现 + 0 桩 = 101（阶段 B 能力面收口）', async (): Promise<void> => {
+test('对照表：EH-B3b-2 之后 103 已实现 + 0 桩 = 103（阶段 B 能力面收口）', async (): Promise<void> => {
   const dir = await mkdtemp(path.join(tmpdir(), 'obox-eh-b3a-table-'))
   try {
     const built = createExtensionApi({
@@ -1084,6 +1084,8 @@ test('对照表：EH-B3b-2 之后 101 已实现 + 0 桩 = 101（阶段 B 能力�
       'globalState.get',
       'globalState.keys',
       'globalState.update',
+      'http.names',
+      'http.register',
       'i18n.locale',
       'i18n.onLocaleChanged',
       'i18n.registerMessages',
@@ -1165,11 +1167,11 @@ test('对照表：EH-B3b-2 之后 101 已实现 + 0 桩 = 101（阶段 B 能力�
       'workspaceState.keys',
       'workspaceState.update'
     ])
-    assert.equal(rows.length, 101, '对照表共 101 项')
+    assert.equal(rows.length, 103, '对照表共 103 项')
     assert.equal(
       implemented.length,
-      101,
-      '已实现 101 项（61 + EH-B3b-1 的 28 + EH-B3b-2 的 10 + 2.0.3 跟手拖动的 2）'
+      103,
+      '已实现 103 项（61 + EH-B3b-1 的 28 + EH-B3b-2 的 10 + 2.0.3 跟手拖动的 2）'
     )
     assert.equal(stubs.length, 0, '桩 0 项（ui 5 / output 1 / update 4 已在 EH-B3b-2 落地）')
 

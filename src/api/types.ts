@@ -260,6 +260,23 @@ export interface ExtensionActivationApi {
     /** 结束跟手拖动（幂等：没在拖也返回 ok） */
     endDrag(id: string): Promise<OverlayResult>
   }
+  /**
+   * 外部 HTTP 指令（2.0.3）。
+   *
+   * 宿主在 `127.0.0.1` 上监听**随机端口**，外部程序可以：
+   * `POST http://127.0.0.1:<port>/command`，体 `{ command: "<扩展id>:<指令名>", payload }`，
+   * 头带 `x-obox-token`（端口与令牌写在 `<userData>/http-endpoint.json`）。
+   * 只绑回环、**不回 CORS 头**（浏览器页面读不到响应）。
+   *
+   * 处理器收到的就是请求体里的 `payload`，返回值原样作为 JSON 回给调用方；
+   * 与 `api.app.onMessage` 走**同一条桥**（通道 `http:<指令名>`），超时与错误归一完全复用。
+   */
+  http: {
+    /** 注册一条指令；返回注销函数（扩展 dispose 时也会自动清空）。指令名需匹配 `[a-z0-9._-]` */
+    register(name: string, handler: (payload: unknown) => unknown | Promise<unknown>): () => void
+    /** 本扩展已注册的指令名（诊断用） */
+    names(): string[]
+  }
   /** 扩展多语言能力（扩展语言包与宿主语言包独立命名空间） */
   i18n: {
     /** 按当前语言查扩展自己的语言包（key 缺省返回 key 本身） */

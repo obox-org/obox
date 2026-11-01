@@ -474,6 +474,8 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     registerCommand: plane.registerCommand,
     executeCommand: plane.executeCommand,
     statusBar: plane.statusBar,
+    // api.http（2.0.3）：外部 HTTP 指令注册（与 app.onMessage 同一条桥）
+    http: plane.http,
     navbar: plane.navbar,
     workspaceState,
     globalState,

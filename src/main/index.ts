@@ -44,6 +44,8 @@ import {
   endOverlayDrag,
   setOverlayTheme
 } from './appWindow'
+// 2.0.3：外部 HTTP 指令面（随机端口 + 令牌 + 端点文件；指令转发给主窗口渲染进程）
+import { registerHttpCommandsSync, startHttpCommandPlane, stopHttpCommandPlane } from './httpPlane'
 import { THEME_TOKENS_PUSH_CHANNEL } from '../shared/themeTokens'
 // EH-B3a：dialog 的两个**纯函数**（属性归一 / 目录模式判定）是既有的，复用而不是重写规则
 import { isDirectoryProperties, normalizeDialogProperties } from './ext'
@@ -474,6 +476,10 @@ app.whenReady().then(() => {
   const hiddenAtStartup = startedByAutoStart(process.argv)
   if (hiddenAtStartup) console.log('[auto-start] 由开机自启拉起：静默启动，只创建托盘')
   const mainWindow = ensureMainWindow({ hidden: hiddenAtStartup })
+
+  // 2.0.3：外部 HTTP 指令面（随机端口 + 令牌 + 端点文件）。失败只记日志，不阻断启动。
+  registerHttpCommandsSync()
+  void startHttpCommandPlane(() => mainWindow)
 
   // 扩展宿主进程（ADR-0026 / EH-A2）的**注册接线**：通道 IPC（eh:get-port）+ 与主窗口同生共死
   // （closed ⇒ terminate/kill，宽限后强杀）。本卡不启动宿主，现有行为不变。
@@ -1046,6 +1052,8 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   markQuitting()
   destroyTray()
+  // 2.0.3：HTTP 指令面随应用退出关闭（端口不残留；幂等）
+  stopHttpCommandPlane()
   // 扩展宿主随应用退出一起清理（幂等：窗口 closed 时可能已经清过；不 await 以免拖住退出）
   void extensionHost?.dispose()
   void cleanupAllExtensionResources().then((result) => {

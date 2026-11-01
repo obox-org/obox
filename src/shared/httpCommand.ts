@@ -93,3 +93,23 @@ export function parseHttpCommandName(
 export function httpCommandName(extId: string, name: string): string {
   return `${extId}${HTTP_COMMAND_SEPARATOR}${name}`
 }
+/**
+ * HTTP 指令在**既有消息桥**里的通道前缀。
+ *
+ * 为什么不新造一套 RPC：扩展处理一条指令本质是"拿到 channel + payload、回一个值"，与
+ * `api.app.onMessage` 完全同构。复用 `ui.appMessage` 意味着宿主模式与渲染模式**共用同一条**
+ * 派发路径（超时、错误归一、host-renderer 端口全都在里面），不必再造第三套代理。
+ */
+export const HTTP_CHANNEL_PREFIX = 'http:'
+
+/** 指令名 → 桥通道：`feed` ⇒ `http:feed` */
+export function httpChannelOf(name: string): string {
+  return `${HTTP_CHANNEL_PREFIX}${name}`
+}
+
+/** 桥通道 → 指令名（不是 HTTP 通道时回 `null`） */
+export function httpCommandOfChannel(channel: string): string | null {
+  if (!channel.startsWith(HTTP_CHANNEL_PREFIX)) return null
+  const name = channel.slice(HTTP_CHANNEL_PREFIX.length)
+  return name === '' ? null : name
+}

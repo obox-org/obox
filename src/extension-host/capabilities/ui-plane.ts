@@ -152,6 +152,7 @@ import {
   type ResponseEnvelope
 } from '../../shared/extensionHostProtocol'
 import { hasExplicitBudget, rpcBudgetMs } from '../../shared/rpcBudget'
+import { httpCommandOfChannel } from '../../shared/httpCommand'
 import { toErrorMessage } from '../errors'
 import type { EnvelopeSink, HostLogger } from '../log'
 import {
@@ -569,6 +570,8 @@ interface ExtensionPlaneState {
   readonly treeProviders: Map<string, TreeViewProvider>
   /** `app.onMessage` 注册的处理器（每扩展一个，与 v1 的 `appMessageHandlers` 同语义） */
   appMessageHandler: ((channel: string, payload: unknown) => unknown | Promise<unknown>) | null
+  /** `api.http.register` 注册的 HTTP 指令（指令名 → 处理器；走同一条桥，通道前缀 `http:`） */
+  readonly httpHandlers: Map<string, (payload: unknown) => unknown | Promise<unknown>>
   /** 运行时状态栏项（宿主侧句柄 id → 当前值；渲染侧按 id 找同一项） */
   readonly statusBarItems: Map<string, { text: string; tooltip?: string; visible: boolean }>
   /** 本扩展注册的事件总线订阅（停用时逐个退订，避免泄漏到下一个实例） */
@@ -674,6 +677,8 @@ export interface UiPlaneExtension {
   readonly executeCommand: ExtensionActivationApi['executeCommand']
   /** EH-B3b-2：交互 UI（渲染侧 `uiStore` 渲染，宿主发起请求） */
   readonly ui: ExtensionActivationApi['ui']
+  /** 2.0.3：外部 HTTP 指令注册（与 `app.onMessage` 同一条桥） */
+  readonly http: ExtensionActivationApi['http']
   /** EH-B3b-2：输出通道（渲染侧 `outputStore` 持有；本文件只发事件） */
   readonly output: ExtensionActivationApi['output']
   /** EH-B3b-2：更新门控（渲染侧 `updaterStore` 判定，放行后回 main） */
@@ -932,6 +937,19 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     const record = asRecord(params)
     const extId = typeof record.extId === 'string' ? record.extId : ''
     const state = stateOf(extId)
+    // 2.0.3：HTTP 指令复用这条桥（通道前缀 `http:`）——外部 HTTP → main → 渲染侧 → 这里。
+    // 先于 appMessage 判定，这样同一个扩展既有 app.onMessage 又能注册 HTTP 指令，互不占用。
+    const httpName = httpCommandOfChannel(typeof record.channel === 'string' ? record.channel : '')
+    if (httpName !== null) {
+      const httpHandler = state?.httpHandlers.get(httpName)
+      if (!httpHandler) {
+        throw new EhProtocolError(
+          'EH_UNKNOWN_EXT',
+          `扩展 ${extId || '(未给)'} 没有注册 HTTP 指令 ${httpName}（api.http.register）`
+        )
+      }
+      return await httpHandler(record.payload)
+    }
     const handler = state?.appMessageHandler
     if (!handler) {
       throw new EhProtocolError(
@@ -1121,6 +1139,7 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       runtimeMessages: new Map(),
       treeProviders: new Map(),
       appMessageHandler: null,
+      httpHandlers: new Map(),
       statusBarItems: new Map(),
       busCleanups: [],
       statusSeq: 0,
@@ -1990,6 +2009,7 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       state.treeProviders.clear()
       state.statusBarItems.clear()
       state.appMessageHandler = null
+      state.httpHandlers.clear()
       extensions.delete(extId)
     }
 
@@ -2008,6 +2028,35 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       ui,
       output,
       update,
+      /**
+       * `api.http`（2.0.3）：把外部 HTTP 指令注册到本扩展。
+       *
+       * 处理器收到的就是请求体里的 `payload`，返回值原样回给调用方；与 `app.onMessage` 共用
+       * 同一条桥（通道 `http:<指令名>`）⇒ 超时、错误归一、host-renderer 端口全部复用既有实现。
+       */
+      http: {
+        register(
+          name: string,
+          httpHandler: (payload: unknown) => unknown | Promise<unknown>
+        ): () => void {
+          const key = typeof name === 'string' ? name.trim() : ''
+          if (key === '' || !/^[a-z0-9][a-z0-9._-]*$/.test(key)) {
+            throw new Error(
+              `api.http.register 的指令名非法：${String(name)}（允许 [a-z0-9._-]，需以字母/数字开头）`
+            )
+          }
+          if (typeof httpHandler !== 'function') {
+            throw new Error('api.http.register 的 handler 必须是函数')
+          }
+          state.httpHandlers.set(key, httpHandler)
+          return (): void => {
+            if (state.httpHandlers.get(key) === httpHandler) state.httpHandlers.delete(key)
+          }
+        },
+        names(): string[] {
+          return [...state.httpHandlers.keys()]
+        }
+      },
       dispose: disposeExtension
     }
   }
