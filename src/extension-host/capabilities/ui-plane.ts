@@ -151,9 +151,14 @@ import {
   type RequestEnvelope,
   type ResponseEnvelope
 } from '../../shared/extensionHostProtocol'
+import { hasExplicitBudget, rpcBudgetMs } from '../../shared/rpcBudget'
 import { toErrorMessage } from '../errors'
 import type { EnvelopeSink, HostLogger } from '../log'
-import { unwrapParentPortMessage, type HostRendererPortLike } from '../port'
+import {
+  subscribeHostRendererPort,
+  unwrapParentPortMessage,
+  type HostRendererPortLike
+} from '../port'
 import {
   RpcClient,
   RpcServer,
@@ -753,6 +758,8 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
   let warnedColdCache = false
 
   let rendererPort: HostRendererPortLike | null = null
+  /** 端口入站订阅的退订函数（`dispose` 时调用；风格见 `subscribeHostRendererPort`） */
+  let unsubscribeRendererPort: (() => void) | null = null
   let sent = 0
   let disposed = false
   /**
@@ -934,7 +941,25 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       )
     }
     const channel = typeof record.channel === 'string' ? record.channel : ''
-    return await handler(channel, record.payload)
+    // 诊断（D-1）：handler 进出各一条 debug 日志。这条链路「渲染 → 宿主 → 扩展 handler」
+    // 跨进程，慢/挂起时必须能区分"根本没进 handler"与"handler 自己 await 住了"。
+    const startedAt = Date.now()
+    log('debug', `ui.appMessage 进入：ext=${extId} channel=${channel}`)
+    try {
+      const data = await handler(channel, record.payload)
+      log(
+        'debug',
+        `ui.appMessage 完成：ext=${extId} channel=${channel} ${Date.now() - startedAt}ms`
+      )
+      return data
+    } catch (error) {
+      log(
+        'warn',
+        `ui.appMessage 失败：ext=${extId} channel=${channel} ${Date.now() - startedAt}ms ` +
+          toErrorMessage(error)
+      )
+      throw error
+    }
   })
 
   /**
@@ -1007,14 +1032,17 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
   const attachRendererPort = (port: HostRendererPortLike | null): void => {
     if (!port || port === rendererPort || disposed) return
     rendererPort = port
-    // 挂 `onmessage` 即隐式 `start()`：端口在 start 之前会把消息**排队**，所以"拿到就挂"
-    // 不会丢渲染侧早发的快照（它比宿主的 init 还早一个 IPC 往返）。
+    // 订阅风格由 `subscribeHostRendererPort` 决定（`on('message')` 优先）：
+    // `MessagePortMain` 没有 `onmessage` 语义，直接赋值会静默失败——入站永远收不到，
+    // 表现为所有渲染侧请求超时（2.0.x 实测 30 秒无响应，pet 面板永远"正在连接"）。
     try {
-      port.onmessage = (event: unknown): void => {
+      const subscription = subscribeHostRendererPort(port, (event: unknown): void => {
         handleRendererMessage(unwrapParentPortMessage(event))
-      }
+      })
+      unsubscribeRendererPort = subscription.unsubscribe
+      log('debug', `host-renderer 端口已订阅（风格=${subscription.mode}）`)
     } catch (error) {
-      log('warn', '挂 host-renderer 端口的 onmessage 失败', toErrorMessage(error))
+      log('warn', '订阅 host-renderer 端口失败', toErrorMessage(error))
     }
   }
 
@@ -1025,7 +1053,14 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       log('warn', '收到非对象的渲染侧消息，已忽略')
       return
     }
-    const envelope = raw as { t?: unknown; channel?: unknown; payload?: unknown }
+    const envelope = raw as { t?: unknown; channel?: unknown; payload?: unknown; method?: unknown }
+    // 诊断（D-1）：入站第一行。区分"渲染侧没发出来"与"发出来了宿主没派发"——
+    // 这条链路跨进程，缺了它只能靠猜（2.0.x 排查 pet 时正是这样耗掉很多轮）。
+    log(
+      'debug',
+      `渲染侧入站：t=${String(envelope.t)}` +
+        (envelope.t === 'req' ? ` method=${String(envelope.method)}` : '')
+    )
     if (envelope.t === 'req') {
       rpc.handleRequest(raw as RequestEnvelope)
       return
@@ -1740,24 +1775,18 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     }
 
     /**
-     * 长操作的 ack 超时覆盖（R72）。
+     * 长操作的 ack 超时覆盖（R72 → 收敛到 `shared/rpcBudget.ts`）。
      *
      * 默认 `ACK_TIMEOUT_MS` 是 3 秒——那是"普通往返"的预算。`update.download` / `update.install`
      * 在 main 侧要等**整段下载**（几十 MB～几百 MB），3 秒必然先超时：扩展会收到 `EH_TIMEOUT`
      * 而操作其实还在跑。这类失败还会连带丢掉"3 秒后才发生"的真实错误原因（sha512 不匹配、写盘失败），
-     * 于是状态栏只能停在「下载安装包中…」。`update.check` 也要拉一次 release 元数据（可走代理），
-     * 给 60 秒。
+     * 于是状态栏只能停在「下载安装包中…」。
+     *
+     * 预算表已上移到 `shared/rpcBudget.ts`（渲染侧桥与宿主共用同一份），这里只做"是否显式"
+     * 的判定：没有显式预算时返回 `undefined`，让 `RpcClient` 继续用它的默认值。
      */
-    const updateRpcTimeout = (method: string): number | undefined => {
-      if (
-        method === HOST_MAIN_METHODS.updateDownload ||
-        method === HOST_MAIN_METHODS.updateInstall
-      ) {
-        return 15 * 60 * 1000
-      }
-      if (method === HOST_MAIN_METHODS.updateCheck) return 60 * 1000
-      return undefined
-    }
+    const updateRpcTimeout = (method: string): number | undefined =>
+      hasExplicitBudget(method) ? rpcBudgetMs(method) : undefined
 
     /** 发一条宿主 → main 的请求（缺桥 ⇒ 与 secrets/clipboard 同一句中文错误） */
     const callUpdateMain = async (
@@ -2017,6 +2046,12 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       // 进度会话跟着一起清（它们的 Promise 由 `client` 的 reject 或 task 自己收尾）。
       client.rejectAll('EH_CANCELLED', '扩展宿主正在退出，在途的界面请求已取消')
       progressSessions.clear()
+      try {
+        unsubscribeRendererPort?.()
+        unsubscribeRendererPort = null
+      } catch {
+        // 退订失败不影响关闭
+      }
       try {
         rendererPort?.close?.()
       } catch {

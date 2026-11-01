@@ -51,6 +51,8 @@ import {
   type RequestEnvelope,
   type UnserializableKind
 } from '../../../shared/extensionHostProtocol'
+// 按方法族的超时预算（单一来源，见 `shared/rpcBudget.ts` 的模块注释）
+import { hasExplicitBudget, rpcBudgetMs } from '../../../shared/rpcBudget'
 import type {
   ExtensionHostBridgeSurface,
   ExtensionHostPhase,
@@ -666,7 +668,11 @@ class ExtensionHostBridgeImpl implements ExtensionHostBridge {
       throw new EhProtocolError('EH_NOT_READY', await this.notReadyText())
     }
 
-    const timeoutMs = options?.timeoutMs ?? this.timeoutMs
+    // 预算：显式 per-call > 方法族预算 > 桥构造时的默认值。
+    // 方法族预算见 `shared/rpcBudget.ts`：`ui.appMessage` 的 handler 可能做 IO / 长轮询，
+    // 3 秒必然误判成"对端没有响应"（2.0.x 实测：pet 面板永远停在"正在连接"）。
+    const timeoutMs =
+      options?.timeoutMs ?? (hasExplicitBudget(method) ? rpcBudgetMs(method) : this.timeoutMs)
     return new Promise<T>((resolve, reject) => {
       const call: PendingCall = {
         method,

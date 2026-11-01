@@ -744,17 +744,32 @@ class ExtensionHost {
     )
     const handler = extId ? this.appMessageHandlers.get(extId) : undefined
     if (!handler) {
+      // 诊断（D-1）：只记"没走到处理器"这一档，且带齐定位信息——这条链路跨三个进程，
+      // 没有它就只能靠猜（历史上排查 pet"正在连接"时正是缺了它）。
+      // 归属未命中（overlayOwners 空）与"归属命中但没注册处理器"是两种完全不同的故障。
+      console.warn(
+        `[host] 扩展消息未投递：appId=${e.appId} channel=${e.channel} ` +
+          `归属=${extId ?? '(未命中：卡片与 overlay 归属表都查不到)'} ` +
+          `处理器=${extId ? '(该扩展未注册 app.onMessage)' : '(无从查找)'}`
+      )
       window.api.extensionReply(e.requestId, { ok: false, error: '扩展未注册消息处理器' })
       return
     }
+    const startedAt = Date.now()
     Promise.resolve(handler(e.channel, e.payload))
-      .then((data) => window.api.extensionReply(e.requestId, { ok: true, data }))
-      .catch((err) =>
-        window.api.extensionReply(e.requestId, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err)
-        })
-      )
+      .then((data) => {
+        console.log(
+          `[host] 扩展消息已回包：appId=${e.appId} channel=${e.channel} ${Date.now() - startedAt}ms`
+        )
+        window.api.extensionReply(e.requestId, { ok: true, data })
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[host] 扩展消息失败：appId=${e.appId} channel=${e.channel} ${Date.now() - startedAt}ms err=${message}`
+        )
+        window.api.extensionReply(e.requestId, { ok: false, error: message })
+      })
   }
 
   /**

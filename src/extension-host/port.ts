@@ -80,12 +80,71 @@ export function unwrapParentPortMessage(event: unknown): unknown {
 export interface HostRendererPortLike {
   /** 向渲染进程发一条消息（信封；不分帧） */
   postMessage(message: unknown): void
-  /** 收渲染进程消息；`undefined`/`null` = 不接（继续排队） */
-  onmessage: ((event: unknown) => void) | null
-  /** 显式启动派发（挂了 `onmessage` 时不必再调） */
+  /**
+   * 收渲染进程消息（DOM / Node `MessagePort` 风格）。
+   *
+   * ⚠️ **不是所有端口都支持它**：Electron 主进程的 `MessagePortMain` 是 EventEmitter，
+   * 只能 `.on('message', …)`；给它赋值 `onmessage` 只会创建一个没人调用的普通属性
+   * （出站照常、入站永远收不到——2.0.x 的 pet 就是这样"消息发出去了但扩展从没收到"）。
+   * 因此订阅一律走 {@link subscribeHostRendererPort}，由它按能力选风格。
+   */
+  onmessage?: ((event: unknown) => void) | null
+  /** EventEmitter 风格（`MessagePortMain`）：宿主必须优先用这条 */
+  on?(event: 'message', listener: (event: unknown) => void): void
+  /** 移出监听（`on` 风格配套；缺省时退化为置空 `onmessage`） */
+  off?(event: 'message', listener: (event: unknown) => void): void
+  /** 显式启动派发（挂了监听时不必再调） */
   start?(): void
   /** 关闭端口（宿主退出时；对端会收到 close 事件） */
   close?(): void
+}
+
+/** 实际用了哪种订阅风格（诊断用：`on` = EventEmitter 端口，`onmessage` = DOM/Node 风格） */
+export type RendererPortListenerMode = 'on' | 'onmessage'
+
+/** 订阅结果：退订函数 + 实际风格（日志与测试据此判断走了哪条分支） */
+export interface RendererPortSubscription {
+  unsubscribe(): void
+  mode: RendererPortListenerMode
+}
+
+/**
+ * 订阅 `host-renderer` 端口的入站消息（**唯一订阅入口**）。
+ *
+ * 为什么不能直接 `port.onmessage = …`：`MessagePortMain`（Electron 主进程风格）没有
+ * `onmessage` 语义，赋值是静默的假成功——这条坑让"宿主能发给渲染侧、却永远收不到渲染侧请求"，
+ * 表现为所有 `ui.*` 请求在渲染侧超时（实测 30 秒无响应）。
+ *
+ * 选择顺序：`on('message')` 优先（EventEmitter 端口）→ 退回 `onmessage`（DOM / Node MessagePort）。
+ * 两条都会 `start?.()`（`onmessage` 赋值本身也会隐式 start，但显式调用无害且更可靠）。
+ */
+export function subscribeHostRendererPort(
+  port: HostRendererPortLike,
+  handler: (event: unknown) => void
+): RendererPortSubscription {
+  const emitter = port as HostRendererPortLike & {
+    on?: (event: 'message', listener: (event: unknown) => void) => void
+    off?: (event: 'message', listener: (event: unknown) => void) => void
+  }
+  if (typeof emitter.on === 'function') {
+    emitter.on('message', handler)
+    port.start?.()
+    return {
+      mode: 'on',
+      unsubscribe: (): void => {
+        if (typeof emitter.off === 'function') emitter.off('message', handler)
+        else port.onmessage = null
+      }
+    }
+  }
+  port.onmessage = handler
+  port.start?.()
+  return {
+    mode: 'onmessage',
+    unsubscribe: (): void => {
+      port.onmessage = null
+    }
+  }
 }
 
 /**

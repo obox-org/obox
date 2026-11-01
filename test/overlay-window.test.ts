@@ -1343,8 +1343,12 @@ describe('外壳 · 五处透明改动（验收⑥；design D-11，缺一处就�
     expect(vueFlat).toContain(
       'isOverlay ? overlayUrl : appFrameKey(registration.value, themeId.value)'
     )
-    // 主题推送不新增分支：pushThemeTokens 保持 registration.url 早退（overlay 自然不推送，design D-6）
-    expect(vueFlat).toContain('if (!registration.value?.url) return')
+    // 2.0.3 起 overlay **也**接主题桥：目标 URL 用查询串里的 overlayUrl。
+    // 旧的"overlay 不推送主题"（design D-6）已被真机推翻：浮层里的扩展页在 iframe，
+    // CSS 自定义属性不跨文档 ⇒ 拿不到 token ⇒ 面板整块透明
+    // （证据：openspec/changes/fix-overlay-message-and-appmessage-timeout/notes/repro/pet-hover-before.png）。
+    expect(vueFlat).toContain('const targetUrl = isOverlay ? overlayUrl : registration.value?.url')
+    expect(vueFlat).not.toContain('if (!registration.value?.url) return')
   })
 })
 

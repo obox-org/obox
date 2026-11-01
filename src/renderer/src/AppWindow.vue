@@ -32,8 +32,9 @@ if (new URLSearchParams(window.location.search).get('obox-window') === 'overlay'
  * - `srcdoc` 型：token 拼进同一份文档（<style>），切主题经 frameKey 变化重渲染；
  * - `url` 型：跨源注入不了 CSS，改由宿主经 `obox-theme` 消息下发 token，
  *   切主题**不**重渲染（frameKey 与主题无关）⇒ 页面内表单内容不丢。
- * - overlay 型：不接主题桥（pushThemeTokens 因 registration 缺省自然跳过，不加新分支；
- *   宠物窗体"无主题、artwork 自带配色"，见 design D-6）。
+ * - overlay 型：**同样接主题桥**（2.0.3 起）。浮层也是"外壳页 + iframe"，`registration` 拿不到
+ *   清单里的 url，但查询串里的 `url` 就是目标页；早期版本按"宠物窗体无主题"跳过下发，
+ *   结果 iframe 里的面板拿不到 token、整块透明（实测见 change notes/repro）。
  * 跨窗口主题变化经 `storage` 事件合并进本窗口 stateStore（core/state.ts），再 applyCurrent + 推送。
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
@@ -155,11 +156,19 @@ const frameKey = computed(() =>
 )
 
 /**
- * 把当前主题 token 下发给 iframe（仅 `url` 型卡片；srcdoc 型走文档内注入 + 重渲染，不叠加）。
+ * 把当前主题 token 下发给 iframe（`url` 型卡片 **与 overlay 浮层**）。
+ *
+ * 为什么 overlay 也要发（2.0.3 修复）：浮层窗口加载的是外壳页，扩展页在 **iframe** 里，
+ * 而 CSS 自定义属性**不跨文档继承**——2.0.1 曾把 token 写到本窗口 `documentElement`，
+ * 对 iframe 里的宠物页毫无作用，面板因此一直是透明的（实测截图见
+ * `openspec/changes/fix-overlay-message-and-appmessage-timeout/notes/repro/`）。
+ *
  * 触发时机：iframe load 完成 / 主题变化（refreshTheme）/ 收到 `obox-theme-request`。
+ * 目标 URL：overlay 用查询串里的 `url`（overlay 没有 `registration`），App 卡片用清单里的 url。
  */
 function pushThemeTokens(): void {
-  if (!registration.value?.url) return
+  const targetUrl = isOverlay ? overlayUrl : registration.value?.url
+  if (!targetUrl) return
   const win = frameRef.value?.contentWindow
   if (!win) {
     console.warn('[AppWindow] 主题下发跳过：iframe 未就绪', appId)
