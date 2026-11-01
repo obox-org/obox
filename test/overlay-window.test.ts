@@ -33,6 +33,13 @@ import type { ExtensionActivationApi, ExtensionInfo } from '../src/api'
 const mock = vi.hoisted(() => ({
   /** screen.getPrimaryDisplay().workArea 的假数据（每个测试可改写） */
   workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+  /** screen.getAllDisplays() 的假数据：默认只有主屏；跨屏用例改成两块 */
+  displays: [] as Array<{
+    x: number
+    y: number
+    width: number
+    height: number
+  }>,
   /** ipcMain.handle 注册表 */
   handlers: new Map<string, (e: unknown, ...args: unknown[]) => unknown>(),
   /** ipcMain.on 注册表（'extension:reply'） */
@@ -162,7 +169,14 @@ vi.mock('electron', () => {
       }
     },
     screen: {
-      getPrimaryDisplay: (): { workArea: typeof mock.workArea } => ({ workArea: mock.workArea })
+      getPrimaryDisplay: (): { workArea: typeof mock.workArea } => ({ workArea: mock.workArea }),
+      getAllDisplays: (): Array<{
+        workArea: { x: number; y: number; width: number; height: number }
+      }> =>
+        // 默认只有主屏（= mock.workArea）；跨屏用例自己 push 两块，不影响"只改 workArea"的老用例
+        (mock.displays.length > 0 ? mock.displays : [mock.workArea]).map((workArea) => ({
+          workArea
+        }))
     }
   }
 })
@@ -635,6 +649,39 @@ describe('主进程 · setPosition（卡 14；宿主兜底钳位、扩展主钳�
     const r = setPosition('pet', 'pet.overlay', -9999, 0)
     expect(r).toEqual({ ok: true, position: { x: 100, y: 50 } })
     expect(win.positionCalls).toEqual([[100, 50]])
+  })
+
+  it('nearestWorkArea 纯函数：跨屏拖动按"指针所在/最近的显示器"钳位（真机反馈：不能跨显示器）', () => {
+    // 双屏：主屏 0..1920，副屏在右侧 1920..3840（工作区高 1040/1080）
+    const primary = { x: 0, y: 0, width: 1920, height: 1040 }
+    const secondary = { x: 1920, y: 0, width: 1920, height: 1080 }
+    const areas = [primary, secondary]
+    // 点落在副屏内 ⇒ 选副屏（这正是原来会被钳回主屏的情形）
+    expect(mod.nearestWorkArea(areas, 2500, 500)).toEqual(secondary)
+    // 点落在主屏内 ⇒ 选主屏（行为不变）
+    expect(mod.nearestWorkArea(areas, 800, 500)).toEqual(primary)
+    // 点落在两屏之间的缝隙（1920 恰好属于副屏左边界，用 1919.5 之外的点造缝）
+    expect(
+      mod.nearestWorkArea([primary, { x: 2000, y: 0, width: 1000, height: 1000 }], 1960, 500)
+    ).toEqual(primary)
+    // 负坐标布局（副屏在左侧）也能正确选中
+    const leftOfPrimary = { x: -1920, y: 0, width: 1920, height: 1080 }
+    expect(mod.nearestWorkArea([primary, leftOfPrimary], -800, 300)).toEqual(leftOfPrimary)
+    // 空列表 ⇒ null（调用方回退主显示器）
+    expect(mod.nearestWorkArea([], 10, 10)).toBeNull()
+  })
+
+  it('setPosition 跨屏：目标在副屏内 ⇒ 窗体落在副屏（不再被钳回主屏）', () => {
+    // 走真实 setPosition + 假 electron 的 screen.getAllDisplays（主屏 0..1920、副屏 1920..3840）
+    mock.displays.push(
+      { x: 0, y: 0, width: 1920, height: 1040 },
+      { x: 1920, y: 0, width: 1920, height: 1080 }
+    )
+    const win = createPet()
+    const r = setPosition('pet', 'pet.overlay', 2500, 600)
+    expect(r).toEqual({ ok: true, position: { x: 2500, y: 600 } })
+    expect(win.positionCalls).toEqual([[2500, 600]])
+    expect(win.getBounds().x).toBe(2500)
   })
 
   it('clampOverlayPosition 纯函数：与 D-13 扩展侧同公式；退化情形（窗体比工作区宽）以 min 为准', () => {

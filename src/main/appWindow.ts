@@ -650,6 +650,41 @@ export function clampOverlayPosition(
   }
 }
 
+/**
+ * 选中"离这个点最近的那块显示器工作区"（纯函数，test/overlay-window.test.ts 直接喂多屏数据）。
+ *
+ * 为什么需要它（真机反馈"宠物拖动不能跨显示器"）：原来 `setPosition` 一律按
+ * `screen.getPrimaryDisplay().workArea` 钳位，指针拖到第二块屏时窗体被钳回主屏边界 ⇒ 拖不过去。
+ * 多屏的正确语义是"在指针所在（或最近）的那块屏里钳"：跨屏拖动可行，同时仍然不会跑到所有屏之外。
+ *
+ * pen：点落在某屏内直接选它；都不在（多屏之间有缝隙，或负坐标布局）时按**矩形距离**取最近的一块。
+ * 空列表返回 `null`，调用方回退主显示器。
+ */
+export function nearestWorkArea(
+  areas: readonly OverlayWorkArea[],
+  x: number,
+  y: number
+): OverlayWorkArea | null {
+  if (areas.length === 0) return null
+  for (const area of areas) {
+    if (x >= area.x && x <= area.x + area.width && y >= area.y && y <= area.y + area.height) {
+      return area
+    }
+  }
+  let best: OverlayWorkArea | null = null
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (const area of areas) {
+    const dx = Math.max(area.x - x, 0, x - (area.x + area.width))
+    const dy = Math.max(area.y - y, 0, y - (area.y + area.height))
+    const distance = dx * dx + dy * dy
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = area
+    }
+  }
+  return best
+}
+
 export function setOverlayPosition(
   extIdRaw: unknown,
   idRaw: unknown,
@@ -690,11 +725,17 @@ export function setOverlayPosition(
     return { ok: false, error: `overlay 不存在（或已销毁）：${idRaw}` }
   }
   // 钳位双保险：**扩展侧主钳**（design D-13：入口累加拖动增量后先钳再调本方法），
-  // **宿主侧兜底**——扩展拿不到 workArea，换显示器/改分辨率时仍可能算出越界值，
-  // 这里按窗体当前尺寸把左上角钳回主显示器工作区
+  // **宿主侧兜底**——扩展拿不到 workArea，换显示器/改分辨率时仍可能算出越界值。
+  // 基准从"主显示器"改成"指针所在/最近的那块显示器"：否则跨屏拖动会被钳回主屏（真机反馈）。
   const bounds = entry.win.getBounds()
+  const workArea =
+    nearestWorkArea(
+      screen.getAllDisplays().map((display) => display.workArea),
+      xRaw as number,
+      yRaw as number
+    ) ?? screen.getPrimaryDisplay().workArea
   const clamped = clampOverlayPosition(
-    screen.getPrimaryDisplay().workArea,
+    workArea,
     bounds.width,
     bounds.height,
     xRaw as number,
