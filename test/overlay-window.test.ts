@@ -34,6 +34,8 @@ const mock = vi.hoisted(() => ({
   /** screen.getPrimaryDisplay().workArea 的假数据（每个测试可改写） */
   workArea: { x: 0, y: 0, width: 1920, height: 1040 },
   /** screen.getAllDisplays() 的假数据：默认只有主屏；跨屏用例改成两块 */
+  /** screen.getCursorScreenPoint() 的假数据（跟手拖动用） */
+  cursor: { x: 0, y: 0 },
   displays: [] as Array<{
     x: number
     y: number
@@ -170,6 +172,7 @@ vi.mock('electron', () => {
     },
     screen: {
       getPrimaryDisplay: (): { workArea: typeof mock.workArea } => ({ workArea: mock.workArea }),
+      getCursorScreenPoint: (): { x: number; y: number } => mock.cursor,
       getAllDisplays: (): Array<{
         workArea: { x: number; y: number; width: number; height: number }
       }> =>
@@ -684,6 +687,40 @@ describe('主进程 · setPosition（卡 14；宿主兜底钳位、扩展主钳�
     expect(win.getBounds().x).toBe(2500)
   })
 
+  it('跟手拖动：begin 后按全局光标持续移动（快慢都跟得上），end 后停止；destroy 清理会话', () => {
+    vi.useFakeTimers()
+    try {
+      mock.cursor = { x: 1000, y: 700 }
+      const win = createPet()
+      // 先把窗放到 (640,332)：begin 时记下"指针 - 窗体"的偏移 = (360,368)
+      setPosition('pet', 'pet.overlay', 640, 332)
+      expect(mod.beginOverlayDrag('pet', 'pet.overlay').ok).toBe(true)
+      // 光标跑到 (1200,800) ⇒ 窗体应跟到 (840,432)
+      mock.cursor = { x: 1200, y: 800 }
+      vi.advanceTimersByTime(16)
+      expect(win.getBounds().x).toBe(840)
+      expect(win.getBounds().y).toBe(432)
+      // 再走一帧：光标再远（模拟"快速拖动"），窗体依然跟得上 —— 这正是页面 pointermove 断流的场景
+      mock.cursor = { x: 1800, y: 900 }
+      vi.advanceTimersByTime(16)
+      expect(win.getBounds().x).toBe(1440)
+      // end 之后不再跟随
+      const ended = mod.endOverlayDrag('pet', 'pet.overlay')
+      expect(ended.ok).toBe(true)
+      mock.cursor = { x: 100, y: 100 }
+      vi.advanceTimersByTime(64)
+      expect(win.getBounds().x).toBe(1440)
+      // 幂等：没在拖时 end 也 ok
+      expect(mod.endOverlayDrag('pet', 'pet.overlay').ok).toBe(true)
+      // destroy 清理会话（定时器不残留）
+      mod.beginOverlayDrag('pet', 'pet.overlay')
+      mod.destroyOverlay('pet', 'pet.overlay')
+      vi.advanceTimersByTime(64)
+      expect(win.destroyed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('clampOverlayPosition 纯函数：与 D-13 扩展侧同公式；退化情形（窗体比工作区宽）以 min 为准', () => {
     expect(
       mod.clampOverlayPosition({ x: 0, y: 0, width: 1920, height: 1040 }, 220, 460, 5000, -100)

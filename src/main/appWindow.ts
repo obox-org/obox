@@ -566,6 +566,7 @@ export function destroyOverlay(extIdRaw: unknown, idRaw: unknown): OverlayResult
     return { ok: false, error: 'destroy 参数错误：overlay id 必须是非空字符串' }
   }
   const key = overlayKey(extIdRaw, idRaw)
+  endDragSessionsFor(key) // 销毁前先收掉拖动会话（否则定时器会对着已销毁的窗体继续 tick）
   const entry = overlays.get(key)
   if (!entry) {
     // 区分"别人的"与"不存在"：前者越权拒绝 + 日志（作用域安全，design D-2/N4），
@@ -761,6 +762,98 @@ export function setOverlayPosition(
  * 作用域校验防的是误用/串号，不是沙箱边界（扩展与宿主同进程同上下文，ADR-0015：
  * 能力封装而非安全边界）。越权一律 `{ ok:false, error }` + `[overlay]` 前缀 console.warn。
  */
+/**
+ * 拖动会话：主进程按光标位置跟手移动窗体（修"快速拖动时鼠标与宠物脱离"）。
+ *
+ * 为什么必须放在主进程：页面侧的 `pointermove` 依赖**指针在窗口内**。窗口每帧移动，
+ * 快速拖动时指针会跑到窗口外 ⇒ 事件断流、窗口停在原地，表现为"拖到一半脱手"。
+ * 主进程用 `screen.getCursorScreenPoint()` 定时读全局光标，与窗口/事件都无关，快慢都跟得住。
+ */
+interface OverlayDragSession {
+  timer: NodeJS.Timeout
+  /** 指针相对窗体左上角的偏移（按下那一刻算一次，之后不变） */
+  offsetX: number
+  offsetY: number
+}
+
+const dragSessions = new Map<string, OverlayDragSession>()
+
+/** 拖动跟手的帧间隔（≈60fps；再快没有意义，指针采样本身也受系统限制） */
+const DRAG_FOLLOW_INTERVAL_MS = 16
+
+export function beginOverlayDrag(extIdRaw: unknown, idRaw: unknown): OverlayResult {
+  if (typeof extIdRaw !== 'string' || !extIdRaw.trim()) {
+    return {
+      ok: false,
+      error: '缺少扩展 id（宿主接线错误：overlay 四方法必须由宿主绑定扩展 id 调用）'
+    }
+  }
+  if (typeof idRaw !== 'string' || !idRaw.trim()) {
+    return { ok: false, error: 'beginDrag 参数错误：overlay id 必须是非空字符串' }
+  }
+  const key = overlayKey(extIdRaw, idRaw)
+  const entry = overlays.get(key)
+  if (!entry || entry.win.isDestroyed()) {
+    return { ok: false, error: `overlay 不存在（或已销毁）：${idRaw}` }
+  }
+  endOverlayDrag(extIdRaw, idRaw) // 幂等：重复 begin 先收掉旧的会话
+  const bounds = entry.win.getBounds()
+  const cursor = screen.getCursorScreenPoint()
+  const session: OverlayDragSession = {
+    offsetX: cursor.x - bounds.x,
+    offsetY: cursor.y - bounds.y,
+    timer: setInterval((): void => {
+      const current = overlays.get(key)
+      if (!current || current.win.isDestroyed()) {
+        if (session.timer) clearInterval(session.timer)
+        dragSessions.delete(key)
+        return
+      }
+      const point = screen.getCursorScreenPoint()
+      const rawX = point.x - session.offsetX
+      const rawY = point.y - session.offsetY
+      const area =
+        nearestWorkArea(
+          screen.getAllDisplays().map((display) => display.workArea),
+          point.x,
+          point.y
+        ) ?? screen.getPrimaryDisplay().workArea
+      const size = current.win.getBounds()
+      const next = clampOverlayPosition(area, size.width, size.height, rawX, rawY)
+      try {
+        current.win.setPosition(next.x, next.y)
+      } catch {
+        // 窗口在两次 tick 之间被销毁：下一轮会自愈
+      }
+    }, DRAG_FOLLOW_INTERVAL_MS)
+  }
+  dragSessions.set(key, session)
+  return { ok: true, position: { x: bounds.x, y: bounds.y } }
+}
+
+export function endOverlayDrag(extIdRaw: unknown, idRaw: unknown): OverlayResult {
+  if (typeof extIdRaw !== 'string' || !idRaw || typeof idRaw !== 'string') {
+    return { ok: false, error: 'endDrag 参数错误：extId 与 overlay id 都必须是非空字符串' }
+  }
+  const key = overlayKey(extIdRaw, idRaw)
+  const session = dragSessions.get(key)
+  if (!session) return { ok: true } // 幂等：没在拖也要成功（页面可能丢了 start）
+  clearInterval(session.timer)
+  dragSessions.delete(key)
+  const entry = overlays.get(key)
+  if (!entry || entry.win.isDestroyed()) return { ok: true }
+  const bounds = entry.win.getBounds()
+  return { ok: true, position: { x: bounds.x, y: bounds.y } }
+}
+
+/** 结束某窗口的全部拖动会话（overlay 销毁 / 主窗口关闭时兜底，防止定时器泄漏） */
+function endDragSessionsFor(key: string): void {
+  const session = dragSessions.get(key)
+  if (!session) return
+  clearInterval(session.timer)
+  dragSessions.delete(key)
+}
+
 export function registerOverlayIpc(): void {
   ipcMain.handle('overlay:create', (_e, extId: unknown, req: unknown): OverlayResult =>
     createOverlayWindow(extId, req)
@@ -777,5 +870,11 @@ export function registerOverlayIpc(): void {
     'overlay:set-position',
     (_e, extId: unknown, id: unknown, x: unknown, y: unknown): OverlayResult =>
       setOverlayPosition(extId, id, x, y)
+  )
+  ipcMain.handle('overlay:begin-drag', (_e, extId: unknown, id: unknown): OverlayResult =>
+    beginOverlayDrag(extId, id)
+  )
+  ipcMain.handle('overlay:end-drag', (_e, extId: unknown, id: unknown): OverlayResult =>
+    endOverlayDrag(extId, id)
   )
 }

@@ -410,6 +410,10 @@ export interface MainApi {
    * （与 setMouseThrough 同口径）；越权拒绝。移动不改变 transparent/alwaysOnTop/穿透态。
    */
   overlaySetPosition(extId: string, id: string, x: number, y: number): Promise<OverlayResult>
+  /** 开始跟手拖动：主进程按全局光标位置持续移动窗体（修"快速拖动脱手"） */
+  overlayBeginDrag(extId: string, id: string): Promise<OverlayResult>
+  /** 结束跟手拖动（幂等） */
+  overlayEndDrag(extId: string, id: string): Promise<OverlayResult>
   // ---- 扩展能力：网络（渲染 CSP 禁外网，走主进程 + 代理） ----
   netFetch(
     req: {

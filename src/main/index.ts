@@ -39,6 +39,9 @@ import {
   destroyOverlay,
   setOverlayMouseThrough,
   setOverlayPosition,
+  // 跟手拖动（2.0.3）：主进程按全局光标移动窗体（防"快速拖动脱手"）
+  beginOverlayDrag,
+  endOverlayDrag,
   setOverlayTheme
 } from './appWindow'
 import { THEME_TOKENS_PUSH_CHANNEL } from '../shared/themeTokens'
@@ -732,6 +735,16 @@ app.whenReady().then(() => {
   starter.registerMethod(HOST_MAIN_METHODS.overlaySetPosition, (params: unknown) => {
     const record = asRecord(params)
     return setOverlayPosition(record.extId, record.id, record.x, record.y)
+  })
+  // 跟手拖动（2.0.3）：拖动期间由主进程按全局光标持续移动窗体，避免快速拖动时事件断流、
+  // 窗口停在原地（"鼠标与宠物脱离"）。定位与钳位复用同一个 nearestWorkArea/clampOverlayPosition。
+  starter.registerMethod(HOST_MAIN_METHODS.overlayBeginDrag, (params: unknown) => {
+    const record = asRecord(params)
+    return beginOverlayDrag(record.extId, record.id)
+  })
+  starter.registerMethod(HOST_MAIN_METHODS.overlayEndDrag, (params: unknown) => {
+    const record = asRecord(params)
+    return endOverlayDrag(record.extId, record.id)
   })
 
   // ---- dialog(3)：与 `registerExtIpc()` 的 dialog:* 同源（属性归一/目录模式复用同一对纯函数）----

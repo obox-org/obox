@@ -974,8 +974,8 @@ test('源码门禁：HOST_MAIN_METHODS 的每个 key 都在 src/main/index.ts �
   const keys = Object.keys(HOST_MAIN_METHODS)
   assert.equal(
     keys.length,
-    26,
-    '方法名常量共 26 条（23 项 B3a 能力 + EH-B3b-2 的 4 条 update 门控；onFocusChanged/onEvent 走事件）'
+    28,
+    '方法名常量共 28 条（23 项 B3a 能力 + EH-B3b-2 的 4 条 update 门控 + 2.0.3 的 2 条 overlay 拖动；onFocusChanged/onEvent 走事件）'
   )
 
   for (const key of keys) {
@@ -1032,7 +1032,7 @@ test('源码门禁：宿主能力文件不 import electron（extension-host.js �
 /* 11. 对照表（EH-B3b-1 之后）                                                                     */
 /* -------------------------------------------------------------------------------------------- */
 
-test('对照表：EH-B3b-2 之后 99 已实现 + 0 桩 = 99（阶段 B 能力面收口）', async (): Promise<void> => {
+test('对照表：EH-B3b-2 之后 101 已实现 + 0 桩 = 101（阶段 B 能力面收口）', async (): Promise<void> => {
   const dir = await mkdtemp(path.join(tmpdir(), 'obox-eh-b3a-table-'))
   try {
     const built = createExtensionApi({
@@ -1109,8 +1109,10 @@ test('对照表：EH-B3b-2 之后 99 已实现 + 0 桩 = 99（阶段 B 能力面
       'on',
       // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
       'output.createChannel',
+      'overlay.beginDrag',
       'overlay.create',
       'overlay.destroy',
+      'overlay.endDrag',
       'overlay.setMouseThrough',
       'overlay.setPosition',
       'proxy.get',
@@ -1163,8 +1165,12 @@ test('对照表：EH-B3b-2 之后 99 已实现 + 0 桩 = 99（阶段 B 能力面
       'workspaceState.keys',
       'workspaceState.update'
     ])
-    assert.equal(rows.length, 99, '对照表共 99 项')
-    assert.equal(implemented.length, 99, '已实现 99 项（61 + EH-B3b-1 的 28 + EH-B3b-2 的 10）')
+    assert.equal(rows.length, 101, '对照表共 101 项')
+    assert.equal(
+      implemented.length,
+      101,
+      '已实现 101 项（61 + EH-B3b-1 的 28 + EH-B3b-2 的 10 + 2.0.3 跟手拖动的 2）'
+    )
     assert.equal(stubs.length, 0, '桩 0 项（ui 5 / output 1 / update 4 已在 EH-B3b-2 落地）')
 
     // 本卡落地的能力不许再抛「尚未迁移」

@@ -721,7 +721,10 @@ class ExtensionHost {
       setMouseThrough: (id, through) => window.api.overlaySetMouseThrough(ext.id, id, through),
       // 移动窗体（卡 14）：坐标钳位与合法性校验都在主进程（宿主兜底、扩展主钳，design D-13）；
       // 返回的 position = 钳制后实际坐标，扩展入口用它校正自己记录的位置
-      setPosition: (id, x, y) => window.api.overlaySetPosition(ext.id, id, x, y)
+      setPosition: (id, x, y) => window.api.overlaySetPosition(ext.id, id, x, y),
+      // 跟手拖动（2.0.3）：定位交给主进程按全局光标执行，避免快速拖动时事件断流、窗体脱手
+      beginDrag: (id) => window.api.overlayBeginDrag(ext.id, id),
+      endDrag: (id) => window.api.overlayEndDrag(ext.id, id)
     }
   }
 

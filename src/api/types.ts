@@ -249,6 +249,16 @@ export interface ExtensionActivationApi {
      * （与 `setMouseThrough` 同口径，无幂等语义）；越权（`id` 属于别的扩展）会被拒绝。
      */
     setPosition(id: string, x: number, y: number): Promise<OverlayResult>
+    /**
+     * 开始**跟手拖动**（与 `setPosition` 二选一，推荐用它做整窗拖动）。
+     *
+     * 为什么需要：`setPosition` 由扩展按 `pointermove` 的增量自己算坐标，而窗口每帧在动 ——
+     * 快速拖动时指针会跑出窗口 ⇒ 事件断流 ⇒ 窗体停在原地（"鼠标与宠物脱离"）。
+     * `beginDrag` 把定位交给主进程按**全局光标**持续执行，快慢都跟得住；结束调 `endDrag`。
+     */
+    beginDrag(id: string): Promise<OverlayResult>
+    /** 结束跟手拖动（幂等：没在拖也返回 ok） */
+    endDrag(id: string): Promise<OverlayResult>
   }
   /** 扩展多语言能力（扩展语言包与宿主语言包独立命名空间） */
   i18n: {
