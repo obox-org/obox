@@ -253,7 +253,10 @@ window.parent.postMessage(
 - `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；**60s 超时**（放宽以容纳 handler 内弹模态框等需用户填写的场景；实现是 `src/main/appWindow.ts:190-193`，`60_000` 这个超时值全文件只设定在这一处）。**overlay 窗体复用同一座桥与同一超时**——扩展若用"入口 → 页面"的**长轮询 hold** 做状态同步，hold 时长必须**小于** 60s（宠物扩展用 25s，`extensions/pet/lib/constants.js:38-40`），否则宿主先超时、页面收到的是「扩展未响应（超时）」而不是订阅结果（见下方 `### overlay`）
 - `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销（每个扩展只保留**最后一个** handler，`host.ts:426-433`）
 - **路由现支持 overlay（卡片路径行为逐字不变）**：归属查找走纯函数 `resolveMessageExtId`——**先按 `appId` 查 App 卡片**（`appStore.findById(appId)?.extensionId`），**未命中再按 `overlayId` 查 overlay 路由表**（`overlayOwners`），都未命中回**既有**错误「扩展未注册消息处理器」（`host.ts:89-95,622-646`；门禁 `test/overlay-window.test.ts` 的「宿主 · 消息路由」）。overlay 页面把自己的 `overlayId` 当 `appId` 原样发即可；外壳对 overlay 窗口还会**强制**用查询串里的 `appId`（= `overlayId`），页面无法借道指定别人的卡片 id 发消息（`src/renderer/src/AppWindow.vue:204-210`）
-- `app.onMessage` 是**请求/响应**桥（经主进程 IPC、需要扩展注册 handler、有 `requestId` 与超时）。**主题是宿主单向推送**，不经该桥、**不需要** handler、也没有 `requestId`（见上面 `app.register` 的"主题下发"一条）——两者**不要混用**
+- **超时预算按方法族给**（2.0.3，单一来源 `src/shared/rpcBudget.ts`）：普通往返 3s、
+  `ui.appMessage` / `ui.executeCommand` **30s**、`ui.treeChildren` 15s、`update.*` 沿用旧的 60s/15min。
+  handler 可以放心 await IO 或做长轮询（宠物 `subscribe` hold 25s 就在预算内）；超时文案会明确说
+  「宿主侧可能仍在执行」，不是"扩展坏了"。- `app.onMessage` 是**请求/响应**桥（经主进程 IPC、需要扩展注册 handler、有 `requestId` 与超时）。**主题是宿主单向推送**，不经该桥、**不需要** handler、也没有 `requestId`（见上面 `app.register` 的"主题下发"一条）——两者**不要混用**
 
 ### http（外部 HTTP 指令：让别的程序驱动扩展，2.0.3）
 
