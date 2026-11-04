@@ -386,3 +386,48 @@ electron-builder → app-builder-lib → filelist  → minimatch@…
    用户安装包里没有这段代码；
 3. Dependabot 仍会报告该条（不关闭告警），**退场条件**：electron-builder / asar / glob 升级到
    使用 `minimatch ≥ 11` 的版本后，本段说明随之删除。
+
+## 15. v2.0.3 发版数据（2026-11-04）
+
+这一版全部来自真机反馈，且**每一条都有截图或量测证据**（见 `openspec/changes/fix-overlay-message-and-appmessage-timeout/notes/`）。
+
+### 修的问题
+
+1. **反向 RPC 全部超时**（webapp 报「对端在超时时间内没有响应」，宠物面板永远「正在连接」）：
+   宿主用 `port.onmessage = …` 订阅 `MessagePortMain`——它是 EventEmitter，赋值**静默失败**，
+   于是"宿主 → 渲染侧"正常、反向请求永远收不到。改为 `subscribeHostRendererPort()`（`on` 优先、
+   `onmessage` 兜底），并补入站/耗时日志。
+2. **超时预算不匹配**：`api.app.onMessage` 的 handler 允许 IO/长轮询（宠物 `subscribe` hold 25s、
+   网页应用 `open()` 拉起子进程），旧的 3 秒预算必然误判。改为按方法族（`ui.appMessage` 30s、
+   `ui.executeCommand` 30s、`ui.treeChildren` 15s，`update.*` 沿用 60s/15min）。
+3. **overlay 主题 token 到不了 iframe**（面板透明）：浮层是"外壳页 + iframe"，CSS 变量不跨文档；
+   2.0.1 写外壳 `documentElement` 无效。改为 `pushThemeTokens()` 对 overlay 也用查询串 `url` 作为目标。
+4. **跨显示器拖动被钳回主屏**：`setPosition` 原来一律按 `getPrimaryDisplay()` 钳位；改为
+   `nearestWorkArea()`（点在屏内选它，否则按矩形距离取最近）。
+5. **快速拖动脱手**：页面按 `pointermove` 算增量，窗口移动后指针跑出窗口 ⇒ 事件断流。
+   新增 `overlay.beginDrag/endDrag`：主进程按全局光标 16ms 跟手，与页面事件解耦。
+6. **外部 HTTP 指令面**（新能力）：随机端口 + 令牌 + 端点文件 `http-endpoint.json`；
+   `api.http.register(name, handler)` 让扩展注册指令；`GET /health`、`GET /commands`、`POST /command`。
+   指令复用既有 `ui.appMessage` 桥（通道 `http:<name>`），不新造第三套代理。
+
+### 真机证据（摘要）
+
+| 项          | 证据                                                                                             |
+| ----------- | ------------------------------------------------------------------------------------------------ |
+| 反向 RPC    | 日志 `渲染侧入站：t=req method=ui.appMessage` → `完成 … 0–1ms`                                   |
+| 面板不透明  | `verify/final-pet-panel.png`；CDP 计算样式 `--bg-panel=#252526`、`.panel` 背景 `rgb(37,37,38)`   |
+| 无关闭按钮  | 面板断言 `closeButtons: 0`；截图                                                                 |
+| 离开即关    | 派发 `pointerleave` 后 `{panel:false}`                                                           |
+| 跨屏拖动    | 窗口 `@617,707 → @3040,572`（第二块屏 2560..4480 内）                                            |
+| 快速拖动    | 光标一次跳 400px，宠物跟到 `1640,135`（= 光标 + 偏移）                                           |
+| HTTP 指令面 | `verify/final-http-verify.png`：`/commands` 列出 `pet_chenzhi:state`，`POST /command` 回真实状态 |
+
+### 宠物侧随版本发布
+
+`pet 2.0.2`（同轮发布）：消费主题 token、去掉关闭按钮、离开即关、跟手拖动、去白边（悬停/按下改图标变色）、
+`.tip` 不再压住等级行、新增只读指令 `pet_chenzhi:state`。
+
+### 门禁
+
+`npm run typecheck` 0 / `npm run lint` 0 error / `npm test` **1292 passed + 5 skipped** / `npm run build` ok；
+宠物 `node --test` 287/287、`vue-tsc` 0。
