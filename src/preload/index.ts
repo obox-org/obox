@@ -92,6 +92,11 @@ const api: MainApi = {
   // 移动窗体（卡 14）：坐标钳位与合法性校验都在主进程（宿主兜底、扩展主钳，design D-13）
   overlaySetPosition: (extId, id, x, y) =>
     ipcRenderer.invoke('overlay:set-position', extId, id, x, y),
+  overlayBeginDrag: (extId, id) => ipcRenderer.invoke('overlay:begin-drag', extId, id),
+  overlayEndDrag: (extId, id) => ipcRenderer.invoke('overlay:end-drag', extId, id),
+  // 2.0.3：HTTP 指令结果回包（与 extension:reply 同一形状）
+  httpReply: (requestId, result) => ipcRenderer.send('http:reply', { requestId, ...result }),
+  httpSyncCommands: (names) => ipcRenderer.send('http:sync-commands', names),
   // 扩展能力：网络（主进程 fetch + 代理）
   netFetch: (req, proxy) => ipcRenderer.invoke('net:fetch', req, proxy),
   // 宿主内部：渲染进程启动 / 代理设置变化时把代理推给主进程，由其同时应用到

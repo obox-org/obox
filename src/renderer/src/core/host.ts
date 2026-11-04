@@ -145,6 +145,8 @@ class ExtensionHost {
    * 归属由消费者经 {@link ExtensionHost.registerHostedOverlayOwner} 登记（同一张表、同一条路由）。
    */
   private overlayOwners = new Map<string, string>()
+  /** `api.http.register` 注册的指令（key = <extId>:<name>，2.0.3） */
+  private httpCommands = new Map<string, (payload: unknown) => unknown | Promise<unknown>>()
 
   /**
    * 扩展宿主模式（EH-A4 的回退开关，默认 `false`）。
@@ -420,6 +422,29 @@ class ExtensionHost {
   private buildApi(ext: ExtensionInfo, disposables: Array<() => void>): ExtensionActivationApi {
     const mementoNs = stateStore.memento(ext.id)
     return {
+      // api.http（2.0.3）：外部 HTTP 指令注册
+      http: {
+        register: (name, handler) => {
+          const key = String(name ?? '').trim()
+          if (key === '' || !/^[a-z0-9][a-z0-9._-]*$/.test(key)) {
+            throw new Error('api.http.register 的指令名非法：' + String(name))
+          }
+          if (typeof handler !== 'function') {
+            throw new Error('api.http.register 的 handler 必须是函数')
+          }
+          const full = ext.id + ':' + key
+          this.httpCommands.set(full, handler)
+          this.syncHttpCommands()
+          return (): void => {
+            if (this.httpCommands.get(full) === handler) this.httpCommands.delete(full)
+            this.syncHttpCommands()
+          }
+        },
+        names: (): string[] =>
+          [...this.httpCommands.keys()]
+            .filter((full) => full.startsWith(ext.id + ':'))
+            .map((full) => full.slice(ext.id.length + 1))
+      },
       registerCommand: (id, handler) => {
         const found = registry.commands.find((c) => c.command === id && c.extensionId === ext.id)
         if (!found) {
@@ -721,7 +746,10 @@ class ExtensionHost {
       setMouseThrough: (id, through) => window.api.overlaySetMouseThrough(ext.id, id, through),
       // 移动窗体（卡 14）：坐标钳位与合法性校验都在主进程（宿主兜底、扩展主钳，design D-13）；
       // 返回的 position = 钳制后实际坐标，扩展入口用它校正自己记录的位置
-      setPosition: (id, x, y) => window.api.overlaySetPosition(ext.id, id, x, y)
+      setPosition: (id, x, y) => window.api.overlaySetPosition(ext.id, id, x, y),
+      // 跟手拖动（2.0.3）：定位交给主进程按全局光标执行，避免快速拖动时事件断流、窗体脱手
+      beginDrag: (id) => window.api.overlayBeginDrag(ext.id, id),
+      endDrag: (id) => window.api.overlayEndDrag(ext.id, id)
     }
   }
 
@@ -731,6 +759,49 @@ class ExtensionHost {
    * App 卡片子窗口的行为与卡 03 之前**逐字一致**：只是归属查找换成了 resolveMessageExtId
    * 纯函数（卡片命中 ⇒ 既有路径；未命中 ⇒ overlay 兜底路由；都未命中 ⇒ 既有错误文案）。
    */
+  /** 把当前已注册的指令名同步给主进程（`GET /commands` 用；失败不影响指令执行） */
+  private syncHttpCommands(): void {
+    try {
+      window.api.httpSyncCommands([...this.httpCommands.keys()].sort())
+    } catch {
+      // 预览/测试环境里 api 可能不全：同步失败只是列表不全，不影响指令执行
+    }
+  }
+
+  /**
+   * 外部 HTTP 指令（2.0.3）：`<extId>:<name>`。
+   *
+   * 分发顺序：先找**渲染模式**下 `api.http.register` 的处理器；没有就交给宿主代理
+   * （`appMessageHandlers`，通道 `http:<name>` —— 宿主模式走 `ui.appMessage`，与普通消息同一条桥）。
+   */
+  private handleHttpCommand(e: { requestId: number; command: string; payload: unknown }): void {
+    const at = typeof e.command === 'string' ? e.command.indexOf(':') : -1
+    const extId = at > 0 ? e.command.slice(0, at) : ''
+    const name = at > 0 ? e.command.slice(at + 1) : ''
+    const local = extId && name ? this.httpCommands.get(`${extId}:${name}`) : undefined
+    const hosted = extId ? this.appMessageHandlers.get(extId) : undefined
+    const run: ((payload: unknown) => unknown | Promise<unknown>) | undefined =
+      local ?? (hosted ? (payload: unknown) => hosted(`http:${name}`, payload) : undefined)
+    if (!run) {
+      console.warn(
+        `[host] HTTP 指令未处理：command=${e.command || '(空)'} 归属=${extId || '(无)'} ` +
+          `处理器=${local ? '渲染侧' : hosted ? '宿主代理缺失' : '(未注册)'}`
+      )
+      window.api.httpReply(e.requestId, {
+        ok: false,
+        error: `扩展 ${extId || '(未给)'} 没有注册 HTTP 指令 ${name || '(未给)'}`
+      })
+      return
+    }
+    Promise.resolve(run(e.payload))
+      .then((data) => window.api.httpReply(e.requestId, { ok: true, data }))
+      .catch((err: unknown) => {
+        // 只回第一行：宿主会把调用栈拼进 message，外部调用方不该看到本机路径与栈
+        const raw = err instanceof Error ? err.message : String(err)
+        window.api.httpReply(e.requestId, { ok: false, error: raw.split('\n')[0] })
+      })
+  }
+
   private handleExtensionMessage(e: {
     requestId: number
     appId: string
@@ -744,17 +815,32 @@ class ExtensionHost {
     )
     const handler = extId ? this.appMessageHandlers.get(extId) : undefined
     if (!handler) {
+      // 诊断（D-1）：只记"没走到处理器"这一档，且带齐定位信息——这条链路跨三个进程，
+      // 没有它就只能靠猜（历史上排查 pet"正在连接"时正是缺了它）。
+      // 归属未命中（overlayOwners 空）与"归属命中但没注册处理器"是两种完全不同的故障。
+      console.warn(
+        `[host] 扩展消息未投递：appId=${e.appId} channel=${e.channel} ` +
+          `归属=${extId ?? '(未命中：卡片与 overlay 归属表都查不到)'} ` +
+          `处理器=${extId ? '(该扩展未注册 app.onMessage)' : '(无从查找)'}`
+      )
       window.api.extensionReply(e.requestId, { ok: false, error: '扩展未注册消息处理器' })
       return
     }
+    const startedAt = Date.now()
     Promise.resolve(handler(e.channel, e.payload))
-      .then((data) => window.api.extensionReply(e.requestId, { ok: true, data }))
-      .catch((err) =>
-        window.api.extensionReply(e.requestId, {
-          ok: false,
-          error: err instanceof Error ? err.message : String(err)
-        })
-      )
+      .then((data) => {
+        console.log(
+          `[host] 扩展消息已回包：appId=${e.appId} channel=${e.channel} ${Date.now() - startedAt}ms`
+        )
+        window.api.extensionReply(e.requestId, { ok: true, data })
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[host] 扩展消息失败：appId=${e.appId} channel=${e.channel} ${Date.now() - startedAt}ms err=${message}`
+        )
+        window.api.extensionReply(e.requestId, { ok: false, error: message })
+      })
   }
 
   /**
@@ -1062,6 +1148,8 @@ class ExtensionHost {
     // （先按卡片 id 查所属扩展 = 既有路径；查不到再按 overlayId 查 overlayOwners = 卡 03 新增，
     // 后台扩展没有卡片，页面把自己的 overlayId 当 appId 发；design D-3/D-11）
     window.events.on('extension:message', (e) => this.handleExtensionMessage(e))
+    // 2.0.3：外部 HTTP 指令（main → 渲染侧；宿主模式再经 ui.appMessage 的 http: 通道转到宿主）
+    window.events.on('http:command', (e) => this.handleHttpCommand(e))
     // 生命周期钩子（issue #52）：主进程请宿主执行入口导出的 install / uninstall。
     // 扩展尚未加载到宿主时（刚安装完还没被扫描到）回 deferred —— 主进程据此保留 pendingInstall，
     // 下次启动扫描期补跑，而不是把"没跑"记成"跑过了"。

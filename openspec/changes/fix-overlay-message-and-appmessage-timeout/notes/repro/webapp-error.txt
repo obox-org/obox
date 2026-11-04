@@ -1,0 +1,7 @@
+ui.appMessage（rpc 层超时）：
+对端在超时时间内没有响应。请检查该扩展是否阻塞了事件循环；必要时在扩展管理器里重启扩展宿主。
+（方法 ui.appMessage（id=29）在 3000ms 内没有响应；渲染侧已放弃等待，宿主侧可能仍在执行）
+
+来源：2.0.2 安装版，在 overlay 外壳页用 CDP 直接调用
+`window.api.extensionMessage('pet.overlay', 'pet.ready', { probe: true })` 得到。
+同一条文案即 webapp 卡片里弹出的错误（用户报告截图文字一致）。

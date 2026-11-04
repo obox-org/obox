@@ -1,0 +1,8 @@
+== GET /health ==
+{"ok":true,"app":"obox","version":"44.10.0"}
+== GET /commands ==
+{"ok":true,"commands":["pet_chenzhi:state"]}
+== POST /command  pet_chenzhi:state ==
+{"ok":true,"data":{"ok":true,"rev":0,"view":{"items":{"fish":20,"bubble":20},"values":{"growth":108,"favor":2,"level":1,"levelName":"初次见面"},"anim":{"row":0,"label":"待机","status":"idle","self":false},"bubble":null}}}
+== GET /commands（未授权应 401）==
+status=401

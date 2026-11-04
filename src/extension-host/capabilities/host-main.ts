@@ -142,6 +142,8 @@ export const HOST_MAIN_METHODS = {
   overlayDestroy: 'host.overlay.destroy',
   overlaySetMouseThrough: 'host.overlay.set-mouse-through',
   overlaySetPosition: 'host.overlay.set-position',
+  overlayBeginDrag: 'host.overlay.begin-drag',
+  overlayEndDrag: 'host.overlay.end-drag',
   dialogOpen: 'host.dialog.open',
   dialogSave: 'host.dialog.save',
   dialogMessage: 'host.dialog.message',
@@ -888,6 +890,35 @@ export function createHostMainCapabilities(
           through
         }),
         'overlay.setMouseThrough'
+      )
+    },
+    /**
+     * 开始**跟手拖动**（修"快速拖动时鼠标与宠物脱离"）。
+     *
+     * 与 `setPosition` 的分工：`setPosition` 是"把窗体放到某个绝对坐标"，扩展自己算增量；
+     * 快速拖动时窗口移动会追不上指针、`pointermove` 断流 ⇒ 窗体停在原地。
+     * `beginDrag` 交给主进程按**全局光标**持续定位，与页面事件无关，快慢都跟得住；
+     * 结束用 `endDrag`（幂等）。
+     */
+    async beginDrag(id: string): Promise<OverlayResult> {
+      const target = requireText('overlay.beginDrag', 'id', id)
+      return readOverlayResult(
+        await call('overlay.beginDrag', HOST_MAIN_METHODS.overlayBeginDrag, {
+          extId,
+          id: target
+        }),
+        'overlay.beginDrag'
+      )
+    },
+    /** 结束跟手拖动（幂等：没在拖也返回 ok） */
+    async endDrag(id: string): Promise<OverlayResult> {
+      const target = requireText('overlay.endDrag', 'id', id)
+      return readOverlayResult(
+        await call('overlay.endDrag', HOST_MAIN_METHODS.overlayEndDrag, {
+          extId,
+          id: target
+        }),
+        'overlay.endDrag'
       )
     },
     async setPosition(id: string, x: number, y: number): Promise<OverlayResult> {

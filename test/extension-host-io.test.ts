@@ -898,7 +898,7 @@ test('env：5 个成员与 src/api/types.ts 的声明一一对应（语言来自
 /* 6. apiFactory 装配与「已实现 / 桩」对照表                                                        */
 /* -------------------------------------------------------------------------------------------- */
 
-test('对照表：EH-B3b-2 之后 99 已实现 + 0 桩 = 99（阶段 B 的能力面已全部落地）', async (): Promise<void> => {
+test('对照表：EH-B3b-2 之后 103 已实现 + 0 桩 = 103（阶段 B 的能力面已全部落地）', async (): Promise<void> => {
   const root = await makeTempDir()
   const built = createExtensionApi({
     ext: {
@@ -952,6 +952,8 @@ test('对照表：EH-B3b-2 之后 99 已实现 + 0 桩 = 99（阶段 B 的能力
     'globalState.get',
     'globalState.keys',
     'globalState.update',
+    'http.names',
+    'http.register',
     'i18n.locale',
     'i18n.onLocaleChanged',
     'i18n.registerMessages',
@@ -978,8 +980,10 @@ test('对照表：EH-B3b-2 之后 99 已实现 + 0 桩 = 99（阶段 B 的能力
     'on',
     // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
     'output.createChannel',
+    'overlay.beginDrag',
     'overlay.create',
     'overlay.destroy',
+    'overlay.endDrag',
     'overlay.setMouseThrough',
     'overlay.setPosition',
     'proxy.get',
@@ -1031,11 +1035,11 @@ test('对照表：EH-B3b-2 之后 99 已实现 + 0 桩 = 99（阶段 B 的能力
     'workspaceState.keys',
     'workspaceState.update'
   ])
-  assert.equal(rows.length, 99, '对照表共 99 项')
+  assert.equal(rows.length, 103, '对照表共 103 项')
   assert.equal(
     implemented.length,
-    99,
-    '已实现 99 项（EH-A3 的 17 + B1 的 5 + B2 的 16 + B3a 的 23 + B3b-1 的 28 + B3b-2 的 10）'
+    103,
+    '已实现 103 项（EH-A3 的 17 + B1 的 5 + B2 的 16 + B3a 的 23 + B3b-1 的 28 + B3b-2 的 10 + 2.0.3 的 2）'
   )
   assert.equal(stubs.length, 0, '桩 0 项（EH-B3b-2 把 ui 5 / output 1 / update 4 全部落地）')
   assert.equal(rows.length, implemented.length + stubs.length, '不得出现第三类')

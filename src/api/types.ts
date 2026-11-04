@@ -249,6 +249,33 @@ export interface ExtensionActivationApi {
      * （与 `setMouseThrough` 同口径，无幂等语义）；越权（`id` 属于别的扩展）会被拒绝。
      */
     setPosition(id: string, x: number, y: number): Promise<OverlayResult>
+    /**
+     * 开始**跟手拖动**（与 `setPosition` 二选一，推荐用它做整窗拖动）。
+     *
+     * 为什么需要：`setPosition` 由扩展按 `pointermove` 的增量自己算坐标，而窗口每帧在动 ——
+     * 快速拖动时指针会跑出窗口 ⇒ 事件断流 ⇒ 窗体停在原地（"鼠标与宠物脱离"）。
+     * `beginDrag` 把定位交给主进程按**全局光标**持续执行，快慢都跟得住；结束调 `endDrag`。
+     */
+    beginDrag(id: string): Promise<OverlayResult>
+    /** 结束跟手拖动（幂等：没在拖也返回 ok） */
+    endDrag(id: string): Promise<OverlayResult>
+  }
+  /**
+   * 外部 HTTP 指令（2.0.3）。
+   *
+   * 宿主在 `127.0.0.1` 上监听**随机端口**，外部程序可以：
+   * `POST http://127.0.0.1:<port>/command`，体 `{ command: "<扩展id>:<指令名>", payload }`，
+   * 头带 `x-obox-token`（端口与令牌写在 `<userData>/http-endpoint.json`）。
+   * 只绑回环、**不回 CORS 头**（浏览器页面读不到响应）。
+   *
+   * 处理器收到的就是请求体里的 `payload`，返回值原样作为 JSON 回给调用方；
+   * 与 `api.app.onMessage` 走**同一条桥**（通道 `http:<指令名>`），超时与错误归一完全复用。
+   */
+  http: {
+    /** 注册一条指令；返回注销函数（扩展 dispose 时也会自动清空）。指令名需匹配 `[a-z0-9._-]` */
+    register(name: string, handler: (payload: unknown) => unknown | Promise<unknown>): () => void
+    /** 本扩展已注册的指令名（诊断用） */
+    names(): string[]
   }
   /** 扩展多语言能力（扩展语言包与宿主语言包独立命名空间） */
   i18n: {

@@ -10,13 +10,13 @@
 
 obox 有**两个扩展运行时**，代码落在哪一侧决定了你能用什么：
 
-|              | 用户扩展（`.oix`）                                                                                      | 内置扩展                                                                       |
-| ------------ | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 执行位置     | **Extension Host Process**：主进程用 Electron `utilityProcess` 拉起的独立 **Node 进程**，随主窗口同生共死 | **Renderer Runtime**：渲染进程（源码在 `src/renderer/src/extensions/<id>/`）    |
-| Node 能力    | **完整 Node**：`node:fs` / `node:child_process` / `node:sqlite` / 任意内置模块，入口按 `file://` 动态 `import()` | 无 Node（只有注入的 `api`，能力经 `window.api` 走主进程）                       |
-| DOM          | **没有**（宿主进程没有 DOM、没有 `window`、没有 `localStorage`）                                        | 有（与 UI 同一个进程）                                                         |
-| 界面怎么来   | 贡献点 + `app://` 静态页（App 卡片 / overlay 页面）、树视图数据源                                       | 另有 `navItems[].view` 指向的**具名导出 Vue 组件**                             |
-| 激活时机     | 按 `activationEvents` 懒激活（缺省 `*` = 立即，见 [manifest-reference.md](manifest-reference.md)）       | **立即激活**，不参与懒激活                                                     |
+|            | 用户扩展（`.oix`）                                                                                               | 内置扩展                                                                     |
+| ---------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 执行位置   | **Extension Host Process**：主进程用 Electron `utilityProcess` 拉起的独立 **Node 进程**，随主窗口同生共死        | **Renderer Runtime**：渲染进程（源码在 `src/renderer/src/extensions/<id>/`） |
+| Node 能力  | **完整 Node**：`node:fs` / `node:child_process` / `node:sqlite` / 任意内置模块，入口按 `file://` 动态 `import()` | 无 Node（只有注入的 `api`，能力经 `window.api` 走主进程）                    |
+| DOM        | **没有**（宿主进程没有 DOM、没有 `window`、没有 `localStorage`）                                                 | 有（与 UI 同一个进程）                                                       |
+| 界面怎么来 | 贡献点 + `app://` 静态页（App 卡片 / overlay 页面）、树视图数据源                                                | 另有 `navItems[].view` 指向的**具名导出 Vue 组件**                           |
+| 激活时机   | 按 `activationEvents` 懒激活（缺省 `*` = 立即，见 [manifest-reference.md](manifest-reference.md)）               | **立即激活**，不参与懒激活                                                   |
 
 - **API 交付方式没变**：仍是 `export default function (api) {…}`，`api` 由宿主按扩展 id 现场构造后作为**唯一参数**传入（不是 `require('obox')` 拦截，也不是全局变量）。
 - **宿主进程没有 Electron API**：`safeStorage`（`api.secrets`）、系统对话框、通知、窗口与托盘、菜单、`app://` 协议、自动更新都仍**经主进程**执行；扩展看到的方法签名不变。
@@ -253,7 +253,50 @@ window.parent.postMessage(
 - `handler(channel, payload)` 可返回 Promise；结果（或错误）经桥回传 iframe；**60s 超时**（放宽以容纳 handler 内弹模态框等需用户填写的场景；实现是 `src/main/appWindow.ts:190-193`，`60_000` 这个超时值全文件只设定在这一处）。**overlay 窗体复用同一座桥与同一超时**——扩展若用"入口 → 页面"的**长轮询 hold** 做状态同步，hold 时长必须**小于** 60s（宠物扩展用 25s，`extensions/pet/lib/constants.js:38-40`），否则宿主先超时、页面收到的是「扩展未响应（超时）」而不是订阅结果（见下方 `### overlay`）
 - `appId` = 扩展注册卡片的 id；扩展停用时 handler 自动注销（每个扩展只保留**最后一个** handler，`host.ts:426-433`）
 - **路由现支持 overlay（卡片路径行为逐字不变）**：归属查找走纯函数 `resolveMessageExtId`——**先按 `appId` 查 App 卡片**（`appStore.findById(appId)?.extensionId`），**未命中再按 `overlayId` 查 overlay 路由表**（`overlayOwners`），都未命中回**既有**错误「扩展未注册消息处理器」（`host.ts:89-95,622-646`；门禁 `test/overlay-window.test.ts` 的「宿主 · 消息路由」）。overlay 页面把自己的 `overlayId` 当 `appId` 原样发即可；外壳对 overlay 窗口还会**强制**用查询串里的 `appId`（= `overlayId`），页面无法借道指定别人的卡片 id 发消息（`src/renderer/src/AppWindow.vue:204-210`）
-- `app.onMessage` 是**请求/响应**桥（经主进程 IPC、需要扩展注册 handler、有 `requestId` 与超时）。**主题是宿主单向推送**，不经该桥、**不需要** handler、也没有 `requestId`（见上面 `app.register` 的"主题下发"一条）——两者**不要混用**
+- **超时预算按方法族给**（2.0.3，单一来源 `src/shared/rpcBudget.ts`）：普通往返 3s、
+  `ui.appMessage` / `ui.executeCommand` **30s**、`ui.treeChildren` 15s、`update.*` 沿用旧的 60s/15min。
+  handler 可以放心 await IO 或做长轮询（宠物 `subscribe` hold 25s 就在预算内）；超时文案会明确说
+  「宿主侧可能仍在执行」，不是"扩展坏了"。- `app.onMessage` 是**请求/响应**桥（经主进程 IPC、需要扩展注册 handler、有 `requestId` 与超时）。**主题是宿主单向推送**，不经该桥、**不需要** handler、也没有 `requestId`（见上面 `app.register` 的"主题下发"一条）——两者**不要混用**
+
+### http（外部 HTTP 指令：让别的程序驱动扩展，2.0.3）
+
+宿主在 `127.0.0.1` 上监听一个**随机端口**，外部程序（脚本、手机快捷指令、其它桌面工具）可以发起指令。扩展用 `api.http.register` 把某个动作暴露出去。
+
+```ts
+// 扩展入口（index.js）
+const off = api.http.register('feed', async (payload) => {
+  // payload = HTTP 请求体里的 payload（任意 JSON）
+  return { fed: true, amount: payload?.amount ?? 1 } // 返回值原样作为 JSON 回给调用方
+})
+// 不再需要时：off()；扩展 dispose 时也会自动清空
+```
+
+调用方：
+
+```bash
+# 端口与令牌写在 <userData>/http-endpoint.json（Windows: %APPDATA%\obox\http-endpoint.json）
+curl http://127.0.0.1:<port>/health                       # 免令牌
+
+curl -X POST http://127.0.0.1:<port>/command \
+  -H "x-obox-token: <token>" -H 'content-type: application/json' \
+  -d '{"command":"<扩展id>:feed","payload":{"amount":1}}'
+```
+
+| 接口            | 说明                                                                                          |
+| --------------- | --------------------------------------------------------------------------------------------- |
+| `GET /health`   | 存活探针，返回 `{ok, app, version}`；**不需要令牌**                                           |
+| `GET /commands` | 已注册的指令名数组（需令牌）                                                                  |
+| `POST /command` | `{command:"<扩展id>:<指令名>", payload}`；成功 200 `{ok, data}`，失败 500 `{ok:false, error}` |
+
+安全与边界（都是有意为之，不是遗漏）：
+
+- **只绑回环** `127.0.0.1`，不出局域网；来源不是本机的请求直接 403；
+- 除 `/health` 外都要 `x-obox-token`（启动时随机生成，写在端点文件里）；
+- **不回 CORS 头** ⇒ 浏览器页面读不到响应（挡掉"随便一个网页就能驱动本机程序"）；
+- 请求体上限 1MB；指令名与扩展 id 都按 `[a-z0-9._-]` 校验；
+- 指令最终走**与 `app.onMessage` 同一条桥**（通道 `http:<指令名>`）⇒ 超时与错误归一完全一致；
+  宿主模式下由扩展宿主处理，渲染模式下由渲染进程处理，扩展侧无需区分；
+- `GET /commands` 目前只回**已同步**的指令名（渲染侧下次同步后才完整），调用方以文档里的指令名为准。
 
 ### overlay（Overlay 窗体：无边框 / 可透明 / 可置顶 / 不占任务栏的固定小窗）
 
@@ -289,39 +332,39 @@ if (moved.ok) console.log(moved.position) // { x, y }（扩展拿不到 workArea
 
 签名逐字取自 `src/api/types.ts:207-252`：
 
-| 方法                                                        | 返回                       | 实现                                        |
-| ----------------------------------------------------------- | -------------------------- | ------------------------------------------- |
-| `create(options: CreateOverlayRequest)`                      | `Promise<OverlayResult>`   | `src/main/appWindow.ts:391-502`             |
-| `destroy(id: string)`                                        | `Promise<OverlayResult>`   | `src/main/appWindow.ts:504-533`             |
-| `setMouseThrough(id: string, through: boolean)`              | `Promise<OverlayResult>`   | `src/main/appWindow.ts:535-572`             |
-| `setPosition(id: string, x: number, y: number)`              | `Promise<OverlayResult>`   | `src/main/appWindow.ts:599-660`             |
+| 方法                                            | 返回                     | 实现                            |
+| ----------------------------------------------- | ------------------------ | ------------------------------- |
+| `create(options: CreateOverlayRequest)`         | `Promise<OverlayResult>` | `src/main/appWindow.ts:391-502` |
+| `destroy(id: string)`                           | `Promise<OverlayResult>` | `src/main/appWindow.ts:504-533` |
+| `setMouseThrough(id: string, through: boolean)` | `Promise<OverlayResult>` | `src/main/appWindow.ts:535-572` |
+| `setPosition(id: string, x: number, y: number)` | `Promise<OverlayResult>` | `src/main/appWindow.ts:599-660` |
 
 参数与返回形状定义在 **`src/shared/types.ts:521-580`**（`OverlayAnchor` / `CreateOverlayRequest` / `OverlayResult`）——主进程窗体实现、preload 类型与扩展 API **三处共用同一份**，防签名漂移（与对话框类型同先例）；由 `src/api/types.ts:14-32` 再导出 ⇒ 扩展照旧 `import type { CreateOverlayRequest } from '<...>/api'`。`OverlayResult` 就是 `{ ok: boolean; error?: string; position?: { x: number; y: number } }`（失败不抛错，与 `notification.show` / `shell.openExternal` 同风格）——**`position` 由 `create` 与 `setPosition` 成功时回传**（create = anchor/margin 解析后的初始绝对位置；setPosition = 钳制后的实际位置；destroy/setMouseThrough 不带），用途是给扩展侧一个**绝对坐标基准**：扩展拿不到 `workArea`，既算不出 anchor 落点也不知道宿主钳到了哪（R31）。四条 IPC 通道是 `overlay:create` / `overlay:destroy` / `overlay:set-mouse-through` / `overlay:set-position`（`src/preload/index.ts:69-76`、注册在 `src/main/appWindow.ts:669-686`，由 `src/main/index.ts:103` 挂载）。
 
 #### 参数契约（`CreateOverlayRequest`）与校验
 
-| 字段          | 必填 | 类型                                                                                             | 约束与缺省                                                                                                                                                       |
-| ------------- | ---- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`          | ✅   | string                                                                                           | 非空。**全局唯一**（不是"每扩展唯一"）：同扩展重复创建被拒（提示先 `destroy`），**别的扩展占了同 id 也被拒**（消息桥按 overlayId 全局寻址，`src/main/appWindow.ts:401-411`） |
-| `url`         | ✅   | string                                                                                           | 非空，且必须指向**调用方扩展目录内**的页面（判据见下方「url 双重校验」）                                                                                            |
-| `width`       | ✅   | number                                                                                           | 有限且 **> 0**（像素）。尺寸固定：不可调整大小、不可最大化                                                                                                        |
-| `height`      | ✅   | number                                                                                           | 有限且 **> 0**                                                                                                                                                     |
-| `anchor`      | ✅   | `'bottom-right' \| 'bottom-left' \| 'top-right' \| 'top-left'`                                    | 必须是这四个之一（`src/shared/types.ts:515`；运行期白名单 `src/main/appWindow.ts:255`）——贴**主显示器工作区**的哪个角                                                        |
-| `margin`      | ❌   | number                                                                                           | 有限且 **≥ 0**（负值拒绝）；**缺省 24**（`src/main/appWindow.ts:258,413`）。可以为 0（完全贴角）                                                                            |
-| `transparent` | ❌   | boolean                                                                                          | **缺省 false**。**只在创建时决定，创建后不可运行时切换**（Electron 限制）；透明时宿主不绘制任何窗体背景并关闭阴影/系统边框/圆角。Windows 上依赖 DWM 合成             |
-| `alwaysOnTop` | ❌   | boolean                                                                                          | **缺省 false**。全屏独占应用下仍可能被遮挡——平台行为，非宿主缺陷                                                                                                  |
-| `skipTaskbar` | ❌   | boolean                                                                                          | **缺省 false**（true = 不占任务栏）                                                                                                                                |
+| 字段          | 必填 | 类型                                                           | 约束与缺省                                                                                                                                                                   |
+| ------------- | ---- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | ✅   | string                                                         | 非空。**全局唯一**（不是"每扩展唯一"）：同扩展重复创建被拒（提示先 `destroy`），**别的扩展占了同 id 也被拒**（消息桥按 overlayId 全局寻址，`src/main/appWindow.ts:401-411`） |
+| `url`         | ✅   | string                                                         | 非空，且必须指向**调用方扩展目录内**的页面（判据见下方「url 双重校验」）                                                                                                     |
+| `width`       | ✅   | number                                                         | 有限且 **> 0**（像素）。尺寸固定：不可调整大小、不可最大化                                                                                                                   |
+| `height`      | ✅   | number                                                         | 有限且 **> 0**                                                                                                                                                               |
+| `anchor`      | ✅   | `'bottom-right' \| 'bottom-left' \| 'top-right' \| 'top-left'` | 必须是这四个之一（`src/shared/types.ts:515`；运行期白名单 `src/main/appWindow.ts:255`）——贴**主显示器工作区**的哪个角                                                        |
+| `margin`      | ❌   | number                                                         | 有限且 **≥ 0**（负值拒绝）；**缺省 24**（`src/main/appWindow.ts:258,413`）。可以为 0（完全贴角）                                                                             |
+| `transparent` | ❌   | boolean                                                        | **缺省 false**。**只在创建时决定，创建后不可运行时切换**（Electron 限制）；透明时宿主不绘制任何窗体背景并关闭阴影/系统边框/圆角。Windows 上依赖 DWM 合成                     |
+| `alwaysOnTop` | ❌   | boolean                                                        | **缺省 false**。全屏独占应用下仍可能被遮挡——平台行为，非宿主缺陷                                                                                                             |
+| `skipTaskbar` | ❌   | boolean                                                        | **缺省 false**（true = 不占任务栏）                                                                                                                                          |
 
 - 校验实现在纯函数 `validateOverlayRequest`（`src/main/appWindow.ts:293-329`，`test/overlay-window.test.ts` 直接喂非法值断言被拒）：三个开关传了非布尔也拒（`:323-327`）；`extId` 不是非空字符串 ⇒ 报「缺少扩展 id（宿主接线错误：overlay 四方法必须由宿主绑定扩展 id 调用）」（`:294-296`）。
 - **所有失败都是 `{ ok:false, error }`，一个窗体都不建、也不抛错**；`error` 是中文可执行原因（如 `anchor 必须是 bottom-right / bottom-left / top-right / top-left 之一：bottom-center`）。
 
 **`setPosition(id, x, y)` 的参数契约（运行期移动，卡 14）**：
 
-| 参数 | 必填 | 类型   | 约束                                                                                                                       |
-| ---- | ---- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `id` | ✅   | string | 非空；作用域同下节（越权 ⇒ `ok:false` + error 指认真实属主；不存在/已销毁 ⇒ `ok:false`，与 `setMouseThrough` 同口径）          |
+| 参数 | 必填 | 类型   | 约束                                                                                                                             |
+| ---- | ---- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| `id` | ✅   | string | 非空；作用域同下节（越权 ⇒ `ok:false` + error 指认真实属主；不存在/已销毁 ⇒ `ok:false`，与 `setMouseThrough` 同口径）            |
 | `x`  | ✅   | number | **有限数字**；NaN / Infinity / 非数字（含字符串 `'10'`）/ 缺参一律 `ok:false` 拒绝（**不钳不猜**）；合法数字被钳进工作区（见下） |
-| `y`  | ✅   | number | 同 `x`                                                                                                                      |
+| `y`  | ✅   | number | 同 `x`                                                                                                                           |
 
 - 成功返回 `{ ok: true, position: { x, y } }`，`position` = **钳制后的实际坐标**（与 `create` 回传初始绝对位置同一字段，R31）；失败/拒绝路径**不带** `position`（不回传任何"猜测"出来的坐标）。
 - 校验与钳位实现在 `setOverlayPosition`（`src/main/appWindow.ts:599-660`）+ 纯函数 `clampOverlayPosition`（`:574-597`，`test/overlay-window.test.ts` 直接喂边界值断言钳制结果）；钳位公式见下方「窗体参数与定位 · 运行期移动」。
@@ -337,19 +380,19 @@ if (moved.ok) console.log(moved.position) // { x, y }（扩展拿不到 workArea
 
 #### 生命周期
 
-| 事件                     | 行为                                                                                                                                                                                                                            | 证据                                                        |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| 创建成功                 | 窗体**默认鼠标穿透**（等效已调用 `setMouseThrough(id, true)`）——透明 overlay 不应一出现就吞掉其覆盖区域的桌面点击；实现是 `setIgnoreMouseEvents(true, { forward: true })`                                                          | `src/main/appWindow.ts:459-462`                                      |
-| 创建成功回传位置         | `create` 成功回包带 `position` = anchor/margin 解析后的**实际窗体坐标**（与创建日志里的 `@(x,y)` 同一份，不重算）——扩展拿不到 workArea，首次拖动（存档还没有位置）时入口靠它建立绝对基准（R31）                                        | `src/main/appWindow.ts:498-501`                                      |
-| 显示时机                 | `show:false` 创建，`ready-to-show`（首帧绘制完成）后才 `show()`——避免创建瞬间闪一块底色                                                                                                                                           | `src/main/appWindow.ts:447-448,474`                                  |
-| `destroy(id)`            | **真销毁**（`win.destroy()`，不是隐藏）：页面与驱动它的 rAF/定时器动画循环随之终止，CPU 占用回落；权威状态应由扩展入口持有，不随窗体销毁丢失                                                                                       | `src/main/appWindow.ts:527-531`；**已实机验证**：卡 01 证据 §4        |
-| `destroy` 幂等           | 不存在（或已销毁）的 `id` 重复销毁**静默成功**（`ok:true`）；销毁后同 id 可重建（登记表已被 `closed` 清理）                                                                                                                        | `src/main/appWindow.ts:516-525,475-480`                              |
-| `setMouseThrough` 不存在 | 与 `destroy` 的幂等**不同**：对不存在/已销毁的 id 返回 **`ok:false`**（`overlay 不存在（或已销毁）：X`）——切换穿透没有"默认成功"语义，明确报错让扩展能自查                                                                          | `src/main/appWindow.ts:555-564`                                      |
-| `setPosition` 不存在/已销毁 | 与 `setMouseThrough` **同口径**：返回 **`ok:false`**（`overlay 不存在（或已销毁）：X`），**不抛错**——移动没有幂等语义，明确报错让扩展能自查                                                                                        | `src/main/appWindow.ts:635-636`                                      |
-| 扩展停用 / 卸载          | **自动回收**该扩展的全部 overlay：`create` 发起时就把「销毁该 overlay」挂进 `disposables`，走既有 cleanup 路径（`disposeAll` / `removeExtension` 的 `cleanup()`）；`removeExtension` 另对路由表做**兜底清扫**，防路由项残留        | `host.ts:586-596,1132-1152`                                 |
-| 主窗口关闭               | overlay 一并关闭（对齐 App 子窗口的既有行为）：overlay 是扩展的附属桌面 UI，主窗口没了它就没有存在意义（消息桥的对端宿主也没了）                                                                                                    | `src/main/appWindow.ts:217-232`（由 `src/main/index.ts:54` 接线）     |
-| 窗体 `closed`            | 清登记表 + **立即结算**该窗口发出、还在等扩展回复的桥请求（`flushPendingReplies`，以「overlay 窗体已销毁」为 error），不让它空挂 60s                                                                                               | `src/main/appWindow.ts:162-170,475-480`                              |
-| 不进启动器               | overlay **不写 `appStore`、不注册卡片**：宿主只在 `overlayOwners`（overlayId → 扩展 id）里登记一条路由项，且**只收成功创建的** overlay（失败不登记）                                                                              | `host.ts:115-122,597-600`                                   |
+| 事件                        | 行为                                                                                                                                                                                                                        | 证据                                                              |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| 创建成功                    | 窗体**默认鼠标穿透**（等效已调用 `setMouseThrough(id, true)`）——透明 overlay 不应一出现就吞掉其覆盖区域的桌面点击；实现是 `setIgnoreMouseEvents(true, { forward: true })`                                                   | `src/main/appWindow.ts:459-462`                                   |
+| 创建成功回传位置            | `create` 成功回包带 `position` = anchor/margin 解析后的**实际窗体坐标**（与创建日志里的 `@(x,y)` 同一份，不重算）——扩展拿不到 workArea，首次拖动（存档还没有位置）时入口靠它建立绝对基准（R31）                             | `src/main/appWindow.ts:498-501`                                   |
+| 显示时机                    | `show:false` 创建，`ready-to-show`（首帧绘制完成）后才 `show()`——避免创建瞬间闪一块底色                                                                                                                                     | `src/main/appWindow.ts:447-448,474`                               |
+| `destroy(id)`               | **真销毁**（`win.destroy()`，不是隐藏）：页面与驱动它的 rAF/定时器动画循环随之终止，CPU 占用回落；权威状态应由扩展入口持有，不随窗体销毁丢失                                                                                | `src/main/appWindow.ts:527-531`；**已实机验证**：卡 01 证据 §4    |
+| `destroy` 幂等              | 不存在（或已销毁）的 `id` 重复销毁**静默成功**（`ok:true`）；销毁后同 id 可重建（登记表已被 `closed` 清理）                                                                                                                 | `src/main/appWindow.ts:516-525,475-480`                           |
+| `setMouseThrough` 不存在    | 与 `destroy` 的幂等**不同**：对不存在/已销毁的 id 返回 **`ok:false`**（`overlay 不存在（或已销毁）：X`）——切换穿透没有"默认成功"语义，明确报错让扩展能自查                                                                  | `src/main/appWindow.ts:555-564`                                   |
+| `setPosition` 不存在/已销毁 | 与 `setMouseThrough` **同口径**：返回 **`ok:false`**（`overlay 不存在（或已销毁）：X`），**不抛错**——移动没有幂等语义，明确报错让扩展能自查                                                                                 | `src/main/appWindow.ts:635-636`                                   |
+| 扩展停用 / 卸载             | **自动回收**该扩展的全部 overlay：`create` 发起时就把「销毁该 overlay」挂进 `disposables`，走既有 cleanup 路径（`disposeAll` / `removeExtension` 的 `cleanup()`）；`removeExtension` 另对路由表做**兜底清扫**，防路由项残留 | `host.ts:586-596,1132-1152`                                       |
+| 主窗口关闭                  | overlay 一并关闭（对齐 App 子窗口的既有行为）：overlay 是扩展的附属桌面 UI，主窗口没了它就没有存在意义（消息桥的对端宿主也没了）                                                                                            | `src/main/appWindow.ts:217-232`（由 `src/main/index.ts:54` 接线） |
+| 窗体 `closed`               | 清登记表 + **立即结算**该窗口发出、还在等扩展回复的桥请求（`flushPendingReplies`，以「overlay 窗体已销毁」为 error），不让它空挂 60s                                                                                        | `src/main/appWindow.ts:162-170,475-480`                           |
+| 不进启动器                  | overlay **不写 `appStore`、不注册卡片**：宿主只在 `overlayOwners`（overlayId → 扩展 id）里登记一条路由项，且**只收成功创建的** overlay（失败不登记）                                                                        | `host.ts:115-122,597-600`                                         |
 
 #### 窗体参数与定位（主进程实现）
 
@@ -408,17 +451,18 @@ overlay 是**独立文档**（`app://extensions/<id>/dist/index.html` 由主进�
 - **扩展侧无需做任何事**：直接写 `var(--bg-panel)` / `var(--fg)` 即可；但页面**必须自带兜底值**
   或保证在 token 到达前不依赖它们渲染关键内容（首帧可能早于下发）。
 - 只接受 `--x` 形状的 token 名（`shared/themeTokens.ts` 校验），其它属性名会被丢弃。
+
 #### 透明窗体的五处绘制点（宿主外壳侧）
 
 透明 overlay 要"完全透出桌面"，宿主侧一共改了**五处**，任一处漏改都会得到不透明窗体（排查清单见 [troubleshooting.md 第 34 条](troubleshooting.md#34-透明-overlay-窗体看起来不透明)）：
 
-| #   | 位置                                                                                                     | 内容                                                                                                                       |
-| --- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| 1/5 | 主进程窗体参数（`src/main/appWindow.ts:429-441`）                                                          | `transparent:true` + `backgroundColor:'#00000000'`，并关掉 `hasShadow` / `thickFrame` / `roundedCorners`                     |
-| 2/5 | `src/renderer/src/AppWindow.vue:287-314`                                                                   | overlay 模式**不渲染** `<TitleBar>` 与 `<PromptHost>`（任何不透明像素都会破坏"完全透出桌面"，模态遮罩同理）                   |
-| 3/5 | `src/renderer/src/AppWindow.vue:336-345`                                                                   | 根 class `.app-window--overlay` 下 `.app-window` / `.app-window-content` 的 `var(--bg)` 背景置 `transparent`                 |
-| 4/5 | 同上                                                                                                       | `.app-frame` 的**白底覆盖**为 `transparent`——最容易漏的一处：iframe 默认白底会把内容糊成白色矩形                              |
-| 5/5 | `src/renderer/src/assets/main.css:53-61` + `src/renderer/src/AppWindow.vue:1-17`                            | 全局 `body { background: var(--bg) }` 对**每个窗口**都生效 ⇒ 用 `html.obox-overlay` 规则把 html/body 就地置透明；class 由 SFC **模块级 script** 在**首帧前**挂上（等挂载再改会闪一块底色） |
+| #   | 位置                                                                             | 内容                                                                                                                                                                                       |
+| --- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1/5 | 主进程窗体参数（`src/main/appWindow.ts:429-441`）                                | `transparent:true` + `backgroundColor:'#00000000'`，并关掉 `hasShadow` / `thickFrame` / `roundedCorners`                                                                                   |
+| 2/5 | `src/renderer/src/AppWindow.vue:287-314`                                         | overlay 模式**不渲染** `<TitleBar>` 与 `<PromptHost>`（任何不透明像素都会破坏"完全透出桌面"，模态遮罩同理）                                                                                |
+| 3/5 | `src/renderer/src/AppWindow.vue:336-345`                                         | 根 class `.app-window--overlay` 下 `.app-window` / `.app-window-content` 的 `var(--bg)` 背景置 `transparent`                                                                               |
+| 4/5 | 同上                                                                             | `.app-frame` 的**白底覆盖**为 `transparent`——最容易漏的一处：iframe 默认白底会把内容糊成白色矩形                                                                                           |
+| 5/5 | `src/renderer/src/assets/main.css:53-61` + `src/renderer/src/AppWindow.vue:1-17` | 全局 `body { background: var(--bg) }` 对**每个窗口**都生效 ⇒ 用 `html.obox-overlay` 规则把 html/body 就地置透明；class 由 SFC **模块级 script** 在**首帧前**挂上（等挂载再改会闪一块底色） |
 
 - 五处都由 `isOverlay` 单一开关隔离，**App 卡片子窗口的基础样式逐字保留**（回归约束；门禁 `test/overlay-window.test.ts` 的「外壳 · 五处透明改动」，含"卡片模式基础样式逐字保留"一条）。
 - **已实机验证**：卡 01 证据 §1 —— 判据点取色 `maxdiff=0`（≤ 2/255），窗体区域完全透出桌面壁纸；§5 的两组反向对照（`transparent:false`）证明该判据有区分力。证据文件：`extensions/pet/openspec/changes/pet-desktop-companion/notes/evidence/overlay-feasibility.md`。
@@ -760,16 +804,16 @@ if (r.ok && !r.canceled && r.filePaths?.[0]) {
 }
 ```
 
-| 规则 | 说明 |
-| --- | --- |
-| 取值 | `properties?: Array<'openFile' \| 'openDirectory' \| 'multiSelections'>`；**未知值被宿主忽略，不抛错** |
-| 互斥 | `openDirectory` 与 `openFile` **互斥**；同时传时按**目录模式**归一（只保留 `openDirectory` + 可选 `multiSelections`） |
-| `filters` | **目录模式下被丢弃**（Electron 不对目录应用过滤器）；只对文件模式生效 |
-| 多选 | `properties: ['openDirectory','multiSelections']`，或旧字段 `multiSelect: true`（**继续兼容**，与目录模式可叠加） |
-| 返回值 | **形状完全不变**：仍是 `{ ok, filePaths?, canceled?, error? }`——目录选择与文件选择**共用 `filePaths`**，没有新增字段（老扩展零感知） |
-| 取消 | `canceled: true`；`filePaths` 为空但 `canceled !== true` 也按取消处理 |
-| 边界 | 宿主**只负责弹对框**，不做任何路径合法性校验；根的合法性与安全边界**永远在扩展/助手侧** |
-| `api.fs` | 选到的是**外部路径** ⇒ **不能**用 `api.fs` 读写（它只覆盖扩展自己的 data 目录，见下节） |
+| 规则      | 说明                                                                                                                                 |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 取值      | `properties?: Array<'openFile' \| 'openDirectory' \| 'multiSelections'>`；**未知值被宿主忽略，不抛错**                               |
+| 互斥      | `openDirectory` 与 `openFile` **互斥**；同时传时按**目录模式**归一（只保留 `openDirectory` + 可选 `multiSelections`）                |
+| `filters` | **目录模式下被丢弃**（Electron 不对目录应用过滤器）；只对文件模式生效                                                                |
+| 多选      | `properties: ['openDirectory','multiSelections']`，或旧字段 `multiSelect: true`（**继续兼容**，与目录模式可叠加）                    |
+| 返回值    | **形状完全不变**：仍是 `{ ok, filePaths?, canceled?, error? }`——目录选择与文件选择**共用 `filePaths`**，没有新增字段（老扩展零感知） |
+| 取消      | `canceled: true`；`filePaths` 为空但 `canceled !== true` 也按取消处理                                                                |
+| 边界      | 宿主**只负责弹对框**，不做任何路径合法性校验；根的合法性与安全边界**永远在扩展/助手侧**                                              |
+| `api.fs`  | 选到的是**外部路径** ⇒ **不能**用 `api.fs` 读写（它只覆盖扩展自己的 data 目录，见下节）                                              |
 
 > ⚠️ **老宿主会忽略 `properties`**（旧版本把 `properties` 硬编码成 `['openFile']`）⇒ 你仍然只拿到 `filePaths`，但里面是**文件**。扩展**必须自证"选到的确实是目录"**，不能假定新字段生效：把路径交给自己的 JS 助手/Python 侧判定 `isDirectory`（`fs.stat` 之类），是文件就取其父目录并给出诚实提示。**不要**用 obox 版本号字符串判断能力；判定凭据只有"返回值/它到底是不是目录"。详见 [troubleshooting.md 第 32 节](troubleshooting.md#32-扩展要选文件夹弹出的却是选文件框)。
 
@@ -989,15 +1033,15 @@ await api.ipc.close('worker')
 - **Node 版本 = 宿主内置 Electron 的 Node**（助手内 `process.versions.node` 可查，与 `api.env.nodeVersion` 同一份运行时）：宿主**不额外安装 Node**，助手也不要假设系统 PATH 上有独立的 `node`
 - **cwd = 扩展源目录下的 `data/`**：安装态是 `userData/extensions/<扩展id>/data`，调试态是**调试目录的 `data/`**（见下表「stdio 的 cwd」）
 
-| 项             | 说明                                                                                                                                                                                                                                                                                                  |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 项             | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 限额           | 每扩展最多 **4 条通道**（`src/main/ipc.ts:43`；**server 与 client 共用同一名字空间**，一条 server 只占 1 条）；**单个 server 最多 16 条连接**（`src/main/ipc.ts:45`，连接**不计入** 4 条上限，第 17 条被拒）；**每通道并发请求上限 64**（`src/main/ipcCore.ts:27`，超出抛 `too-many-requests`）；单条消息上限 **8MB**（`src/main/ipcCore.ts:23`）；请求默认 **30s** 超时（`src/main/ipcCore.ts:25`，`request(..., { timeoutMs })` 可覆盖） |
-| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `too-many-connections` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起；自动重连**不新增**错误码：重连窗口期复用 `not-connected`，放弃后复用断连那次的 `peer-crashed` + 后续 `not-connected`）                                                     |
-| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程；server 则停止监听并断开全部连接）                                                                                                                                                              |
-| 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                                                                       |
-| stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（`src/main/ipc.ts:262`，不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`） |
-| 清单声明       | 在 `contributes.ipcChannels` 静态声明后，代码里只写 `api.ipc.connect('<通道id>')`；声明**不自动连接**，非法声明会让清单无效（见 manifest-reference）                                                                                                                                                  |
-| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**——用户扩展跑在 Extension Host Process（与 UI 不同进程），但仍是**受信代码、无沙箱**；宿主模式下有完整 Node，`child_process` 本来就能起任意进程                                                                                                                                                                                                                      |
+| 错误码         | `invalid-declaration` / `connect-failed` / `not-connected` / `protocol-error` / `timeout` / `cancelled` / `message-too-large` / `too-many-requests` / `too-many-channels` / `too-many-connections` / `peer-crashed` / `channel-closed`（失败一律以错误码抛出，不静默挂起；自动重连**不新增**错误码：重连窗口期复用 `not-connected`，放弃后复用断连那次的 `peer-crashed` + 后续 `not-connected`）                                           |
+| 生命周期       | 通道由扩展**显式**打开；扩展停用/卸载/重载、窗口关闭、应用退出时宿主统一断开（并终止由宿主拉起的子进程；server 则停止监听并断开全部连接）                                                                                                                                                                                                                                                                                                  |
+| 任何语言可接入 | 对端只要会读写标准输入输出（stdio）或连上套接字（pipe）即可；**不需要开端口**，也不需要网络配置                                                                                                                                                                                                                                                                                                                                            |
+| stdio 的 cwd   | 宿主拉起对端时 **cwd = `<扩展>/data`**（`src/main/ipc.ts:262`，不是扩展根目录）：`program` 相对**扩展目录**解析，但 `args` 里若写相对路径要按 cwd 算（例如脚本在 `<扩展>/scripts/x.py` 时写 `['../scripts/x.py']`；E2E 实测踩过，写 `['scripts/x.py']` 会让对端立刻退出并表现为 `not-connected`）                                                                                                                                          |
+| 清单声明       | 在 `contributes.ipcChannels` 静态声明后，代码里只写 `api.ipc.connect('<通道id>')`；声明**不自动连接**，非法声明会让清单无效（见 manifest-reference）                                                                                                                                                                                                                                                                                       |
+| 信任边界       | 与 ADR-0015 一致：这是**能力封装而非安全边界**——用户扩展跑在 Extension Host Process（与 UI 不同进程），但仍是**受信代码、无沙箱**；宿主模式下有完整 Node，`child_process` 本来就能起任意进程                                                                                                                                                                                                                                               |
 
 #### api.ipc 服务端（多连接，issue #43）
 
@@ -1037,7 +1081,8 @@ await api.ipc.close('svc') // 停止监听 + 断开全部连接；不存在时�
 - **能力边界**：服务端意味着"**任何同机进程**都能连上"（POSIX 的 `0600` 只能挡其它用户），**不做**对端身份校验（ADR-0015：能力封装不是安全边界）。
 - **旧宿主兼容**：`api.ipc.listen` 是**新增**方法且 `apiVersion` 仍为 1，旧宿主上调用会得到 `TypeError`。请先做特性检测：
   ```ts
-  if (typeof api.ipc.listen !== 'function') throw new Error('当前宿主版本不支持 pipe 服务端（需要 api.ipc.listen）')
+  if (typeof api.ipc.listen !== 'function')
+    throw new Error('当前宿主版本不支持 pipe 服务端（需要 api.ipc.listen）')
   ```
 
 #### api.ipc 自动重连（客户端通道，issue #44）
@@ -1047,12 +1092,17 @@ await api.ipc.close('svc') // 停止监听 + 断开全部连接；不存在时�
 > **验证状态（如实登记）**：重连语义的用例（`test/ipc-reconnect.test.ts`）覆盖的是**主进程**那条实现；**宿主进程侧** `pipe + autoReconnect` 的实现是照同一套控制器写的，但**尚无自动化用例**（技术债 #8）。用它做关键链路时请自行在真机上验一遍断线重连（拔对端 / 杀进程），不要只信文档。
 
 ```ts
-await api.ipc.connect({ id: 'bus', transport: 'pipe', autoReconnect: { retries: 5, backoffMs: 250 } })
+await api.ipc.connect({
+  id: 'bus',
+  transport: 'pipe',
+  autoReconnect: { retries: 5, backoffMs: 250 }
+})
 
-api.ipc.onClose('bus', (err) => console.log('断了', err.code))          // 意外断线：每个断连周期**恰好一次**
-api.ipc.onReconnect('bus', async ({ attempts }) => {                  // 每次重连成功后一次
+api.ipc.onClose('bus', (err) => console.log('断了', err.code)) // 意外断线：每个断连周期**恰好一次**
+api.ipc.onReconnect('bus', async ({ attempts }) => {
+  // 每次重连成功后一次
   console.log('连上了，共尝试', attempts)
-  await api.ipc.request('bus', 'hello')                               // 协议层状态已归零：自行握手
+  await api.ipc.request('bus', 'hello') // 协议层状态已归零：自行握手
 })
 ```
 
@@ -1066,11 +1116,11 @@ api.ipc.onReconnect('bus', async ({ attempts }) => {                  // 每次�
 
 **三条语义**（逐条都有测试锁死，见 `test/ipc-reconnect.test.ts`）：
 
-| 时刻 | 你会看到什么 |
-| --- | --- |
-| **在途请求** | 断线瞬间该通道所有挂起请求**立即**以 `peer-crashed` 失败；**绝不重放**（也不会在重连后补发）——要重发就自己在 `onReconnect` 里做 |
-| **重连期新请求** | `request` / `notify` 立即以 `not-connected` 失败（不排队、不延迟），文案含"正在重连"；`channels()` **仍含**该通道名 |
-| **状态保留** | 通道名 / 声明 / `framing` / 重连策略保留并沿用；**协议层状态全部丢弃**（新通道、请求 id 从 1 重新开始、挂起表为空） |
+| 时刻             | 你会看到什么                                                                                                                    |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **在途请求**     | 断线瞬间该通道所有挂起请求**立即**以 `peer-crashed` 失败；**绝不重放**（也不会在重连后补发）——要重发就自己在 `onReconnect` 里做 |
+| **重连期新请求** | `request` / `notify` 立即以 `not-connected` 失败（不排队、不延迟），文案含"正在重连"；`channels()` **仍含**该通道名             |
+| **状态保留**     | 通道名 / 声明 / `framing` / 重连策略保留并沿用；**协议层状态全部丢弃**（新通道、请求 id 从 1 重新开始、挂起表为空）             |
 
 **两种"不见了"必须分清**（只有这个判据，没有额外的失败事件）：
 
@@ -1082,19 +1132,19 @@ api.ipc.onReconnect('bus', async ({ attempts }) => {                  // 每次�
 
 **配置与触发规则**：
 
-| 项 | 值 |
-| --- | --- |
-| 缺省 | `retries = 3`、`backoffMs = 250` |
-| 退避 | `250 → 500 → 1000 …`（×2）；**单次等待**封顶 **30000ms**；`retries` 本身**不封顶**（非负整数即可） |
-| `retries: 0` | 等价于**关闭**自动重连（与不写该键同效） |
-| `backoffMs: 0` | 合法 = 不等待（仍异步） |
-| 触发 | **首次连接成功后**发生 `peer-crashed`（对端进程退出 / 套接字关闭） |
-| **不触发** | `channel-closed`（你自己 `close()` / 扩展停用）、宿主清理、`protocol-error`（对端发非法帧，避免与坏对端无限拉锯）、**首次 `connect()` 失败**（仍抛 `connect-failed`，扩展自己决定要不要退避重试） |
-| 只对 pipe | `connect({ transport: 'stdio', autoReconnect: … })` → `invalid-declaration`（文案提示"自行 `connect()` 或改用 pipe"）。stdio 场景请在 `onClose` 里自己退避重连：`onClose` → `setTimeout` → 重新 `connect()` |
-| **只写在运行时对象里** | `autoReconnect` 只认 `connect({...})` 传的**运行时**声明对象；写进 manifest 的 `contributes.ipcChannels` **既不报错也不生效**（宿主会把这个键剥掉）。运行时对象上的非法值（负数 / 非整数 / 非对象）→ `invalid-declaration` |
-| 服务端不适用 | `autoReconnect` 只作用于 **client 通道**；`listen` 的服务端连接断连只通知（`onDisconnect`），对端回来是新连接、新 `connectionId` |
+| 项                     | 值                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 缺省                   | `retries = 3`、`backoffMs = 250`                                                                                                                                                                                                                                                                                                                                                         |
+| 退避                   | `250 → 500 → 1000 …`（×2）；**单次等待**封顶 **30000ms**；`retries` 本身**不封顶**（非负整数即可）                                                                                                                                                                                                                                                                                       |
+| `retries: 0`           | 等价于**关闭**自动重连（与不写该键同效）                                                                                                                                                                                                                                                                                                                                                 |
+| `backoffMs: 0`         | 合法 = 不等待（仍异步）                                                                                                                                                                                                                                                                                                                                                                  |
+| 触发                   | **首次连接成功后**发生 `peer-crashed`（对端进程退出 / 套接字关闭）                                                                                                                                                                                                                                                                                                                       |
+| **不触发**             | `channel-closed`（你自己 `close()` / 扩展停用）、宿主清理、`protocol-error`（对端发非法帧，避免与坏对端无限拉锯）、**首次 `connect()` 失败**（仍抛 `connect-failed`，扩展自己决定要不要退避重试）                                                                                                                                                                                        |
+| 只对 pipe              | `connect({ transport: 'stdio', autoReconnect: … })` → `invalid-declaration`（文案提示"自行 `connect()` 或改用 pipe"）。stdio 场景请在 `onClose` 里自己退避重连：`onClose` → `setTimeout` → 重新 `connect()`                                                                                                                                                                              |
+| **只写在运行时对象里** | `autoReconnect` 只认 `connect({...})` 传的**运行时**声明对象；写进 manifest 的 `contributes.ipcChannels` **既不报错也不生效**（宿主会把这个键剥掉）。运行时对象上的非法值（负数 / 非整数 / 非对象）→ `invalid-declaration`                                                                                                                                                               |
+| 服务端不适用           | `autoReconnect` 只作用于 **client 通道**；`listen` 的服务端连接断连只通知（`onDisconnect`），对端回来是新连接、新 `connectionId`                                                                                                                                                                                                                                                         |
 | 并发（issue #44 整改） | 同一条通道**同一时刻最多一个**重连控制器在跑；一个**意外断连周期**内**不重复**广播 `close`；重连尝试**在途**时若本通道又断一次，该次尝试一律**自弃**（不挂传输、不触发任何事件、不留无人引用的连接），并交回**同一个**控制器按退避继续。宿主自检出口：`src/main/ipc.ts` 的 `reconnectControllerCount()`（与 `pendingForwardCount()` 同风格，仅供诊断/测试，**不经 preload 暴露**给扩展） |
-| 重连期额度 | 窗口期**仍占** 1 条通道额度，因此此时不能再 `connect` 同名通道（会报"已打开"）；`close(name)` 在窗口期（含重连尝试**在途**时）**立即**取消剩余重试（幂等，之后不再有 `onReconnect`），并**额外**补发一条 `close{channel-closed}`（与那次 `peer-crashed` 各计一次） |
+| 重连期额度             | 窗口期**仍占** 1 条通道额度，因此此时不能再 `connect` 同名通道（会报"已打开"）；`close(name)` 在窗口期（含重连尝试**在途**时）**立即**取消剩余重试（幂等，之后不再有 `onReconnect`），并**额外**补发一条 `close{channel-closed}`（与那次 `peer-crashed` 各计一次）                                                                                                                       |
 
 **旧宿主兼容**（新扩展 + 旧宿主）：旧宿主不认识 `autoReconnect`（走白名单校验，未知键静默忽略）→ 通道**照常打开**、只是**不会重连**；`api.ipc.onReconnect` 也不存在。请特性检测：
 
@@ -1118,18 +1168,18 @@ api.ipc.onRequest('py1', (method, params) => ({ echo: params })) // Python 侧�
 const answer = await api.ipc.request('py1', 'compute', { n: 7 })
 ```
 
-| 项             | 说明                                                                                                                                                                                                                                                                    |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 调用方式       | 宿主以 **shell** 方式启动 `<扩展>/python/python.exe`（参数按 cmd 规则转义）；工作目录是扩展 data 目录                                                                                                                                                                   |
-| 返回值         | `{ code, stdout, stderr }`；**脚本失败不抛错**（`code` 非零 + `stderr`），调用方必须自己判断 `code`                                                                                                                                                                     |
-| 超时           | **默认不超时**（交互式脚本会一直等到进程结束）；写错脚本（死循环/`input()`）会挂住调用方                                                                                                                                                                                |
-| 错误码（抛出） | `python-missing`（包里没有该架构的运行时）/ `arch-mismatch` / `launch-failed` / `invalid-declaration`（如脚本越出扩展目录）                                                                                                                                             |
-| 通道           | `opts.channel`：省略/`false` = 不建；`true` = 建一条名为 `python` 的通道；字符串 = 指定名。**计入"每扩展 4 条通道"限额**                                                                                                                                                |
-| 协议           | 走通道时 Python 侧需自行实现 JSON-RPC 2.0 + `Content-Length` 分帧；**不建议再往 stdout 打印**（会破坏分帧）                                                                                                                                                             |
-| 环境           | 子进程只拿白名单 env（PATH/SystemRoot/TEMP/TMP/HOME/USERPROFILE/LANG）+ `PYTHONHOME`/`PYTHONPATH(<扩展>/data/user-site)`/`PYTHONNOUSERSITE`；**宿主的代理设置对 Python 无效**（pip 需自行处理网络）                                                                     |
+| 项             | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 调用方式       | 宿主以 **shell** 方式启动 `<扩展>/python/python.exe`（参数按 cmd 规则转义）；工作目录是扩展 data 目录                                                                                                                                                                                                                                                                                                                                                  |
+| 返回值         | `{ code, stdout, stderr }`；**脚本失败不抛错**（`code` 非零 + `stderr`），调用方必须自己判断 `code`                                                                                                                                                                                                                                                                                                                                                    |
+| 超时           | **默认不超时**（交互式脚本会一直等到进程结束）；写错脚本（死循环/`input()`）会挂住调用方                                                                                                                                                                                                                                                                                                                                                               |
+| 错误码（抛出） | `python-missing`（包里没有该架构的运行时）/ `arch-mismatch` / `launch-failed` / `invalid-declaration`（如脚本越出扩展目录）                                                                                                                                                                                                                                                                                                                            |
+| 通道           | `opts.channel`：省略/`false` = 不建；`true` = 建一条名为 `python` 的通道；字符串 = 指定名。**计入"每扩展 4 条通道"限额**                                                                                                                                                                                                                                                                                                                               |
+| 协议           | 走通道时 Python 侧需自行实现 JSON-RPC 2.0 + `Content-Length` 分帧；**不建议再往 stdout 打印**（会破坏分帧）                                                                                                                                                                                                                                                                                                                                            |
+| 环境           | 子进程只拿白名单 env（PATH/SystemRoot/TEMP/TMP/HOME/USERPROFILE/LANG）+ `PYTHONHOME`/`PYTHONPATH(<扩展>/data/user-site)`/`PYTHONNOUSERSITE`；**宿主的代理设置对 Python 无效**（pip 需自行处理网络）                                                                                                                                                                                                                                                    |
 | 依赖           | 依赖由扩展作者在打包时预置在 `<扩展>/python/Lib/site-packages`（随包替换）；用户自行装的库落在 `<扩展>/data/user-site`（升级保留）。**清单里的 `python.requirements` 已移除（issue #82）**：它从未被安装器传入、实际不可达，宿主不做"安装期装依赖"；旧清单残留该键只被忽略、不报错（`main/pythonCore.ts:84-110`）。**调试扩展**（`--debug-extension`）按**调试目录**找 `<扩展>/python/`，因此带运行时的扩展也能用调试方式开发（数据目录仍在 userData） |
-| 生命周期       | 扩展停用/卸载/重载时宿主**杀进程树**并注销通道（与定时器/DB/watch 同一时机）                                                                                                                                                                                            |
-| 信任边界       | 与 ADR-0015 一致：能力封装而非安全边界；Python 代码与扩展同等受信，**不构成沙箱**                                                                                                                                                                                       |
+| 生命周期       | 扩展停用/卸载/重载时宿主**杀进程树**并注销通道（与定时器/DB/watch 同一时机）                                                                                                                                                                                                                                                                                                                                                                           |
+| 信任边界       | 与 ADR-0015 一致：能力封装而非安全边界；Python 代码与扩展同等受信，**不构成沙箱**                                                                                                                                                                                                                                                                                                                                                                      |
 
 ## 生命周期钩子（install / uninstall）
 
@@ -1161,19 +1211,19 @@ export function uninstall(ctx) {
 
 扩到宿主进程时，有些能力只能**降级实现**。这里逐条写清"降级成什么样、你该怎么绕"，避免它们悄悄变成长期方案（来源：`docs/extension-host-migration.md` 的技术债表）。
 
-| # | 降级 / 限制 | 对你的影响 | 绕法 |
-| --- | --- | --- | --- |
-| 1 | **`main` → 宿主的事件是 250ms 轮询**（不是推送；协议还没有 main→host 的信封） | `api.update.onEvent`、通知点击等经 main 转发的事件**最多晚 250ms** | 事件驱动的地方按"可能延迟一个轮询周期"写，别依赖毫秒级时序；需要极实时就自己 `api.ipc` 起 sidecar |
-| 2 | **`proxy.get()` 是 1 秒 TTL 的快照** | 改完设置-网络后立刻读，可能还是旧值 | 隔 >1s 再读，或直接信任 `api.net.fetch`（它会用最新配置） |
-| 3 | **`net.fetch` 只支持 http / https 代理** | 填 `socks5://…` 会**明确报错**，不会静默直连 | 改用 http 代理；必须 socks 就自己起本地 http→socks 转发 |
-| 4 | **`noProxy` 不支持 CIDR** | `10.0.0.0/8` 这类规则不生效 | 用域名/主机名规则，或让目标走直连（关掉代理） |
-| 5 | **`api.ipc` 的 `Content-Length` 按字节计**（不是字符数） | 对端按字符数算长度时中文会乱码 / 丢帧 | 对端按 UTF-8 字节数编码（见 `api.ipc` 一节） |
-| 6 | **宿主侧 `pipe + autoReconnect` 无自动化用例** | 断线重连的时序没被测试钉住 | 关键链路真机验一遍（杀对端），或自己在 `onClose` 里退避重连 |
-| 7 | **宿主发起的通知不遵循「设置-通知」的逐扩展开关** | 用户在设置里关掉通知后，宿主扩展仍会弹 | **暂时没有绕法**：那份开关是渲染侧 `state` 里的数组（`notificationDisabledExtensions`），不是设置项，宿主与扩展都读不到。等它交给宿主后才恢复 |
-| 8 | **`workspaceState` 与 `globalState` 真隔离**（v1 是同一份 store） | 靠"两者其实同一份"做的迁移逻辑会失效 | 需要共享就把同一个键显式写两处，或只用一个 |
-| 9 | **`executeCommand` 执行不了内置扩展的命令** | `api.executeCommand('ext-manager.xxx')` 会 `command not found` | 内置能力请走对应 `api.*`（`api.ui` / `api.settings` 等），别去点内置扩展的命令 |
-| 10 | **`on` / `emit` 不跨运行时** | 内置扩展收不到用户扩展的事件（反之亦然） | 用户扩展之间用事件；跨运行时的数据流请走贡献点 + 消息桥（`api.app.onMessage`） |
-| 11 | **宿主扩展创建的 overlay 收不到 `api.app.onMessage`**（overlay→扩展的路由表由渲染侧 `api.overlay.create` 回填） | overlay 页面发来的消息会被判"扩展未注册消息处理器" | 需要双向通信时先用 `api.output` / `api.fs` 落盘或用 `api.ipc` pipe；这条退场前别把关键交互只压在 overlay 消息桥上 |
+| #   | 降级 / 限制                                                                                                     | 对你的影响                                                         | 绕法                                                                                                                                          |
+| --- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **`main` → 宿主的事件是 250ms 轮询**（不是推送；协议还没有 main→host 的信封）                                   | `api.update.onEvent`、通知点击等经 main 转发的事件**最多晚 250ms** | 事件驱动的地方按"可能延迟一个轮询周期"写，别依赖毫秒级时序；需要极实时就自己 `api.ipc` 起 sidecar                                             |
+| 2   | **`proxy.get()` 是 1 秒 TTL 的快照**                                                                            | 改完设置-网络后立刻读，可能还是旧值                                | 隔 >1s 再读，或直接信任 `api.net.fetch`（它会用最新配置）                                                                                     |
+| 3   | **`net.fetch` 只支持 http / https 代理**                                                                        | 填 `socks5://…` 会**明确报错**，不会静默直连                       | 改用 http 代理；必须 socks 就自己起本地 http→socks 转发                                                                                       |
+| 4   | **`noProxy` 不支持 CIDR**                                                                                       | `10.0.0.0/8` 这类规则不生效                                        | 用域名/主机名规则，或让目标走直连（关掉代理）                                                                                                 |
+| 5   | **`api.ipc` 的 `Content-Length` 按字节计**（不是字符数）                                                        | 对端按字符数算长度时中文会乱码 / 丢帧                              | 对端按 UTF-8 字节数编码（见 `api.ipc` 一节）                                                                                                  |
+| 6   | **宿主侧 `pipe + autoReconnect` 无自动化用例**                                                                  | 断线重连的时序没被测试钉住                                         | 关键链路真机验一遍（杀对端），或自己在 `onClose` 里退避重连                                                                                   |
+| 7   | **宿主发起的通知不遵循「设置-通知」的逐扩展开关**                                                               | 用户在设置里关掉通知后，宿主扩展仍会弹                             | **暂时没有绕法**：那份开关是渲染侧 `state` 里的数组（`notificationDisabledExtensions`），不是设置项，宿主与扩展都读不到。等它交给宿主后才恢复 |
+| 8   | **`workspaceState` 与 `globalState` 真隔离**（v1 是同一份 store）                                               | 靠"两者其实同一份"做的迁移逻辑会失效                               | 需要共享就把同一个键显式写两处，或只用一个                                                                                                    |
+| 9   | **`executeCommand` 执行不了内置扩展的命令**                                                                     | `api.executeCommand('ext-manager.xxx')` 会 `command not found`     | 内置能力请走对应 `api.*`（`api.ui` / `api.settings` 等），别去点内置扩展的命令                                                                |
+| 10  | **`on` / `emit` 不跨运行时**                                                                                    | 内置扩展收不到用户扩展的事件（反之亦然）                           | 用户扩展之间用事件；跨运行时的数据流请走贡献点 + 消息桥（`api.app.onMessage`）                                                                |
+| 11  | **宿主扩展创建的 overlay 收不到 `api.app.onMessage`**（overlay→扩展的路由表由渲染侧 `api.overlay.create` 回填） | overlay 页面发来的消息会被判"扩展未注册消息处理器"                 | 需要双向通信时先用 `api.output` / `api.fs` 落盘或用 `api.ipc` pipe；这条退场前别把关键交互只压在 overlay 消息桥上                             |
 
 > 这张表只列**扩展作者看得见**的降级。宿主/渲染侧的接缝缺陷、内部实现细节不在本表（见迁移文档的技术债表）。
 

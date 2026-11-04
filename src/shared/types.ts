@@ -410,6 +410,14 @@ export interface MainApi {
    * （与 setMouseThrough 同口径）；越权拒绝。移动不改变 transparent/alwaysOnTop/穿透态。
    */
   overlaySetPosition(extId: string, id: string, x: number, y: number): Promise<OverlayResult>
+  /** 开始跟手拖动：主进程按全局光标位置持续移动窗体（修"快速拖动脱手"） */
+  overlayBeginDrag(extId: string, id: string): Promise<OverlayResult>
+  /** 结束跟手拖动（幂等） */
+  overlayEndDrag(extId: string, id: string): Promise<OverlayResult>
+  /** 2.0.3：把一条外部 HTTP 指令的处理结果回给主进程 */
+  httpReply(requestId: number, result: { ok: boolean; data?: unknown; error?: string }): void
+  /** 2.0.3：把当前已注册的 HTTP 指令名同步给主进程（GET /commands 用它） */
+  httpSyncCommands(names: string[]): void
   // ---- 扩展能力：网络（渲染 CSP 禁外网，走主进程 + 代理） ----
   netFetch(
     req: {
@@ -892,6 +900,8 @@ export type IpcEvent =
 export interface MainEvents {
   /** 窗口状态变化（最大化/还原/全屏/聚焦） */
   'window:state-changed': (state: WindowState) => void
+  /** 2.0.3：外部 HTTP 指令（main → 渲染侧；结果经 `api.httpReply` 回传） */
+  'http:command': (e: { requestId: number; command: string; payload: unknown }) => void
   /** 主进程要求渲染进程打开某个导航项（托盘"设置"→ 切到设置页；ADR-0019 决策 8） */
   'nav:open': (navId: string) => void
   /** 生命周期钩子执行请求（宿主执行后经 api.hookResult 回传，见 issue #52） */

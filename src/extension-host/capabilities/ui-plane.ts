@@ -151,9 +151,15 @@ import {
   type RequestEnvelope,
   type ResponseEnvelope
 } from '../../shared/extensionHostProtocol'
+import { hasExplicitBudget, rpcBudgetMs } from '../../shared/rpcBudget'
+import { httpCommandOfChannel } from '../../shared/httpCommand'
 import { toErrorMessage } from '../errors'
 import type { EnvelopeSink, HostLogger } from '../log'
-import { unwrapParentPortMessage, type HostRendererPortLike } from '../port'
+import {
+  subscribeHostRendererPort,
+  unwrapParentPortMessage,
+  type HostRendererPortLike
+} from '../port'
 import {
   RpcClient,
   RpcServer,
@@ -247,7 +253,14 @@ export const UI_PLANE_EVENT_CHANNELS = {
    * 而这里描述的是**窗体的路由归属**（`overlayId → extId`）；混在一起会让"卡片 dispose"和
    * "窗口销毁"两种生命周期互相干扰。协议不设 channel 白名单，所以新增一条是零协议成本的。
    */
-  overlayOwner: 'overlay-owner'
+  overlayOwner: 'overlay-owner',
+  /**
+   * **HTTP 指令注册**（2.0.3）：`{ extId, name, op:'bind'|'unbind' }`。
+   *
+   * 渲染侧据此维护 `GET /commands` 的名单；指令**执行**走既有 `ui.appMessage` 的 `http:` 通道，
+   * 不依赖这条事件（即使事件丢了，调用仍然能成功）。协议不设 channel 白名单 ⇒ 新增零成本。
+   */
+  httpCommand: 'http-command'
 } as const
 
 /**
@@ -564,6 +577,8 @@ interface ExtensionPlaneState {
   readonly treeProviders: Map<string, TreeViewProvider>
   /** `app.onMessage` 注册的处理器（每扩展一个，与 v1 的 `appMessageHandlers` 同语义） */
   appMessageHandler: ((channel: string, payload: unknown) => unknown | Promise<unknown>) | null
+  /** `api.http.register` 注册的 HTTP 指令（指令名 → 处理器；走同一条桥，通道前缀 `http:`） */
+  readonly httpHandlers: Map<string, (payload: unknown) => unknown | Promise<unknown>>
   /** 运行时状态栏项（宿主侧句柄 id → 当前值；渲染侧按 id 找同一项） */
   readonly statusBarItems: Map<string, { text: string; tooltip?: string; visible: boolean }>
   /** 本扩展注册的事件总线订阅（停用时逐个退订，避免泄漏到下一个实例） */
@@ -669,6 +684,8 @@ export interface UiPlaneExtension {
   readonly executeCommand: ExtensionActivationApi['executeCommand']
   /** EH-B3b-2：交互 UI（渲染侧 `uiStore` 渲染，宿主发起请求） */
   readonly ui: ExtensionActivationApi['ui']
+  /** 2.0.3：外部 HTTP 指令注册（与 `app.onMessage` 同一条桥） */
+  readonly http: ExtensionActivationApi['http']
   /** EH-B3b-2：输出通道（渲染侧 `outputStore` 持有；本文件只发事件） */
   readonly output: ExtensionActivationApi['output']
   /** EH-B3b-2：更新门控（渲染侧 `updaterStore` 判定，放行后回 main） */
@@ -753,6 +770,8 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
   let warnedColdCache = false
 
   let rendererPort: HostRendererPortLike | null = null
+  /** 端口入站订阅的退订函数（`dispose` 时调用；风格见 `subscribeHostRendererPort`） */
+  let unsubscribeRendererPort: (() => void) | null = null
   let sent = 0
   let disposed = false
   /**
@@ -925,6 +944,19 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     const record = asRecord(params)
     const extId = typeof record.extId === 'string' ? record.extId : ''
     const state = stateOf(extId)
+    // 2.0.3：HTTP 指令复用这条桥（通道前缀 `http:`）——外部 HTTP → main → 渲染侧 → 这里。
+    // 先于 appMessage 判定，这样同一个扩展既有 app.onMessage 又能注册 HTTP 指令，互不占用。
+    const httpName = httpCommandOfChannel(typeof record.channel === 'string' ? record.channel : '')
+    if (httpName !== null) {
+      const httpHandler = state?.httpHandlers.get(httpName)
+      if (!httpHandler) {
+        throw new EhProtocolError(
+          'EH_UNKNOWN_EXT',
+          `扩展 ${extId || '(未给)'} 没有注册 HTTP 指令 ${httpName}（api.http.register）`
+        )
+      }
+      return await httpHandler(record.payload)
+    }
     const handler = state?.appMessageHandler
     if (!handler) {
       throw new EhProtocolError(
@@ -934,7 +966,25 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       )
     }
     const channel = typeof record.channel === 'string' ? record.channel : ''
-    return await handler(channel, record.payload)
+    // 诊断（D-1）：handler 进出各一条 debug 日志。这条链路「渲染 → 宿主 → 扩展 handler」
+    // 跨进程，慢/挂起时必须能区分"根本没进 handler"与"handler 自己 await 住了"。
+    const startedAt = Date.now()
+    log('debug', `ui.appMessage 进入：ext=${extId} channel=${channel}`)
+    try {
+      const data = await handler(channel, record.payload)
+      log(
+        'debug',
+        `ui.appMessage 完成：ext=${extId} channel=${channel} ${Date.now() - startedAt}ms`
+      )
+      return data
+    } catch (error) {
+      log(
+        'warn',
+        `ui.appMessage 失败：ext=${extId} channel=${channel} ${Date.now() - startedAt}ms ` +
+          toErrorMessage(error)
+      )
+      throw error
+    }
   })
 
   /**
@@ -1007,14 +1057,17 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
   const attachRendererPort = (port: HostRendererPortLike | null): void => {
     if (!port || port === rendererPort || disposed) return
     rendererPort = port
-    // 挂 `onmessage` 即隐式 `start()`：端口在 start 之前会把消息**排队**，所以"拿到就挂"
-    // 不会丢渲染侧早发的快照（它比宿主的 init 还早一个 IPC 往返）。
+    // 订阅风格由 `subscribeHostRendererPort` 决定（`on('message')` 优先）：
+    // `MessagePortMain` 没有 `onmessage` 语义，直接赋值会静默失败——入站永远收不到，
+    // 表现为所有渲染侧请求超时（2.0.x 实测 30 秒无响应，pet 面板永远"正在连接"）。
     try {
-      port.onmessage = (event: unknown): void => {
+      const subscription = subscribeHostRendererPort(port, (event: unknown): void => {
         handleRendererMessage(unwrapParentPortMessage(event))
-      }
+      })
+      unsubscribeRendererPort = subscription.unsubscribe
+      log('debug', `host-renderer 端口已订阅（风格=${subscription.mode}）`)
     } catch (error) {
-      log('warn', '挂 host-renderer 端口的 onmessage 失败', toErrorMessage(error))
+      log('warn', '订阅 host-renderer 端口失败', toErrorMessage(error))
     }
   }
 
@@ -1025,7 +1078,14 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       log('warn', '收到非对象的渲染侧消息，已忽略')
       return
     }
-    const envelope = raw as { t?: unknown; channel?: unknown; payload?: unknown }
+    const envelope = raw as { t?: unknown; channel?: unknown; payload?: unknown; method?: unknown }
+    // 诊断（D-1）：入站第一行。区分"渲染侧没发出来"与"发出来了宿主没派发"——
+    // 这条链路跨进程，缺了它只能靠猜（2.0.x 排查 pet 时正是这样耗掉很多轮）。
+    log(
+      'debug',
+      `渲染侧入站：t=${String(envelope.t)}` +
+        (envelope.t === 'req' ? ` method=${String(envelope.method)}` : '')
+    )
     if (envelope.t === 'req') {
       rpc.handleRequest(raw as RequestEnvelope)
       return
@@ -1086,6 +1146,7 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       runtimeMessages: new Map(),
       treeProviders: new Map(),
       appMessageHandler: null,
+      httpHandlers: new Map(),
       statusBarItems: new Map(),
       busCleanups: [],
       statusSeq: 0,
@@ -1740,24 +1801,18 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
     }
 
     /**
-     * 长操作的 ack 超时覆盖（R72）。
+     * 长操作的 ack 超时覆盖（R72 → 收敛到 `shared/rpcBudget.ts`）。
      *
      * 默认 `ACK_TIMEOUT_MS` 是 3 秒——那是"普通往返"的预算。`update.download` / `update.install`
      * 在 main 侧要等**整段下载**（几十 MB～几百 MB），3 秒必然先超时：扩展会收到 `EH_TIMEOUT`
      * 而操作其实还在跑。这类失败还会连带丢掉"3 秒后才发生"的真实错误原因（sha512 不匹配、写盘失败），
-     * 于是状态栏只能停在「下载安装包中…」。`update.check` 也要拉一次 release 元数据（可走代理），
-     * 给 60 秒。
+     * 于是状态栏只能停在「下载安装包中…」。
+     *
+     * 预算表已上移到 `shared/rpcBudget.ts`（渲染侧桥与宿主共用同一份），这里只做"是否显式"
+     * 的判定：没有显式预算时返回 `undefined`，让 `RpcClient` 继续用它的默认值。
      */
-    const updateRpcTimeout = (method: string): number | undefined => {
-      if (
-        method === HOST_MAIN_METHODS.updateDownload ||
-        method === HOST_MAIN_METHODS.updateInstall
-      ) {
-        return 15 * 60 * 1000
-      }
-      if (method === HOST_MAIN_METHODS.updateCheck) return 60 * 1000
-      return undefined
-    }
+    const updateRpcTimeout = (method: string): number | undefined =>
+      hasExplicitBudget(method) ? rpcBudgetMs(method) : undefined
 
     /** 发一条宿主 → main 的请求（缺桥 ⇒ 与 secrets/clipboard 同一句中文错误） */
     const callUpdateMain = async (
@@ -1961,6 +2016,7 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       state.treeProviders.clear()
       state.statusBarItems.clear()
       state.appMessageHandler = null
+      state.httpHandlers.clear()
       extensions.delete(extId)
     }
 
@@ -1979,6 +2035,47 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       ui,
       output,
       update,
+      /**
+       * `api.http`（2.0.3）：把外部 HTTP 指令注册到本扩展。
+       *
+       * 处理器收到的就是请求体里的 `payload`，返回值原样回给调用方；与 `app.onMessage` 共用
+       * 同一条桥（通道 `http:<指令名>`）⇒ 超时、错误归一、host-renderer 端口全部复用既有实现。
+       */
+      http: {
+        register(
+          name: string,
+          httpHandler: (payload: unknown) => unknown | Promise<unknown>
+        ): () => void {
+          const key = typeof name === 'string' ? name.trim() : ''
+          if (key === '' || !/^[a-z0-9][a-z0-9._-]*$/.test(key)) {
+            throw new Error(
+              `api.http.register 的指令名非法：${String(name)}（允许 [a-z0-9._-]，需以字母/数字开头）`
+            )
+          }
+          if (typeof httpHandler !== 'function') {
+            throw new Error('api.http.register 的 handler 必须是函数')
+          }
+          state.httpHandlers.set(key, httpHandler)
+          // 告诉渲染侧"这个扩展有这么一条指令"（`GET /commands` 的名单）。
+          // 端口还没到就跳过：执行不依赖它，只是列表暂时不全，不该让 register 失败。
+          try {
+            emit(UI_PLANE_EVENT_CHANNELS.httpCommand, { extId, name: key, op: 'bind' })
+          } catch {
+            // EH_NOT_READY：静默（名单会在 /commands 里如实缺席，不影响调用）
+          }
+          return (): void => {
+            if (state.httpHandlers.get(key) === httpHandler) state.httpHandlers.delete(key)
+            try {
+              emit(UI_PLANE_EVENT_CHANNELS.httpCommand, { extId, name: key, op: 'unbind' })
+            } catch {
+              // 同上
+            }
+          }
+        },
+        names(): string[] {
+          return [...state.httpHandlers.keys()]
+        }
+      },
       dispose: disposeExtension
     }
   }
@@ -2017,6 +2114,12 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
       // 进度会话跟着一起清（它们的 Promise 由 `client` 的 reject 或 task 自己收尾）。
       client.rejectAll('EH_CANCELLED', '扩展宿主正在退出，在途的界面请求已取消')
       progressSessions.clear()
+      try {
+        unsubscribeRendererPort?.()
+        unsubscribeRendererPort = null
+      } catch {
+        // 退订失败不影响关闭
+      }
       try {
         rendererPort?.close?.()
       } catch {

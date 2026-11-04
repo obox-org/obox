@@ -1180,6 +1180,8 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'globalState.get',
     'globalState.keys',
     'globalState.update',
+    'http.names',
+    'http.register',
     'i18n.locale',
     'i18n.onLocaleChanged',
     'i18n.registerMessages',
@@ -1206,8 +1208,10 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     'on',
     // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
     'output.createChannel',
+    'overlay.beginDrag',
     'overlay.create',
     'overlay.destroy',
+    'overlay.endDrag',
     'overlay.setMouseThrough',
     'overlay.setPosition',
     'proxy.get',
@@ -1262,11 +1266,11 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
 
   const stubs = rows.filter((row) => row.status === 'stub')
   // 行数与分布锁死：阶段 B 把某个桩落地时这里会失败，提醒同步对照表（而不是悄悄少一行）
-  assert.equal(rows.length, 99, '对照表共 99 项（99 已实现 + 0 桩）')
+  assert.equal(rows.length, 103, '对照表共 103 项（103 已实现 + 0 桩）')
   assert.equal(
     implemented.length,
-    99,
-    '已实现 99 项（EH-B3b-2 把最后 10 项 ui/output/update 落地）'
+    103,
+    '已实现 103 项（EH-B3b-2 的 10 项 + 2.0.3 跟手拖动的 2 项）'
   )
   assert.equal(stubs.length, 0, '桩 0 项（阶段 B 的能力面已全部落地）')
   assert.equal(

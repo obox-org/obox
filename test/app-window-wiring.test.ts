@@ -80,4 +80,21 @@ describe('AppWindow.vue · 主题下发接线', () => {
     expect(src).toContain("window.addEventListener('storage'")
     expect(src).toContain('stateStore.applyExternal(e.newValue)')
   })
+
+  /**
+   * overlay 浮层也必须是主题下发的目标（2.0.3）。
+   *
+   * 回归的现场：2.0.1 把 token 写到**本窗口**的 documentElement，而浮层里扩展页在 iframe
+   * （CSS 自定义属性不跨文档）⇒ 宠物面板整块透明。这里钉住"overlay 走查询串里的 url"。
+   */
+  it('overlay 浮层：主题下发的目标是 iframe（用查询串 url），而不是跳过', () => {
+    const src = source()
+    // pushThemeTokens 必须按 isOverlay 选目标 URL
+    expect(src).toContain('const targetUrl = isOverlay ? overlayUrl : registration.value?.url')
+    expect(src).toContain('win.postMessage(buildThemeMessage(')
+    // 不允许再出现"因 registration 缺省直接 return"的旧写法
+    expect(src).not.toContain('if (!registration.value?.url) return')
+    // iframe 的 load 事件仍然触发下发（overlay 的文档加载完成后才有 contentWindow）
+    expect(src).toContain('@load="pushThemeTokens"')
+  })
 })

@@ -33,6 +33,15 @@ import type { ExtensionActivationApi, ExtensionInfo } from '../src/api'
 const mock = vi.hoisted(() => ({
   /** screen.getPrimaryDisplay().workArea 的假数据（每个测试可改写） */
   workArea: { x: 0, y: 0, width: 1920, height: 1040 },
+  /** screen.getAllDisplays() 的假数据：默认只有主屏；跨屏用例改成两块 */
+  /** screen.getCursorScreenPoint() 的假数据（跟手拖动用） */
+  cursor: { x: 0, y: 0 },
+  displays: [] as Array<{
+    x: number
+    y: number
+    width: number
+    height: number
+  }>,
   /** ipcMain.handle 注册表 */
   handlers: new Map<string, (e: unknown, ...args: unknown[]) => unknown>(),
   /** ipcMain.on 注册表（'extension:reply'） */
@@ -162,7 +171,15 @@ vi.mock('electron', () => {
       }
     },
     screen: {
-      getPrimaryDisplay: (): { workArea: typeof mock.workArea } => ({ workArea: mock.workArea })
+      getPrimaryDisplay: (): { workArea: typeof mock.workArea } => ({ workArea: mock.workArea }),
+      getCursorScreenPoint: (): { x: number; y: number } => mock.cursor,
+      getAllDisplays: (): Array<{
+        workArea: { x: number; y: number; width: number; height: number }
+      }> =>
+        // 默认只有主屏（= mock.workArea）；跨屏用例自己 push 两块，不影响"只改 workArea"的老用例
+        (mock.displays.length > 0 ? mock.displays : [mock.workArea]).map((workArea) => ({
+          workArea
+        }))
     }
   }
 })
@@ -637,6 +654,73 @@ describe('主进程 · setPosition（卡 14；宿主兜底钳位、扩展主钳�
     expect(win.positionCalls).toEqual([[100, 50]])
   })
 
+  it('nearestWorkArea 纯函数：跨屏拖动按"指针所在/最近的显示器"钳位（真机反馈：不能跨显示器）', () => {
+    // 双屏：主屏 0..1920，副屏在右侧 1920..3840（工作区高 1040/1080）
+    const primary = { x: 0, y: 0, width: 1920, height: 1040 }
+    const secondary = { x: 1920, y: 0, width: 1920, height: 1080 }
+    const areas = [primary, secondary]
+    // 点落在副屏内 ⇒ 选副屏（这正是原来会被钳回主屏的情形）
+    expect(mod.nearestWorkArea(areas, 2500, 500)).toEqual(secondary)
+    // 点落在主屏内 ⇒ 选主屏（行为不变）
+    expect(mod.nearestWorkArea(areas, 800, 500)).toEqual(primary)
+    // 点落在两屏之间的缝隙（1920 恰好属于副屏左边界，用 1919.5 之外的点造缝）
+    expect(
+      mod.nearestWorkArea([primary, { x: 2000, y: 0, width: 1000, height: 1000 }], 1960, 500)
+    ).toEqual(primary)
+    // 负坐标布局（副屏在左侧）也能正确选中
+    const leftOfPrimary = { x: -1920, y: 0, width: 1920, height: 1080 }
+    expect(mod.nearestWorkArea([primary, leftOfPrimary], -800, 300)).toEqual(leftOfPrimary)
+    // 空列表 ⇒ null（调用方回退主显示器）
+    expect(mod.nearestWorkArea([], 10, 10)).toBeNull()
+  })
+
+  it('setPosition 跨屏：目标在副屏内 ⇒ 窗体落在副屏（不再被钳回主屏）', () => {
+    // 走真实 setPosition + 假 electron 的 screen.getAllDisplays（主屏 0..1920、副屏 1920..3840）
+    mock.displays.push(
+      { x: 0, y: 0, width: 1920, height: 1040 },
+      { x: 1920, y: 0, width: 1920, height: 1080 }
+    )
+    const win = createPet()
+    const r = setPosition('pet', 'pet.overlay', 2500, 600)
+    expect(r).toEqual({ ok: true, position: { x: 2500, y: 600 } })
+    expect(win.positionCalls).toEqual([[2500, 600]])
+    expect(win.getBounds().x).toBe(2500)
+  })
+
+  it('跟手拖动：begin 后按全局光标持续移动（快慢都跟得上），end 后停止；destroy 清理会话', () => {
+    vi.useFakeTimers()
+    try {
+      mock.cursor = { x: 1000, y: 700 }
+      const win = createPet()
+      // 先把窗放到 (640,332)：begin 时记下"指针 - 窗体"的偏移 = (360,368)
+      setPosition('pet', 'pet.overlay', 640, 332)
+      expect(mod.beginOverlayDrag('pet', 'pet.overlay').ok).toBe(true)
+      // 光标跑到 (1200,800) ⇒ 窗体应跟到 (840,432)
+      mock.cursor = { x: 1200, y: 800 }
+      vi.advanceTimersByTime(16)
+      expect(win.getBounds().x).toBe(840)
+      expect(win.getBounds().y).toBe(432)
+      // 再走一帧：光标再远（模拟"快速拖动"），窗体依然跟得上 —— 这正是页面 pointermove 断流的场景
+      mock.cursor = { x: 1800, y: 900 }
+      vi.advanceTimersByTime(16)
+      expect(win.getBounds().x).toBe(1440)
+      // end 之后不再跟随
+      const ended = mod.endOverlayDrag('pet', 'pet.overlay')
+      expect(ended.ok).toBe(true)
+      mock.cursor = { x: 100, y: 100 }
+      vi.advanceTimersByTime(64)
+      expect(win.getBounds().x).toBe(1440)
+      // 幂等：没在拖时 end 也 ok
+      expect(mod.endOverlayDrag('pet', 'pet.overlay').ok).toBe(true)
+      // destroy 清理会话（定时器不残留）
+      mod.beginOverlayDrag('pet', 'pet.overlay')
+      mod.destroyOverlay('pet', 'pet.overlay')
+      vi.advanceTimersByTime(64)
+      expect(win.destroyed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('clampOverlayPosition 纯函数：与 D-13 扩展侧同公式；退化情形（窗体比工作区宽）以 min 为准', () => {
     expect(
       mod.clampOverlayPosition({ x: 0, y: 0, width: 1920, height: 1040 }, 220, 460, 5000, -100)
@@ -1343,8 +1427,12 @@ describe('外壳 · 五处透明改动（验收⑥；design D-11，缺一处就�
     expect(vueFlat).toContain(
       'isOverlay ? overlayUrl : appFrameKey(registration.value, themeId.value)'
     )
-    // 主题推送不新增分支：pushThemeTokens 保持 registration.url 早退（overlay 自然不推送，design D-6）
-    expect(vueFlat).toContain('if (!registration.value?.url) return')
+    // 2.0.3 起 overlay **也**接主题桥：目标 URL 用查询串里的 overlayUrl。
+    // 旧的"overlay 不推送主题"（design D-6）已被真机推翻：浮层里的扩展页在 iframe，
+    // CSS 自定义属性不跨文档 ⇒ 拿不到 token ⇒ 面板整块透明
+    // （证据：openspec/changes/fix-overlay-message-and-appmessage-timeout/notes/repro/pet-hover-before.png）。
+    expect(vueFlat).toContain('const targetUrl = isOverlay ? overlayUrl : registration.value?.url')
+    expect(vueFlat).not.toContain('if (!registration.value?.url) return')
   })
 })
 
