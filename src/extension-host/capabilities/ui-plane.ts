@@ -253,7 +253,14 @@ export const UI_PLANE_EVENT_CHANNELS = {
    * 而这里描述的是**窗体的路由归属**（`overlayId → extId`）；混在一起会让"卡片 dispose"和
    * "窗口销毁"两种生命周期互相干扰。协议不设 channel 白名单，所以新增一条是零协议成本的。
    */
-  overlayOwner: 'overlay-owner'
+  overlayOwner: 'overlay-owner',
+  /**
+   * **HTTP 指令注册**（2.0.3）：`{ extId, name, op:'bind'|'unbind' }`。
+   *
+   * 渲染侧据此维护 `GET /commands` 的名单；指令**执行**走既有 `ui.appMessage` 的 `http:` 通道，
+   * 不依赖这条事件（即使事件丢了，调用仍然能成功）。协议不设 channel 白名单 ⇒ 新增零成本。
+   */
+  httpCommand: 'http-command'
 } as const
 
 /**
@@ -2049,8 +2056,20 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
             throw new Error('api.http.register 的 handler 必须是函数')
           }
           state.httpHandlers.set(key, httpHandler)
+          // 告诉渲染侧"这个扩展有这么一条指令"（`GET /commands` 的名单）。
+          // 端口还没到就跳过：执行不依赖它，只是列表暂时不全，不该让 register 失败。
+          try {
+            emit(UI_PLANE_EVENT_CHANNELS.httpCommand, { extId, name: key, op: 'bind' })
+          } catch {
+            // EH_NOT_READY：静默（名单会在 /commands 里如实缺席，不影响调用）
+          }
           return (): void => {
             if (state.httpHandlers.get(key) === httpHandler) state.httpHandlers.delete(key)
+            try {
+              emit(UI_PLANE_EVENT_CHANNELS.httpCommand, { extId, name: key, op: 'unbind' })
+            } catch {
+              // 同上
+            }
           }
         },
         names(): string[] {

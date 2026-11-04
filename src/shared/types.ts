@@ -416,6 +416,8 @@ export interface MainApi {
   overlayEndDrag(extId: string, id: string): Promise<OverlayResult>
   /** 2.0.3：把一条外部 HTTP 指令的处理结果回给主进程 */
   httpReply(requestId: number, result: { ok: boolean; data?: unknown; error?: string }): void
+  /** 2.0.3：把当前已注册的 HTTP 指令名同步给主进程（GET /commands 用它） */
+  httpSyncCommands(names: string[]): void
   // ---- 扩展能力：网络（渲染 CSP 禁外网，走主进程 + 代理） ----
   netFetch(
     req: {

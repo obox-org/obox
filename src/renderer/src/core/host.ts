@@ -434,8 +434,10 @@ class ExtensionHost {
           }
           const full = ext.id + ':' + key
           this.httpCommands.set(full, handler)
+          this.syncHttpCommands()
           return (): void => {
             if (this.httpCommands.get(full) === handler) this.httpCommands.delete(full)
+            this.syncHttpCommands()
           }
         },
         names: (): string[] =>
@@ -757,6 +759,15 @@ class ExtensionHost {
    * App 卡片子窗口的行为与卡 03 之前**逐字一致**：只是归属查找换成了 resolveMessageExtId
    * 纯函数（卡片命中 ⇒ 既有路径；未命中 ⇒ overlay 兜底路由；都未命中 ⇒ 既有错误文案）。
    */
+  /** 把当前已注册的指令名同步给主进程（`GET /commands` 用；失败不影响指令执行） */
+  private syncHttpCommands(): void {
+    try {
+      window.api.httpSyncCommands([...this.httpCommands.keys()].sort())
+    } catch {
+      // 预览/测试环境里 api 可能不全：同步失败只是列表不全，不影响指令执行
+    }
+  }
+
   /**
    * 外部 HTTP 指令（2.0.3）：`<extId>:<name>`。
    *

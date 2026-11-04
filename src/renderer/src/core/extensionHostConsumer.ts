@@ -199,7 +199,14 @@ export const HOSTED_UI_EVENT_CHANNELS = {
    * 没有它，宿主模式下 `core/host.ts` 的 `overlayOwners` 永远不会回填（回填只发生在渲染进程
    * 自己的 `api.overlay.create` 里），页面消息一律得到「扩展未注册消息处理器」。
    */
-  overlayOwner: 'overlay-owner'
+  overlayOwner: 'overlay-owner',
+  /**
+   * **HTTP 指令注册**（2.0.3）：`{ extId, name, op: 'bind' | 'unbind' }`。
+   *
+   * 只用于维护 `GET /commands` 的名单：指令**执行**走既有 `ui.appMessage` 的 `http:` 通道，
+   * 这条事件丢了也不影响调用，只是列表少一条。
+   */
+  httpCommand: 'http-command'
 } as const
 
 /** 渲染侧**没有窗口**时的中文错误（与宿主侧 `UI_WINDOW_MISSING` 同一句） */
@@ -486,6 +493,17 @@ interface OverlayOwnerPayload {
   extId: string
   overlayId: string
 }
+
+/** `http-command` 通道的载荷（2.0.3；`name` 是指令名，不含扩展前缀） */
+interface HttpCommandPayload {
+  v?: 1
+  op: 'bind' | 'unbind'
+  extId: string
+  name: string
+}
+
+/** 已注册的 HTTP 指令名（`<extId>:<name>`），同步给 main 供 `GET /commands` */
+const httpCommandNames = new Set<string>()
 
 /* -------------------------------------------------------------------------------------------- */
 /* 默认实现                                                                                      */
@@ -1143,6 +1161,29 @@ export function createExtensionHostConsumer(
    * 3. **响亮**：载荷不合法 / 适配器没有 `registerHostedOverlayOwner` ⇒ warn + 丢弃。绝不静默——
    *    静默的表现正是技术债 #13 那个"看起来什么都没配、实际消息全丢"。
    */
+  /**
+   * `http-command` 通道（2.0.3）：维护"宿主侧已注册的 HTTP 指令名"，并同步给 main。
+   *
+   * 只影响 `GET /commands` 的可见性：指令执行走 `ui.appMessage` 的 `http:` 通道，与这条事件无关。
+   */
+  const applyHttpCommand = (payload: HttpCommandPayload): void => {
+    const extId = typeof payload?.extId === 'string' ? payload.extId.trim() : ''
+    const name = typeof payload?.name === 'string' ? payload.name.trim() : ''
+    const op = payload?.op
+    if (extId === '' || name === '' || (op !== 'bind' && op !== 'unbind')) {
+      logger.warn(`http-command 载荷不合法（op=${String(op)} extId=${extId} name=${name}），已忽略`)
+      return
+    }
+    const full = `${extId}:${name}`
+    if (op === 'bind') httpCommandNames.add(full)
+    else httpCommandNames.delete(full)
+    try {
+      window.api.httpSyncCommands([...httpCommandNames].sort())
+    } catch {
+      // 同步失败只是列表不全，不影响执行
+    }
+  }
+
   const applyOverlayOwner = (payload: OverlayOwnerPayload): void => {
     const extId = typeof payload.extId === 'string' ? payload.extId.trim() : ''
     const overlayId = typeof payload.overlayId === 'string' ? payload.overlayId.trim() : ''
@@ -1289,6 +1330,9 @@ export function createExtensionHostConsumer(
       case HOSTED_UI_EVENT_CHANNELS.output:
         // EH-B3b-2：输出通道（协议常量里没有 output 语义的通道，本卡用局部常量声明，见文件头）
         applyOutput(payload as OutputPayload)
+        return
+      case HOSTED_UI_EVENT_CHANNELS.httpCommand:
+        applyHttpCommand(payload as HttpCommandPayload)
         return
       case HOSTED_UI_EVENT_CHANNELS.overlayOwner:
         // EH-D8b：宿主创建的 overlay 的归属（页面消息按 overlayId 寻址 app.onMessage）

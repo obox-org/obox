@@ -96,6 +96,7 @@ const api: MainApi = {
   overlayEndDrag: (extId, id) => ipcRenderer.invoke('overlay:end-drag', extId, id),
   // 2.0.3：HTTP 指令结果回包（与 extension:reply 同一形状）
   httpReply: (requestId, result) => ipcRenderer.send('http:reply', { requestId, ...result }),
+  httpSyncCommands: (names) => ipcRenderer.send('http:sync-commands', names),
   // 扩展能力：网络（主进程 fetch + 代理）
   netFetch: (req, proxy) => ipcRenderer.invoke('net:fetch', req, proxy),
   // 宿主内部：渲染进程启动 / 代理设置变化时把代理推给主进程，由其同时应用到
