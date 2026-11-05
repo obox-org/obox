@@ -431,3 +431,18 @@ electron-builder → app-builder-lib → filelist  → minimatch@…
 
 `npm run typecheck` 0 / `npm run lint` 0 error / `npm test` **1292 passed + 5 skipped** / `npm run build` ok；
 宠物 `node --test` 287/287、`vue-tsc` 0。
+
+## 17. v2.1.0 发版数据（2026-11-06）
+
+**主题**：系统扩展改为随安装包分发（`<安装目录>/extensions/`），三个内置界面（设置/应用/扩展管理）
+从 Vue 内置视图迁移为**磁盘系统扩展**（iframe 页面 + 公共 API）；用户扩展目录命名改为
+`<name>.<author>`（点号），新增「设置 → 开发运行时」（Python 本机发现 + 内置运行时安装）。
+
+| 项         | 值                                                                                                                   |
+| ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| 版本       | `2.1.0`（minor；含**破坏性变更**：旧下划线目录不再识别、`app://builtin` 指向安装目录）                               |
+| apiVersion | `4`（新增公共 API：theme/extensions/apps/commands/keybindings/pages/settings.host）                                  |
+| tag        | `v2.1.0`                                                                                                             |
+| 构建产物   | 待发布流水线完成后回填（x64 / arm64 / no-arch 安装包 + blockmap + latest.yml）                                       |
+| 验收       | typecheck 0 / lint 0 error / `npm test` 1373 passed + 5 skipped；打包版真机验证 3 系统扩展 + 用户扩展装卸            |
+| 兼容性     | **不迁移**旧目录：`pet_chenzhi` 等需重装为 `pet.chenzhi`；外部 HTTP 指令名 `pet_chenzhi:state` → `pet.chenzhi:state` |
