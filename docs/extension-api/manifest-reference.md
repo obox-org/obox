@@ -82,6 +82,17 @@
 
 ### 运行时包（Python 内置运行时）与 `runtime.json`
 
+**怎么做一个运行时包**：仓库自带脚本（Windows x64，需要网络）：
+
+```bash
+node scripts/build-python-runtime.mjs --version 3.11.9 --tag 3.11
+# 产物：release/python3.11-3.11.9.oix（embed 版 CPython + pip + numpy/pandas/matplotlib）
+```
+
+脚本流程：下载 python.org embeddable → 打开 `Lib\site-packages` → 装 pip 与预装库 →
+写 manifest/runtime.json → 用 adm-zip 打包（条目用 `/`，与安装器解析一致）。
+`--libs "numpy pandas matplotlib"` 可改预装库。
+
 「设置 → 开发运行时」里的**内置运行时**就是安装在扩展目录、根目录带 `runtime.json` 的扩展包：
 
 ```json
