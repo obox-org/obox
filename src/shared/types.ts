@@ -153,6 +153,8 @@ export type InstallOixErrorCode =
   | 'arch-mismatch'
   // 同一个 Python 版本只允许一个内置运行时包（change「开发运行时」）
   | 'runtime-version-conflict'
+  // 平台不匹配（清单 platforms 与宿主平台不符，规则见 docs/extension-api/oix-platform-rules.md）
+  | 'platform-mismatch'
 
 /**
  * .oix 安装结果：成功或失败都以**返回值**表达（不再靠 IPC 抛错传消息），

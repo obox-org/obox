@@ -107,6 +107,11 @@ node scripts/build-python-runtime.mjs --version 3.11.9 --tag 3.11
 - 本机解释器另有一段列表（`py -0p` 优先、`where python` 回退），与内置按**路径/来源**区分、不去重；
 - 默认解释器存在设置键 `devRuntime.python.default`：`builtin:<扩展id>` 或 `local:<绝对路径>`。
 
+### 平台（platforms）
+
+用户扩展需按 [.oix 平台规则](./oix-platform-rules.md) 声明平台：`universal`（缺省）/ `win32` /
+`win32-x64` / `win32-arm64`；与宿主不匹配时安装期报 `platform-mismatch`。系统扩展不适用此规则。
+
 ### 扩展来源与目录命名（2.1.0 起）
 
 | 来源         | 磁盘位置                                                | 目录名 = 扩展 id  | 作者        | 卸载/禁用 |
