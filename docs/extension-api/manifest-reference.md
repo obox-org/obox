@@ -80,6 +80,22 @@
 
 > 这八类（`ipcChannels` / `keybindings` / `menus` / `views` / `navItems` / `statusBarItems` / `commands` / `themes`）的值**必须是数组**：写成 `{}` / `5` / `true` 会让清单**无效**（error，见文末「八类数组形状 error」）。数组内**逐项**缺必填字段只是 warning（该项跳过、扩展仍加载）。
 
+### 运行时包（Python 内置运行时）与 `runtime.json`
+
+「设置 → 开发运行时」里的**内置运行时**就是安装在扩展目录、根目录带 `runtime.json` 的扩展包：
+
+```json
+{ "language": "python", "version": "3.12.4" }
+```
+
+- 目录布局：`<userData>/extensions/<id>/runtime.json` + `<id>/python/python.exe`（+ 预装库）；
+- **靠文件判定**：有 marker 且 `language === 'python'`、`version` 非空 ⇒ 列表标「内置」；
+  缺 `python/python.exe` 会标出「缺 python/python.exe」（损坏可见，而不是静默消失）；
+- 安装方式：设置页「安装运行时…」手动选 `.oix`（走普通用户扩展安装链路），**同版本号禁止重复安装**
+  （安装侧校验，见任务卡）；
+- 本机解释器另有一段列表（`py -0p` 优先、`where python` 回退），与内置按**路径/来源**区分、不去重；
+- 默认解释器存在设置键 `devRuntime.python.default`：`builtin:<扩展id>` 或 `local:<绝对路径>`。
+
 ### 扩展来源与目录命名（2.1.0 起）
 
 | 来源         | 磁盘位置                                                | 目录名 = 扩展 id  | 作者        | 卸载/禁用 |

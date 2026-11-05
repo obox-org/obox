@@ -116,3 +116,20 @@ describe('扩展管理器详情', () => {
     expect(page).toContain('ext-details')
   })
 })
+describe('开发运行时（Python）', () => {
+  it('文档写明 runtime.json 标记与默认键', () => {
+    const doc = readFileSync(
+      fileURLToPath(new URL('../docs/extension-api/manifest-reference.md', import.meta.url)),
+      'utf8'
+    )
+    expect(doc).toContain('runtime.json')
+    expect(doc).toContain('devRuntime.python.default')
+  })
+
+  it('设置页有「开发运行时」分区与安装入口', () => {
+    const page = readFileSync(`${root}settings/page.js`, 'utf8')
+    expect(page).toContain("label: '开发运行时'")
+    expect(page).toContain("'extensions.installFromPath'")
+    expect(page).toContain('devRuntime.python.default')
+  })
+})
