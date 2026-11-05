@@ -258,6 +258,24 @@ window.parent.postMessage(
   handler 可以放心 await IO 或做长轮询（宠物 `subscribe` hold 25s 就在预算内）；超时文案会明确说
   「宿主侧可能仍在执行」，不是"扩展坏了"。- `app.onMessage` 是**请求/响应**桥（经主进程 IPC、需要扩展注册 handler、有 `requestId` 与超时）。**主题是宿主单向推送**，不经该桥、**不需要** handler、也没有 `requestId`（见上面 `app.register` 的"主题下发"一条）——两者**不要混用**
 
+### 宿主状态查询（2.0.4 起，供"设置 / 应用 / 扩展管理"三个系统扩展使用）
+
+这一批命名空间都走**同一条宿主查询通道**（宿主 `ui.hostQuery` → 渲染侧 `runHostQuery(op)`），
+返回 `Promise<unknown>`，读取的是渲染进程里的**真相**（扩展表、卡片表、命令表、主题、快捷键、宿主设置）。
+
+| 命名空间            | 方法                                                                     | 说明                                                                    |
+| ------------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `api.theme`         | `list()` / `set(id)`                                                     | 主题枚举与切换（原 `getCurrent` / `onChanged` 不变）                    |
+| `api.extensions`    | `list()` / `setEnabled(id, enabled)` / `uninstall(id)` / `restartHost()` | 扩展管理；**系统扩展不可禁用/卸载**（底层拒绝，不靠 UI 隐藏按钮）       |
+| `api.apps`          | `list()`                                                                 | App 首页卡片表                                                          |
+| `api.commands`      | `list()` / `menus()`                                                     | 命令面板与卡片操作菜单                                                  |
+| `api.keybindings`   | `list()` / `set(command, combo)` / `reset(command)`                      | 快捷键                                                                  |
+| `api.settings.host` | `get(key)` / `set(key, value)`                                           | 宿主级设置（代理 / 语言 / 通知 / 扩展宿主开关）；与"扩展自己的设置"区分 |
+| `api.pages`         | `open(pageId)`                                                           | 切到宿主页面（`pageId` = 导航项 id，如 `settings` / `app`）             |
+
+**信任模型**：这些能力对**所有**扩展开放，不设"仅系统扩展可用"的例外——扩展本就拥有完整运行权限
+（ADR-0015：能力封装不是安全边界）。UI 层面的限制（例如系统扩展不渲染卸载按钮）只是体验，不是防线。
+
 ### http（外部 HTTP 指令：让别的程序驱动扩展，2.0.3）
 
 宿主在 `127.0.0.1` 上监听一个**随机端口**，外部程序（脚本、手机快捷指令、其它桌面工具）可以发起指令。扩展用 `api.http.register` 把某个动作暴露出去。

@@ -263,6 +263,8 @@ export interface MainApi {
   setAutoStart(enabled: boolean): Promise<AutoStartState>
   /** 应用信息 */
   getAppInfo(): Promise<AppInfo>
+  /** 重启应用（扩展管理器的立即重启与 api.extensions.restartHost 共用） */
+  relaunchApp(): Promise<void>
   /** 用户扩展目录扫描（返回 userData/extensions 下的扩展目录清单） */
   listUserExtensions(): Promise<UserExtensionEntry[]>
   /** 调试扩展清单（--debug-extension 声明；不安装，重启消失） */

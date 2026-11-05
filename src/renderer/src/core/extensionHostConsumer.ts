@@ -978,11 +978,10 @@ export function createExtensionHostConsumer(
       uninstall: async (id) => {
         await (await awaitHost()).uninstall(id)
       },
-      // 重启由主进程负责：先让渲染侧广播一条请求，shell 接（与"立即重启"按钮同一条路）
-      restartHost: () =>
-        window.dispatchEvent(
-          new CustomEvent('obox:host-request', { detail: { action: 'restart' } })
-        ),
+      // 重启走 main 的 app:relaunch（与扩展管理器的"立即重启"同一条路）
+      restartHost: () => {
+        void window.api.relaunchApp()
+      },
       apps: () => [...appStore.items],
       commands: () => [...registry.commands],
       menus: () => [...registry.getMenusFor('')],

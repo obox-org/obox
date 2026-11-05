@@ -17,6 +17,15 @@ import oboxIcon from './assets/icons/obox.svg?raw'
 const activeNavId = ref<string | null>(null)
 const paletteOpen = ref(false)
 
+/** 扩展（系统扩展）请求打开某个宿主页面：pageId 就是导航项 id（如 settings / app） */
+function onHostRequest(e: Event): void {
+  const detail = (e as CustomEvent<{ action?: string; pageId?: string }>).detail
+  if (!detail) return
+  if (detail.action === 'open-page' && typeof detail.pageId === 'string') {
+    selectNav(detail.pageId)
+  }
+}
+
 function selectNav(id: string): void {
   activeNavId.value = id
   // EH-C2：若该导航项的视图属于**宿主进程里的扩展**且尚未激活，先请求宿主激活
@@ -51,11 +60,14 @@ onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
   // 托盘"设置"→ 主进程要求切页（切页状态在本组件，主进程无法直接改；ADR-0019 决策 8）
   offNavOpen = window.events.on('nav:open', (navId) => selectNav(navId))
+  // 系统扩展经 api.pages.open 请求切页（扩展宿主 → 渲染侧 ui.hostQuery → 这里）
+  window.addEventListener('obox:host-request', onHostRequest)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   offNavOpen?.()
+  window.removeEventListener('obox:host-request', onHostRequest)
 })
 </script>
 

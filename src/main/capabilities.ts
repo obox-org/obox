@@ -65,6 +65,15 @@ export function registerCapabilityIpc(): void {
     version: app.getVersion()
   }))
 
+  ipcMain.handle('app:relaunch', async (): Promise<void> => {
+    // 先 relaunch 再 exit（顺序反了新进程起不来，Electron 官方示例同序）。
+    // setImmediate 让 invoke 的 Promise 先结算，渲染侧不会把"已经重启"看成"调用失败"。
+    setImmediate(() => {
+      app.relaunch()
+      app.exit(0)
+    })
+  })
+
   ipcMain.handle('extensions:list-user', async (): Promise<UserExtensionEntry[]> => {
     const entries = await scanAllExtensions()
     refreshKnownExtensions(selectLoadableExtensions(entries).map((e) => e.id))
