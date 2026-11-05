@@ -21,6 +21,9 @@ function deps(overrides: Partial<HostQueryDeps> = {}): HostQueryDeps {
     apps: () => [{ id: 'rdp', title: '远程桌面' }],
     openApp: () => undefined,
     installExtension: async () => ({ ok: true }),
+    settingsSnapshot: async () => ({ app: { version: '2.0.5' } }),
+    setCloseBehavior: () => undefined,
+    setLocale: () => undefined,
     commands: () => [{ id: 'app.showCommands', label: '命令面板' }],
     menus: () => [{ id: 'card.rdp', items: [] }],
     themeList: () => [{ id: 'theme-dark', label: '深色' }],
@@ -142,5 +145,23 @@ describe('extensions.install', () => {
       deps({ installExtension: async () => ({ ok: true, id: 'pet.chenzhi' }) })
     )
     expect(result).toEqual({ ok: true, id: 'pet.chenzhi' })
+  })
+})
+describe('settings.snapshot / 关闭行为 / 语言', () => {
+  it('snapshot 原样返回（页面一次拿全量）', async () => {
+    expect(await runHostQuery('settings.snapshot', {}, deps())).toEqual({
+      app: { version: '2.0.5' }
+    })
+  })
+
+  it('设置关闭行为与语言走专用 op', async () => {
+    const calls: string[] = []
+    const d = deps({
+      setCloseBehavior: (b) => calls.push('close:' + b),
+      setLocale: (c) => calls.push('locale:' + c)
+    })
+    await runHostQuery('window.setCloseBehavior', { behavior: 'hide' }, d)
+    await runHostQuery('i18n.setLocale', { code: 'en' }, d)
+    expect(calls).toEqual(['close:hide', 'locale:en'])
   })
 })

@@ -170,6 +170,15 @@ export const stateStore = {
   setExtensionHostEnabled(enabled: boolean): void {
     this.setSetting(EXTENSION_HOST_SETTING_KEY, enabled)
   },
+  /**
+   * 全部设置值的**只读快照**（浅拷贝）。
+   *
+   * 设置页（系统扩展）一次拿全量值渲染表单：逐 key 读会把"有哪些键"这个知识散到页面里，
+   * 键一改页面就静默失效。返回拷贝，避免调用方改到内存里的真相。
+   */
+  getSettingsSnapshot(): Record<string, unknown> {
+    return { ...state.settings }
+  },
   /** 统一设置存储：写入设置值（undefined 删除），并通知订阅者（带变更的 key） */
   setSetting(key: string, value: unknown): void {
     if (value === undefined) delete state.settings[key]

@@ -1,10 +1,11 @@
 /**
- * `settings` 系统扩展的页面脚本（无框架）。
+ * `settings` 系统扩展的页面（无框架，纯 DOM）。
  *
- * 全部能力来自公共 API（经壳子的 `obox:page-call` 桥）：
- * - `theme.list/current/set`：主题；
- * - `keybindings.list/reset`：快捷键；
- * - `settings.host.get/set`：宿主级设置（JSON 值，例如 `network.proxy`）。
+ * 结构：**左侧树 + 右侧表单**，分区与旧内置设置页一一对应：
+ * appearance / general / language / keyboard / update / network / ai / notification / extension。
+ *
+ * 数据来源：一次 `settings.snapshot`（主题、语言、关闭行为、全部宿主设置、快捷键、更新提供者、
+ * 扩展设置页），写操作走 `settings.host.set` / `theme.set` / `keybindings.*` / 专用 op。
  */
 const pending = new Map()
 let seq = 0
@@ -32,109 +33,392 @@ function call(op, args = {}) {
   })
 }
 
-const themeEl = document.getElementById('theme')
-const keysEl = document.getElementById('keys')
-const keyEl = document.getElementById('setting-key')
-const valueEl = document.getElementById('setting-value')
-const setStatusEl = document.getElementById('setting-status')
+const treeEl = document.getElementById('tree')
+const panelEl = document.getElementById('panel')
+let snapshot = null
+let active = 'appearance'
+let activeExtPage = null
 
-async function loadThemes() {
-  const [list, current] = await Promise.all([call('theme.list'), call('theme.current')])
-  const themes = Array.isArray(list) ? list : []
-  themeEl.replaceChildren(
-    ...themes.map((t) => {
-      const option = document.createElement('option')
-      option.value = t.id
-      option.textContent = t.label || t.id
-      if (t.id === current) option.selected = true
-      return option
-    })
-  )
+const SECTIONS = [
+  { id: 'appearance', label: '外观' },
+  { id: 'general', label: '常规' },
+  { id: 'language', label: '语言' },
+  { id: 'keyboard', label: '快捷键' },
+  { id: 'update', label: '更新' },
+  { id: 'network', label: '网络' },
+  { id: 'ai', label: 'AI' },
+  { id: 'notification', label: '通知' },
+  { id: 'extension', label: '扩展' }
+]
+
+/* ------------------------------- DOM 小工具 ------------------------------- */
+
+function el(tag, className, text) {
+  const node = document.createElement(tag)
+  if (className) node.className = className
+  if (text !== undefined) node.textContent = text
+  return node
 }
 
-themeEl.addEventListener('change', async () => {
-  try {
-    await call('theme.set', { themeId: themeEl.value })
-  } catch (error) {
-    setStatusEl.textContent = `切换失败：${error.message}`
-  }
-})
+function heading(text) {
+  return el('h2', 'section-title', text)
+}
 
-async function loadKeys() {
-  const list = await call('keybindings.list')
-  const items = Array.isArray(list) ? list : []
-  keysEl.replaceChildren(
-    ...items.map((item) => {
-      const li = document.createElement('li')
-      li.className = 'key-row'
-      const name = document.createElement('span')
-      name.className = 'key-name'
-      name.textContent = item.labelKey || item.command
-      const combo = document.createElement('span')
-      combo.className = 'key-combo'
-      combo.textContent = item.currentKey || item.defaultKey || '—'
-      const reset = document.createElement('button')
-      reset.className = 'btn'
-      reset.type = 'button'
-      reset.textContent = '重置'
-      reset.addEventListener('click', async () => {
-        reset.disabled = true
-        try {
-          await call('keybindings.reset', { command: item.command })
-          await loadKeys()
-        } catch (error) {
-          setStatusEl.textContent = `重置失败：${error.message}`
-        } finally {
-          reset.disabled = false
+function row(labelText, control) {
+  const wrap = el('label', 'row')
+  wrap.append(el('span', 'row-label', labelText), control)
+  return wrap
+}
+
+function note(text) {
+  return el('p', 'note', text)
+}
+
+function select(options, value, onChange) {
+  const node = document.createElement('select')
+  for (const option of options) {
+    const item = document.createElement('option')
+    item.value = option.value
+    item.textContent = option.label
+    if (option.value === value) item.selected = true
+    node.appendChild(item)
+  }
+  node.addEventListener('change', () => onChange(node.value))
+  return node
+}
+
+function input(value, placeholder, onChange, type = 'text') {
+  const node = document.createElement('input')
+  node.type = type
+  node.className = 'text'
+  node.value = value ?? ''
+  if (placeholder) node.placeholder = placeholder
+  node.addEventListener('change', () => onChange(node.value))
+  return node
+}
+
+function checkbox(checked, onChange) {
+  const node = document.createElement('input')
+  node.type = 'checkbox'
+  node.checked = Boolean(checked)
+  node.addEventListener('change', () => onChange(node.checked))
+  return node
+}
+
+async function setSetting(key, value) {
+  await call('settings.host.set', { key, value })
+  snapshot.settings[key] = value
+}
+
+function setting(key, fallback) {
+  const value = snapshot.settings[key]
+  return value === undefined ? fallback : value
+}
+
+/* --------------------------------- 分区渲染 -------------------------------- */
+
+const renderers = {
+  appearance() {
+    const frag = document.createDocumentFragment()
+    frag.append(heading('外观'))
+    frag.append(
+      row(
+        '主题',
+        select(
+          snapshot.theme.list.map((t) => ({ value: t.id, label: t.label || t.id })),
+          snapshot.theme.current,
+          (id) => void call('theme.set', { themeId: id })
+        )
+      )
+    )
+    return frag
+  },
+
+  general() {
+    const frag = document.createDocumentFragment()
+    frag.append(heading('常规'))
+    frag.append(
+      row(
+        '关闭窗口时',
+        select(
+          [
+            { value: 'ask', label: '每次询问' },
+            { value: 'hide', label: '最小化到托盘' },
+            { value: 'quit', label: '退出应用' }
+          ],
+          snapshot.closeBehavior,
+          (behavior) => void call('window.setCloseBehavior', { behavior })
+        )
+      )
+    )
+    const host = snapshot.extensionHost
+    frag.append(
+      row('扩展宿主', el('span', 'value', host.enabled ? `已启用（${host.source}）` : '未启用'))
+    )
+    frag.append(note('扩展宿主开关在下次启动生效；如需切换请使用旧设置页或配置文件。'))
+    return frag
+  },
+
+  language() {
+    const frag = document.createDocumentFragment()
+    frag.append(heading('语言'))
+    frag.append(
+      row(
+        '界面语言',
+        select(
+          snapshot.locale.list.map((l) => ({ value: l.code, label: l.label })),
+          snapshot.locale.current,
+          (code) => void call('i18n.setLocale', { code })
+        )
+      )
+    )
+    return frag
+  },
+
+  keyboard() {
+    const frag = document.createDocumentFragment()
+    frag.append(heading('快捷键'))
+    frag.append(note('点击「修改」后直接按下组合键；「重置」恢复默认。'))
+    const list = el('ul', 'keys')
+    for (const item of snapshot.keybindings) {
+      const li = el('li', 'key-row')
+      li.append(el('span', 'key-name', item.labelKey || item.command))
+      li.append(el('span', 'key-combo', item.currentKey || item.defaultKey || '—'))
+
+      const edit = el('button', 'btn', '修改')
+      edit.type = 'button'
+      edit.addEventListener('click', () => {
+        edit.textContent = '请按键…'
+        edit.disabled = true
+        const onKey = async (event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          window.removeEventListener('keydown', onKey, true)
+          const parts = []
+          if (event.ctrlKey) parts.push('Ctrl')
+          if (event.shiftKey) parts.push('Shift')
+          if (event.altKey) parts.push('Alt')
+          const key = event.key.length === 1 ? event.key.toUpperCase() : event.key
+          parts.push(key)
+          try {
+            await call('keybindings.set', { command: item.command, combo: parts.join('+') })
+            await reload()
+          } catch (error) {
+            noteEl(error.message)
+          }
         }
+        window.addEventListener('keydown', onKey, true)
       })
-      li.append(name, combo, reset)
-      return li
+
+      const reset = el('button', 'btn', '重置')
+      reset.type = 'button'
+      reset.addEventListener('click', async () => {
+        await call('keybindings.reset', { command: item.command })
+        await reload()
+      })
+
+      li.append(edit, reset)
+      list.appendChild(li)
+    }
+    frag.append(list)
+    return frag
+  },
+
+  update() {
+    const frag = document.createDocumentFragment()
+    frag.append(heading('更新'))
+    frag.append(row('当前版本', el('span', 'value', snapshot.app.version)))
+    frag.append(row('更新提供者', el('span', 'value', snapshot.update.activeId || '未选择')))
+    const providers = el('ul', 'plain')
+    for (const p of snapshot.update.providers) {
+      providers.appendChild(el('li', '', p.extensionId))
+    }
+    if (snapshot.update.providers.length === 0) {
+      providers.appendChild(el('li', 'note', '暂无扩展声明更新提供者'))
+    }
+    frag.append(providers)
+    frag.append(note('检查/下载/安装更新由更新提供者扩展执行（命令面板中可找到对应命令）。'))
+    return frag
+  },
+
+  network() {
+    const proxy = setting('network.proxy', {}) || {}
+    const frag = document.createDocumentFragment()
+    frag.append(heading('网络'))
+    frag.append(
+      row(
+        '启用代理',
+        checkbox(proxy.enabled, (enabled) => void saveProxy({ ...proxy, enabled }))
+      )
+    )
+    frag.append(
+      row(
+        '代理地址',
+        input(proxy.url ?? '', 'http://127.0.0.1:7890', (url) => void saveProxy({ ...proxy, url }))
+      )
+    )
+    frag.append(
+      row(
+        '忽略 SSL 证书错误',
+        checkbox(proxy.ignoreSSL, (ignoreSSL) => void saveProxy({ ...proxy, ignoreSSL }))
+      )
+    )
+    const noProxy = Array.isArray(proxy.noProxy) ? proxy.noProxy.join('\n') : ''
+    const textarea = el('textarea', 'textarea')
+    textarea.value = noProxy
+    textarea.rows = 3
+    textarea.placeholder = '每行一个域名，如 example.com'
+    textarea.addEventListener('change', () => {
+      const list = textarea.value
+        .split('\n')
+        .map((v) => v.trim())
+        .filter(Boolean)
+      void saveProxy({ ...proxy, noProxy: list })
+    })
+    frag.append(row('不代理的域名', textarea))
+    return frag
+  },
+
+  ai() {
+    const frag = document.createDocumentFragment()
+    frag.append(heading('AI'))
+    const fields = [
+      ['ai.baseUrl', '服务地址', 'https://api.openai.com/v1'],
+      ['ai.apiKey', 'API Key', 'sk-…'],
+      ['ai.model', '模型', 'gpt-4o-mini'],
+      ['ai.contextLen', '上下文长度', '8192']
+    ]
+    for (const [key, label, placeholder] of fields) {
+      frag.append(
+        row(
+          label,
+          input(setting(key, ''), placeholder, (value) => void setSetting(key, value))
+        )
+      )
+    }
+    frag.append(
+      row(
+        '每日请求上限',
+        input(
+          setting('ai.dailyLimit', ''),
+          '0 = 不限制',
+          (value) => {
+            const num = Number(value)
+            void setSetting('ai.dailyLimit', Number.isFinite(num) && value !== '' ? num : undefined)
+          },
+          'number'
+        )
+      )
+    )
+    return frag
+  },
+
+  notification() {
+    const frag = document.createDocumentFragment()
+    frag.append(heading('通知'))
+    frag.append(
+      row(
+        '启用通知',
+        checkbox(
+          setting('notifications.enabled', true),
+          (enabled) => void setSetting('notifications.enabled', enabled)
+        )
+      )
+    )
+    frag.append(note('按扩展屏蔽通知请在「扩展」分区中逐个设置。'))
+    return frag
+  },
+
+  extension() {
+    const frag = document.createDocumentFragment()
+    frag.append(heading('扩展'))
+    if (snapshot.extensionPages.length === 0) {
+      frag.append(note('暂无扩展声明设置项（扩展可经 api.settings.register 或清单声明）。'))
+      return frag
+    }
+    for (const page of snapshot.extensionPages) {
+      const box = el('div', 'ext-page')
+      const title = el('h3', 'ext-title', page.title || page.id)
+      box.appendChild(title)
+      for (const field of page.fields || []) {
+        box.append(
+          row(
+            field.label || field.key,
+            input(
+              setting(field.key, field.default ?? ''),
+              field.placeholder || '',
+              (value) => void setSetting(field.key, value)
+            )
+          )
+        )
+      }
+      frag.append(box)
+    }
+    return frag
+  }
+}
+
+async function saveProxy(proxy) {
+  await setSetting('network.proxy', proxy)
+  render()
+}
+
+let noteEl = () => undefined
+
+function noteMessage(text) {
+  const p = el('p', 'note', text)
+  panelEl.prepend(p)
+  setTimeout(() => p.remove(), 4000)
+}
+
+/* --------------------------------- 树与渲染 -------------------------------- */
+
+function renderTree() {
+  treeEl.replaceChildren(
+    ...SECTIONS.map((section) => {
+      const node = el('div', 'tree-node', section.label)
+      if (section.id === active) node.classList.add('active')
+      node.addEventListener('click', () => {
+        active = section.id
+        activeExtPage = null
+        render()
+      })
+      return node
     })
   )
 }
 
-document.getElementById('setting-load').addEventListener('click', async () => {
-  const key = keyEl.value.trim()
-  if (!key) return
-  try {
-    const value = await call('settings.host.get', { key })
-    valueEl.value = value === undefined ? '' : JSON.stringify(value, null, 2)
-    setStatusEl.textContent = value === undefined ? '（尚未设置）' : '已读取'
-  } catch (error) {
-    setStatusEl.textContent = `读取失败：${error.message}`
+function render() {
+  renderTree()
+  panelEl.replaceChildren()
+  const renderer = renderers[active]
+  if (!renderer) {
+    panelEl.append(note('未知分区'))
+    return
   }
-})
+  panelEl.append(renderer())
+}
 
-document.getElementById('setting-save').addEventListener('click', async () => {
-  const key = keyEl.value.trim()
-  if (!key) {
-    setStatusEl.textContent = '请先填设置键'
-    return
-  }
-  let value
-  const raw = valueEl.value.trim()
-  try {
-    value = raw === '' ? undefined : JSON.parse(raw)
-  } catch {
-    setStatusEl.textContent = '值不是合法 JSON'
-    return
-  }
-  try {
-    await call('settings.host.set', { key, value })
-    setStatusEl.textContent = '已保存（立即生效）'
-  } catch (error) {
-    setStatusEl.textContent = `保存失败：${error.message}`
-  }
-})
+async function reload() {
+  snapshot = await call('settings.snapshot')
+  render()
+}
 
 async function init() {
+  noteEl = noteMessage
   try {
-    await loadThemes()
-    await loadKeys()
+    await reload()
   } catch (error) {
-    setStatusEl.textContent = `初始化失败：${error.message}`
+    panelEl.replaceChildren(note(`读取失败：${error.message}`))
   }
 }
+
+// 深链切换：只改 hash 不会重载页面，靠 hashchange 重新渲染
+window.addEventListener('hashchange', () => {
+  const next = (location.hash || '#appearance').slice(1) || 'appearance'
+  if (!renderers[next]) return
+  active = next
+  render()
+})
 
 void init()

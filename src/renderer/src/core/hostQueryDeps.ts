@@ -12,7 +12,11 @@ import { appStore } from './appStore'
 import type { HostQueryDeps } from './hostQuery'
 import { keybindingStore } from './keybindings'
 import { registry } from './registry'
+import { currentLocale, LOCALES, setLocale } from '../i18n'
+import { readExtensionHostSwitch } from './extensionHostBridge'
+import { extensionSettingsStore } from './extensionSettings'
 import { stateStore } from './state'
+import { updaterStore } from './updaterStore'
 import { themeStore } from './theme'
 
 /** 懒取渲染侧 host：避免把 App.vue 静态拉进只跑 node 的测试模块图 */
@@ -42,6 +46,51 @@ export function hostQueryDeps(): HostQueryDeps {
     restartHost: () => {
       void window.api.relaunchApp()
     },
+    // 设置页要的**一站式快照**：分区内容一次取全，避免页面为每个分区单独往返（也避免键名知识散落）
+    settingsSnapshot: async () => {
+      const appInfo = await window.api.getAppInfo()
+      const closeBehavior = await window.api.getCloseBehavior()
+      const hostSwitch = readExtensionHostSwitch()
+      return {
+        app: { version: appInfo.version },
+        theme: {
+          list: themeStore.themes.map((t) => ({ id: t.id, label: t.label })),
+          current: themeStore.currentId
+        },
+        locale: {
+          list: LOCALES.map((l) => ({ code: l.code, label: l.displayName })),
+          current: currentLocale()
+        },
+        closeBehavior,
+        settings: stateStore.getSettingsSnapshot(),
+        keybindings: keybindingStore.list().map((k) => ({
+          command: k.command,
+          labelKey: k.labelKey,
+          defaultKey: k.defaultKey,
+          currentKey: k.currentKey
+        })),
+        extensionHost: {
+          enabled: hostSwitch.enabled,
+          source: hostSwitch.source,
+          sourceText: hostSwitch.source
+        },
+        update: {
+          providers: updaterStore.providers.map((p) => ({ extensionId: p.extensionId })),
+          activeId: updaterStore.activeId ?? null
+        },
+        extensionPages: extensionSettingsStore.pages.map((p) => ({
+          id: p.id,
+          title: p.title,
+          extensionId: p.extensionId,
+          fields: p.fields
+        }))
+      }
+    },
+    // 设置页的写操作：关闭行为与语言（两者都不在 settings 里，各有专用通道）
+    setCloseBehavior: async (behavior) => {
+      await window.api.setCloseBehavior(behavior as 'ask' | 'hide' | 'quit')
+    },
+    setLocale: (code) => setLocale(code as 'zh' | 'en'),
     // 安装：走系统文件选择器（与旧管理器同一个 IPC），返回安装结果
     installExtension: () => window.api.installUserExtensionViaDialog(),
     apps: () => [...appStore.items],

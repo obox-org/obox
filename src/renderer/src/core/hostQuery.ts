@@ -19,6 +19,9 @@ export interface HostQueryDeps {
   apps(): unknown[] | Promise<unknown[]>
   openApp(id: string): void | Promise<void>
   installExtension(): Promise<unknown>
+  settingsSnapshot(): unknown | Promise<unknown>
+  setCloseBehavior(behavior: string): void | Promise<void>
+  setLocale(code: string): void | Promise<void>
   commands(): unknown[] | Promise<unknown[]>
   menus(): unknown[] | Promise<unknown[]>
   themeList(): unknown[]
@@ -93,6 +96,14 @@ export async function runHostQuery(
     case 'theme.set':
       deps.setTheme(requireString(args, 'themeId'))
       return null
+    case 'settings.snapshot':
+      return await deps.settingsSnapshot()
+    case 'window.setCloseBehavior':
+      await deps.setCloseBehavior(requireString(args, 'behavior'))
+      return null
+    case 'i18n.setLocale':
+      await deps.setLocale(requireString(args, 'code'))
+      return null
     case 'settings.host.get':
       return deps.hostSettingGet(requireString(args, 'key'))
     case 'settings.host.set': {
@@ -132,6 +143,9 @@ export const HOST_QUERY_OPS = [
   'theme.list',
   'theme.current',
   'theme.set',
+  'settings.snapshot',
+  'window.setCloseBehavior',
+  'i18n.setLocale',
   'settings.host.get',
   'settings.host.set',
   'keybindings.list',
