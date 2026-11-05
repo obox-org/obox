@@ -20,3 +20,5 @@ __pycache__/
 
 # 系统扩展构建产物（scripts/build-extensions.mjs）
 /.build/
+# 系统扩展构建产物（scripts/build-extensions.mjs；NSIS 映射到安装目录 extensions/）
+/.extensions/

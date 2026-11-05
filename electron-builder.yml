@@ -14,8 +14,8 @@ files:
   # 系统扩展源码不打包源码，只打包构建产物（见 extraFiles）
   - '!system-extensions'
   - '!system-extensions/**/*'
-  - '!.build'
-  - '!.build/**/*'
+  - '!.extensions'
+  - '!.extensions/**/*'
   # vendor/ 是 VS Code 源码参考目录（.gitignore 未入库，本地 500MB+）：不排除会被塞进安装包
   - '!vendor/*'
   # release/ 是**本工具的打包输出目录**（directories.output）：不排除会把上一次的安装包打进新安装包
@@ -27,10 +27,10 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 extraFiles:
   # 系统扩展：落在**安装目录**（exe 同级）的 extensions/，由 getSystemExtensionsDir() 扫描。
-  # 产物来自 `npm run build:extensions`（.build/extensions），不入库。
+  # 产物来自 `npm run build:extensions`（.extensions），不入库。
   # 注意：`extraFiles` 必须排在 `files` 列表**之后**——YAML 里列表项不会自动"结束"，
   # 插在中间会把后面的 files 排除项吞进 extraFiles（实测导致本地 extensions/ 副本被打进安装包）。
-  - from: .build/extensions
+  - from: .extensions
     to: extensions
     filter:
       - '**/*'
