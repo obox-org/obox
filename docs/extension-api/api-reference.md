@@ -797,6 +797,53 @@ if (r.ok) {
 
 代理与 `ignoreSSL` 的作用方式见上方 `proxy` 一节——**两条链路两种机制**：内置扩展走 Chromium session（主进程 `setProxy` / `setCertificateVerifyProc`）；用户扩展由**宿主进程自行应用**（`host.proxyConfig` 取配置 → http 走绝对 URI / https 走 CONNECT 隧道 + `rejectUnauthorized`；取不到配置时才回落环境变量）。**socks 代理在宿主侧会明确报错**，`noProxy` 不支持 CIDR。
 
+#### 便捷方法族：`get` / `post` / `put` / `delete` / `request`（obox 2.2.0）
+
+`fetch` 是完整形态，另外五个是它的**薄包装**——同一个返回值形状（`NetFetchResult`）、同一条代理链路、同一套超时/重定向/8MB 上限，只是省掉手写 `method`：
+
+```ts
+const a = await api.net.get('https://api.example.com/items?page=1')
+const b = await api.net.post('https://api.example.com/items', { name: 'x' }) // 对象体自动 JSON + Content-Type
+const c = await api.net.put('https://api.example.com/items/1', 'raw-string-body')
+const d = await api.net.delete('https://api.example.com/items/1')
+const e = await api.net.request('https://api.example.com/items/1', {
+  method: 'PATCH',
+  body: { name: 'y' }
+})
+```
+
+| 调用                             | 等价于                                                   |
+| -------------------------------- | -------------------------------------------------------- |
+| `api.net.get(url, opts?)`        | `api.net.fetch(url, { ...opts, method: 'GET' })`          |
+| `api.net.post(url, body?, opts?)`| `api.net.fetch(url, { ...opts, method: 'POST', body })`   |
+| `api.net.put(url, body?, opts?)` | `api.net.fetch(url, { ...opts, method: 'PUT', body })`    |
+| `api.net.delete(url, opts?)`     | `api.net.fetch(url, { ...opts, method: 'DELETE' })`       |
+| `api.net.request(url, opts)`     | `api.net.fetch(url, opts)`（`opts.method` **必填**，缺了回 `{ ok: false, error: '…必须给 opts.method…' }`） |
+
+> ⚠️ **这是纯加法**：`apiVersion` 仍是 **4**，老宿主上这些方法**不存在**（调用得到 `TypeError`）。要兼容老宿主请先特性检测（`typeof api.net.download === 'function'`）或用 `fetch` 兜底——与 `api.ipc.listen` 同一条约定。
+
+#### 下载落盘：`api.net.download`（obox 2.2.0）
+
+```ts
+const r = await api.net.download('https://example.com/pkg.zip', 'pkg/pkg.zip', {
+  onExist: 'rename' // 'rename'（缺省）| 'overwrite' | 'skip'
+})
+if (r.ok && !r.skipped) {
+  // r.path 是**相对扩展 data 目录**的路径，直接交给 api.fs 即可
+  const buf = await api.fs.readFile(r.path!)
+}
+// onExist: 'skip' 且文件已存在 ⇒ { ok: true, skipped: true }（r.path 为 undefined，没有下载）
+```
+
+| 规则     | 说明                                                                                                                                   |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 落点     | **只写扩展自己的 data 目录**（`<userData>/extensions/<id>/data`）；`relPath` 是相对路径，绝对路径与 `..` 一律 `{ ok: false }`           |
+| 返回值   | `{ ok, path?, bytes?, skipped?, error? }`；`path` 是**相对路径**（与传给它的 `relPath` 同一坐标系，`rename` 时是改名后的相对路径）        |
+| `onExist`| `rename`（缺省，`a.zip` → `a(1).zip`）/ `overwrite` / `skip`；判定的是**磁盘上是否已存在**，与本次下载无关                                   |
+| 流式     | 写盘是**流式**的（不整包进内存），因此大安装包/大模型文件也可以；没有 8MB 上限，但整体有 **15 分钟**兜底超时                              |
+| 代理     | 与 `net.fetch` **同一条链路**：走设置-网络里的代理与「忽略 SSL」（主进程 Chromium session），不需要你手动处理                               |
+| 平台限制 | 实现要走主进程（代理与 data 目录权威都在 main），因此**宿主未接线时**回 `{ ok: false, error: '…需要主进程 IPC…' }`；正常安装的 obox 均有       |
+
 ### dialog / shell / clipboard（对话框 / 外链 / 剪贴板）
 
 ```ts

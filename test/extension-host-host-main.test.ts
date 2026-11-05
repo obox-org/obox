@@ -1108,7 +1108,14 @@ test('对照表：EH-B3b-2 之后 118 已实现 + 0 桩 = 118（阶段 B 能力�
         'ipc.request',
         'log',
         'navbar.setBadge',
+        // 2.2.0：net 便捷方法族 + download（纯加法，与 net.fetch 同一条代理链路）
+        'net.delete',
+        'net.download',
         'net.fetch',
+        'net.get',
+        'net.post',
+        'net.put',
+        'net.request',
         'notification.show',
         'on',
         // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
@@ -1185,11 +1192,11 @@ test('对照表：EH-B3b-2 之后 118 已实现 + 0 桩 = 118（阶段 B 能力�
         'theme.set'
       ].sort()
     )
-    assert.equal(rows.length, 118, '对照表共 118 项')
+    assert.equal(rows.length, 124, '对照表共 124 项')
     assert.equal(
       implemented.length,
-      118,
-      '已实现 118 项（61 + EH-B3b-1 的 28 + EH-B3b-2 的 10 + 2.0.3 跟手拖动的 2）'
+      124,
+      '已实现 124 项（61 + EH-B3b-1 的 28 + EH-B3b-2 的 10 + 2.0.3 跟手拖动的 2 + 2.2.0 的 net 6）'
     )
     assert.equal(stubs.length, 0, '桩 0 项（ui 5 / output 1 / update 4 已在 EH-B3b-2 落地）')
 

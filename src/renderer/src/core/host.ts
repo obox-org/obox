@@ -50,6 +50,8 @@ import type {
   ExtensionInfo,
   ExtensionManifest,
   ExtensionModule,
+  NetDownloadResult,
+  NetFetchResult,
   ProxyConfig,
   SqliteDb,
   SqliteRow,
@@ -421,6 +423,27 @@ class ExtensionHost {
 
   private buildApi(ext: ExtensionInfo, disposables: Array<() => void>): ExtensionActivationApi {
     const mementoNs = stateStore.memento(ext.id)
+    /**
+     * 渲染侧 `api.net` 的统一出口。
+     *
+     * 为什么要包一层：设置里的代理是 Vue reactive Proxy，直接进 IPC 会抛
+     * `An object could not be cloned.`（见 `core/plainProxy.ts`），因此**每一次**都要过
+     * `plainProxyConfig`；`net` 有 6 个方法，各写一遍迟早漏一个。
+     */
+    const callNet = (
+      url: string,
+      opts?: { method?: string; headers?: Record<string, string>; body?: unknown; json?: boolean }
+    ): Promise<NetFetchResult> =>
+      window.api.netFetch(
+        {
+          url,
+          method: opts?.method,
+          headers: opts?.headers,
+          body: opts?.body,
+          json: opts?.json
+        },
+        plainProxyConfig(stateStore.getSetting<ProxyConfig>('network.proxy'))
+      )
     return {
       // api.http（2.0.3）：外部 HTTP 指令注册
       http: {
@@ -624,19 +647,30 @@ class ExtensionHost {
         show: (opts) => this.showNotification(ext, opts, disposables)
       },
       net: {
-        fetch: (url, opts) =>
-          window.api.netFetch(
-            {
-              url,
-              method: opts?.method,
-              headers: opts?.headers,
-              body: opts?.body,
-              json: opts?.json
-            },
-            // ⚠️ 必须过 plainProxyConfig：设置里的代理是 reactive Proxy，直接进 IPC 会
-            // 抛 `An object could not be cloned.`（见 plainProxy.ts 的说明）
+        fetch: (url, opts) => callNet(url, opts),
+        get: (url, opts) => callNet(url, { ...opts, method: 'GET' }),
+        post: (url, body, opts) =>
+          callNet(url, { ...opts, method: 'POST', ...(body === undefined ? {} : { body }) }),
+        put: (url, body, opts) =>
+          callNet(url, { ...opts, method: 'PUT', ...(body === undefined ? {} : { body }) }),
+        delete: (url, opts) => callNet(url, { ...opts, method: 'DELETE' }),
+        request: (url, opts) => callNet(url, opts),
+        download: async (url, relPath, opts): Promise<NetDownloadResult> => {
+          // 渲染侧同样要过 plainProxyConfig（理由同 callNet）：主进程拿它配置 `obox-net` session
+          const raw = await window.api.netDownload(
+            { extId: ext.id, url, relPath, onExist: opts?.onExist },
             plainProxyConfig(stateStore.getSetting<ProxyConfig>('network.proxy'))
           )
+          if (raw.ok !== true) {
+            return { ok: false, error: raw.error ?? '下载失败（主进程未给出原因）' }
+          }
+          if (raw.skipped === true) return { ok: true, skipped: true }
+          return {
+            ok: true,
+            ...(typeof raw.path === 'string' ? { path: raw.path } : {}),
+            ...(typeof raw.bytes === 'number' ? { bytes: raw.bytes } : {})
+          }
+        }
       },
       dialog: {
         showOpenDialog: (opts) => window.api.dialogOpen(opts ?? {}),

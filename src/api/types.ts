@@ -125,6 +125,51 @@ export interface TreeViewProvider {
   getChildren(element?: TreeItem): TreeItem[] | Promise<TreeItem[]>
 }
 
+/** `api.net` 单次请求的选项（`fetch` 除 `method` 外的全部字段，`get`/`post`/`put`/`delete` 共用） */
+export interface NetRequestOptions {
+  /** 请求头（对象 body 自动补 `Content-Type: application/json` 时以你传的为准） */
+  headers?: Record<string, string>
+  /** 请求体：字符串原样发；其它值 JSON 序列化并补 `Content-Type: application/json` */
+  body?: unknown
+  /** `true` 强制把响应体按 JSON 解析（解析失败回落文本） */
+  json?: boolean
+}
+
+/** `api.net.fetch` 的选项：{@link NetRequestOptions} + `method` */
+export interface NetFetchOptions extends NetRequestOptions {
+  /** HTTP 方法，缺省 `GET` */
+  method?: string
+}
+
+/**
+ * `api.net` 的请求结果（`fetch` / `get` / `post` / `put` / `delete` / `request` 同一个形状）。
+ *
+ * `ok` 只表示「请求完成」，**非 2xx 也是 `true`**（看 `status`）；网络层失败才 `ok: false` + `error`。
+ */
+export interface NetFetchResult {
+  ok: boolean
+  status?: number
+  statusText?: string
+  /** 响应体：按 `Content-Type` 解析 JSON，否则文本；`json: true` 强制解析 */
+  data?: unknown
+  error?: string
+}
+
+/** `api.net.download` 的同名文件冲突策略：改名 / 覆盖 / 跳过 */
+export type NetDownloadOnExist = 'rename' | 'overwrite' | 'skip'
+
+/** `api.net.download` 的结果（`skipped` 只在 `onExist: 'skip'` 且文件已存在时出现） */
+export interface NetDownloadResult {
+  ok: boolean
+  /** 落盘路径（**相对扩展 data 目录**，可直接交给 `api.fs.readFile` 同一个相对路径） */
+  path?: string
+  /** 本次写入的字节数 */
+  bytes?: number
+  /** 没下载（`onExist: 'skip'` 且目标已存在），此时 `path` 为 `undefined` */
+  skipped?: boolean
+  error?: string
+}
+
 /** 激活扩展时的宿主能力注入（传给扩展插件函数） */
 export interface ExtensionActivationApi {
   /** 命令注册：把 manifest 声明的命令 id 绑定实现 */
@@ -374,24 +419,41 @@ export interface ExtensionActivationApi {
       onClick?: () => void
     }): Promise<{ ok: boolean; error?: string }>
   }
-  /** 网络请求（渲染进程 CSP 禁外网，走主进程 + 自动应用设置-网络代理；默认 30s 超时） */
+  /**
+   * 网络请求（渲染进程 CSP 禁外网，走主进程 + 自动应用设置-网络代理；默认 30s 超时）。
+   *
+   * 方法族（2.2.0 起）：`fetch` 是完整形态，`get` / `post` / `put` / `delete` / `request` 是它的
+   * 便捷包装（同一个返回值形状、同一条代理链路），`download` 是**流式落盘到扩展 data 目录**。
+   * 新方法为**纯加法**（`apiVersion` 仍为 4）：在老宿主上它们**不存在**，请先做特性检测
+   * （`typeof api.net.download === 'function'`）或直接 `fetch` 兜底。
+   */
   net: {
     /** 发起请求；data 按响应 Content-Type 自动解析 JSON/文本；opts.json=true 强制解析 JSON */
-    fetch(
+    fetch(url: string, opts?: NetFetchOptions): Promise<NetFetchResult>
+    /** `GET`（= `fetch(url, { method: 'GET' })`） */
+    get(url: string, opts?: NetRequestOptions): Promise<NetFetchResult>
+    /** `POST`（body 传对象时自动 JSON 序列化并补 `Content-Type`） */
+    post(url: string, body?: unknown, opts?: NetRequestOptions): Promise<NetFetchResult>
+    /** `PUT`（body 语义同 `post`） */
+    put(url: string, body?: unknown, opts?: NetRequestOptions): Promise<NetFetchResult>
+    /** `DELETE`（需要 body 时用 `request`） */
+    delete(url: string, opts?: NetRequestOptions): Promise<NetFetchResult>
+    /** 任意方法（`opts.method` 必填；等价于把 `NetFetchOptions` 原样交给 `fetch`） */
+    request(url: string, opts: NetFetchOptions & { method: string }): Promise<NetFetchResult>
+    /**
+     * 下载到**扩展 data 目录**（流式写盘，不整包进内存）：`relPath` 是相对 data 目录的路径
+     * （绝对路径与 `..` 一律拒绝，不合法回 `{ ok: false }`）。
+     *
+     * - 返回的 `path` 也是**相对路径**（用 `api.fs` 读同一个相对路径即可），`bytes` 是本次写入字节数；
+     * - `onExist`：`rename`（缺省，`a.zip` → `a(1).zip`）/ `overwrite` / `skip`；
+     * - `onExist: 'skip'` 且文件已存在 ⇒ `{ ok: true, skipped: true }`（`path` 为 `undefined`，没有下载）；
+     * - 大文件不设 30s 上限，但整体仍有一次 15 分钟的兜底超时。
+     */
+    download(
       url: string,
-      opts?: {
-        method?: string
-        headers?: Record<string, string>
-        body?: unknown
-        json?: boolean
-      }
-    ): Promise<{
-      ok: boolean
-      status?: number
-      statusText?: string
-      data?: unknown
-      error?: string
-    }>
+      relPath: string,
+      opts?: { onExist?: NetDownloadOnExist }
+    ): Promise<NetDownloadResult>
   }
   /** 文件对话框（主进程 dialog） */
   dialog: {

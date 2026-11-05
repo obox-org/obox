@@ -31,7 +31,9 @@ import { createExtensionApi, listApiImplementation } from '../src/extension-host
 import {
   CLIPBOARD_METHOD,
   DEFAULT_MAX_BODY_BYTES,
+  DEFAULT_NET_TIMEOUT_MS,
   MAX_WATCHERS_PER_EXT,
+  NET_DOWNLOAD_METHOD,
   PROXY_CONFIG_METHOD,
   createIoCapabilities,
   matchesNoProxy,
@@ -875,6 +877,110 @@ test('clipboard：main 回 {ok:false} / 桥抛错 / 非字符串入参 → 抛�
 })
 
 /* -------------------------------------------------------------------------------------------- */
+/* 4b. net 便捷方法族 + download（2.2.0 纯加法）                                                    */
+/* -------------------------------------------------------------------------------------------- */
+
+test('net.get/post/put/delete/request：method 与 body 逐项对上（都落到同一个 fetch 实现）', async (): Promise<void> => {
+  const server = await startServer((_req, res): void => {
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.end('done')
+  })
+  const { io } = await createIo()
+
+  await io.net.get(`${server.url}/a`)
+  await io.net.post(`${server.url}/a`, { page: 2 })
+  await io.net.put(`${server.url}/a`, 'raw-body')
+  await io.net.delete(`${server.url}/a`)
+  await io.net.request(`${server.url}/a`, { method: 'PATCH', body: { x: 1 } })
+
+  assert.deepEqual(
+    server.requests.map((request) => request.method),
+    ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
+  )
+  assert.deepEqual(
+    server.requests.map((request) => request.body),
+    ['', '{"page":2}', 'raw-body', '', '{"x":1}']
+  )
+  // 对象体自动补 Content-Type（与 fetch 同一条路径，不是各写一遍）
+  assert.match(String(server.requests[1]?.headers['content-type'] ?? ''), /application\/json/)
+})
+
+test('net.request：缺 method → {ok:false}（不抛、也不猜成 GET）', async (): Promise<void> => {
+  const { io } = await createIo()
+  const missing = await io.net.request('http://127.0.0.1:1/a', {} as never)
+  assert.equal(missing.ok, false)
+  assert.match(missing.error ?? '', /必须给 opts\.method/)
+})
+
+test('net.download：经 host.netDownload 转给 main，参数形状固定、超时给足', async (): Promise<void> => {
+  const calls: Array<{ method: string; params: unknown; timeoutMs?: number }> = []
+  const hostMain: HostMainBridge = {
+    request: async (method, params, options): Promise<unknown> => {
+      calls.push({ method, params, timeoutMs: options?.timeoutMs })
+      return { ok: true, path: 'pkg/a.zip', bytes: 1234 }
+    }
+  }
+  const { io } = await createIo({ hostMain })
+
+  const result = await io.net.download('http://127.0.0.1/a.zip', 'pkg/a.zip')
+  assert.deepEqual(result, { ok: true, path: 'pkg/a.zip', bytes: 1234 })
+  assert.equal(calls[0]?.method, NET_DOWNLOAD_METHOD)
+  assert.deepEqual(calls[0]?.params, {
+    extId: 'io-ext',
+    url: 'http://127.0.0.1/a.zip',
+    relPath: 'pkg/a.zip',
+    onExist: 'rename'
+  })
+  assert.ok(
+    (calls[0]?.timeoutMs ?? 0) > DEFAULT_NET_TIMEOUT_MS,
+    '下载不能沿用 30s 的 fetch 超时（大安装包必然超）'
+  )
+
+  await io.net.download('http://127.0.0.1/a.zip', 'pkg/a.zip', { onExist: 'skip' })
+  assert.equal((calls[1]?.params as { onExist?: string }).onExist, 'skip')
+})
+
+test('net.download：skip 且文件已存在 → {ok:true, skipped:true}（无 path）', async (): Promise<void> => {
+  const hostMain: HostMainBridge = {
+    request: async (): Promise<unknown> => ({ ok: true, skipped: true })
+  }
+  const { io } = await createIo({ hostMain })
+  assert.deepEqual(await io.net.download('http://127.0.0.1/a.zip', 'a.zip', { onExist: 'skip' }), {
+    ok: true,
+    skipped: true
+  })
+})
+
+test('net.download：非法入参 / 未接线 / 桥抛错 / 回包缺 path → 一律 {ok:false}（不抛）', async (): Promise<void> => {
+  const unwired = (await createIo()).io
+  const unwiredResult = await unwired.net.download('http://127.0.0.1/a.zip', 'a.zip')
+  assert.equal(unwiredResult.ok, false)
+  assert.match(unwiredResult.error ?? '', /需要主进程 IPC/)
+
+  const ok = await createIo({
+    hostMain: { request: async (): Promise<unknown> => ({ ok: true, path: 'a.zip' }) }
+  }).then((harness) => harness.io)
+  assert.match((await ok.net.download('ftp://x/a.zip', 'a.zip')).error ?? '', /http\/https/)
+  assert.match((await ok.net.download('http://x/a.zip', '  ')).error ?? '', /relPath/)
+
+  const badShape = await createIo({
+    hostMain: { request: async (): Promise<unknown> => ({ ok: true }) }
+  }).then((harness) => harness.io)
+  assert.match((await badShape.net.download('http://x/a.zip', 'a.zip')).error ?? '', /缺少 path/)
+
+  const throwing = await createIo({
+    hostMain: {
+      request: async (): Promise<unknown> => {
+        throw new Error('RPC 超时')
+      }
+    }
+  }).then((harness) => harness.io)
+  const thrown = await throwing.net.download('http://x/a.zip', 'a.zip')
+  assert.equal(thrown.ok, false)
+  assert.match(thrown.error ?? '', /下载失败.*RPC 超时/)
+})
+
+/* -------------------------------------------------------------------------------------------- */
 /* 5. env 全量                                                                                    */
 /* -------------------------------------------------------------------------------------------- */
 
@@ -898,7 +1004,7 @@ test('env：5 个成员与 src/api/types.ts 的声明一一对应（语言来自
 /* 6. apiFactory 装配与「已实现 / 桩」对照表                                                        */
 /* -------------------------------------------------------------------------------------------- */
 
-test('对照表：EH-B3b-2 之后 118 已实现 + 0 桩 = 118（阶段 B 的能力面已全部落地）', async (): Promise<void> => {
+test('对照表：EH-B3b-2 之后 124 已实现 + 0 桩 = 124（阶段 B 的能力面已全部落地）', async (): Promise<void> => {
   const root = await makeTempDir()
   const built = createExtensionApi({
     ext: {
@@ -977,7 +1083,14 @@ test('对照表：EH-B3b-2 之后 118 已实现 + 0 桩 = 118（阶段 B 的能�
       'ipc.request',
       'log',
       'navbar.setBadge',
+      // 2.2.0：net 便捷方法族 + download（纯加法，与 net.fetch 同一条代理链路）
+      'net.delete',
+      'net.download',
       'net.fetch',
+      'net.get',
+      'net.post',
+      'net.put',
+      'net.request',
       'notification.show',
       'on',
       // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
@@ -1053,11 +1166,11 @@ test('对照表：EH-B3b-2 之后 118 已实现 + 0 桩 = 118（阶段 B 的能�
       'theme.set'
     ].sort()
   )
-  assert.equal(rows.length, 118, '对照表共 118 项')
+  assert.equal(rows.length, 124, '对照表共 124 项')
   assert.equal(
     implemented.length,
-    118,
-    '已实现 118 项（EH-A3 的 17 + B1 的 5 + B2 的 16 + B3a 的 23 + B3b-1 的 28 + B3b-2 的 10 + 2.0.3 的 2）'
+    124,
+    '已实现 124 项（EH-A3 的 17 + B1 的 5 + B2 的 16 + B3a 的 23 + B3b-1 的 28 + B3b-2 的 10 + 2.0.3 的 2 + 2.2.0 的 6）'
   )
   assert.equal(stubs.length, 0, '桩 0 项（EH-B3b-2 把 ui 5 / output 1 / update 4 全部落地）')
   assert.equal(rows.length, implemented.length + stubs.length, '不得出现第三类')

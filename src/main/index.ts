@@ -64,7 +64,7 @@ import { registerDebugExtensionDirs } from './extensionDirs'
 import { registerSqliteIpc } from './sqlite'
 import { registerTimerIpc } from './timer'
 import { registerNotificationIpc } from './notification'
-import { registerNetIpc } from './net'
+import { downloadToExtensionDataDir, registerNetIpc, type DownloadRequest } from './net'
 import { currentProxy } from './proxy'
 import { registerAiIpc } from './ai'
 import { registerFsIpc } from './fs'
@@ -83,9 +83,13 @@ import {
   validateEnvelope,
   type HostedExtensionInfo
 } from '../shared/extensionHostProtocol'
-// EH-B1：这两条是**宿主内部 RPC**（宿主进程 → main），不进扩展 API 面——扩展看到的是
-// `api.net.fetch` / `api.clipboard`，这里只是宿主实现它们时向 main 借的两样东西。
-import { CLIPBOARD_METHOD, PROXY_CONFIG_METHOD } from '../extension-host/capabilities/io'
+// EH-B1：这几条是**宿主内部 RPC**（宿主进程 → main），不进扩展 API 面——扩展看到的是
+// `api.net.fetch` / `api.net.download` / `api.clipboard`，这里只是宿主实现它们时向 main 借的东西。
+import {
+  CLIPBOARD_METHOD,
+  NET_DOWNLOAD_METHOD,
+  PROXY_CONFIG_METHOD
+} from '../extension-host/capabilities/io'
 // EH-B2：`host.pythonRuntime` —— 宿主拿不到 Python 运行时（exe/env/cwd 由 main 解析），
 // 形状与类型定义都在宿主能力文件里（单一口径，防两边漂移）。
 import {
@@ -559,7 +563,7 @@ app.whenReady().then(() => {
     setOverlayTheme(payload)
   })
 
-  // ---- EH-B1：宿主 → main 的两条内部 RPC（宿主能力实现用，不进扩展 API 面） ----
+  // ---- EH-B1：宿主 → main 的内部 RPC（宿主能力实现用，不进扩展 API 面） ----
   // 1) 代理配置：宿主进程没有 Chromium session，`net.fetch` 只能自己应用代理/忽略 SSL，
   //    而唯一真相是 main 的 `currentProxy()`（渲染侧启动与改设置时经 `proxy:apply` 推入）。
   starter.registerMethod(PROXY_CONFIG_METHOD, (): { proxy?: ProxyConfig; ignoreSSL: boolean } => {
@@ -595,7 +599,13 @@ app.whenReady().then(() => {
     }
   })
 
-  // ---- EH-B2：宿主内部的第三条 RPC —— Python 运行时（形状见 src/extension-host/capabilities/python.ts） ----
+  // 3) 下载落盘：`api.net.download` 的代理/忽略 SSL 只有 Chromium session 能真正生效，data 目录
+  //    的权威也在 main —— 这条内部 RPC 与 `net:download` IPC **共用** `downloadToExtensionDataDir`。
+  starter.registerMethod(NET_DOWNLOAD_METHOD, (params: unknown) =>
+    downloadToExtensionDataDir(params as DownloadRequest | undefined)
+  )
+
+  // ---- EH-B2：宿主内部的第四条 RPC —— Python 运行时（形状见 src/extension-host/capabilities/python.ts） ----
   // 为什么必需：`api.python.run` 的执行方是宿主进程（进程与流都归宿主），但**运行时在哪、用哪份环境**
   // 只有 main 知道（`app.getPath('userData')` + 扩展目录解析 + 用户库目录）。宿主拿不到这些，所以
   // 由这条 RPC 把 exePath / scriptPath / env / cwd 交出去，宿主自己 spawn 与收流。
