@@ -17,3 +17,6 @@ __pycache__/
 # 扩展开发的临时工作产物：spec / 设计文档 / 临时 ADR（见 docs/extension-workflow.md）。
 # 长期留痕的只有实现完成后归档到扩展目录 docs/adr/ 的 ADR。
 /tmp/
+
+# 系统扩展构建产物（scripts/build-extensions.mjs）
+/.build/

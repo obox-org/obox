@@ -1,14 +1,62 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
+import { runHostQuery } from '../core/hostQuery'
+import { hostQueryDeps } from '../core/hostQueryDeps'
+import { themeStore } from '../core/theme'
 
 const { t } = useI18n()
 
 const props = defineProps<{
   activeNavId: string | null
 }>()
+
+const pageRef = ref<HTMLIFrameElement | null>(null)
+
+/**
+ * 系统扩展页面的桥：页面 `postMessage({type:'obox:page-call', id, op, args})` →
+ * 这里用**渲染侧真实状态**执行 `runHostQuery(op, args)` → 回 `{type:'obox:page-reply', id, ok, ...}`。
+ *
+ * 为什么由壳子回答而不是走宿主：扩展表/卡片表/主题等真相都在渲染进程；页面与壳子同进程，
+ * 直接复用宿主扩展也在用的同一批 op（`hostQueryDeps`），语义不会分叉。
+ */
+async function onPageMessage(event: MessageEvent): Promise<void> {
+  const frame = pageRef.value
+  if (!frame || event.source !== frame.contentWindow) return
+  const data = event.data as { type?: string; id?: number; op?: string; args?: unknown } | null
+  if (!data || data.type !== 'obox:page-call' || typeof data.op !== 'string') return
+  const reply = (payload: Record<string, unknown>): void => {
+    frame.contentWindow?.postMessage(payload, '*')
+  }
+  try {
+    const result = await runHostQuery(data.op, data.args, hostQueryDeps())
+    reply({ type: 'obox:page-reply', id: data.id, ok: true, result })
+  } catch (error) {
+    reply({
+      type: 'obox:page-reply',
+      id: data.id,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    })
+  }
+}
+
+/** iframe 加载完成后下发主题 token（CSS 变量不跨文档，必须显式推） */
+function onPageLoad(): void {
+  pageRef.value?.contentWindow?.postMessage(
+    { type: 'obox-theme', tokens: themeStore.currentTokens },
+    '*'
+  )
+}
+
+onMounted(() => {
+  window.addEventListener('message', onPageMessage)
+})
+onUnmounted(() => {
+  window.removeEventListener('message', onPageMessage)
+})
 
 /** 组件定义缓存：view id → 异步组件包装（避免每次 computed 新建导致 KeepAlive 缓存失效） */
 const asyncCache = new Map<string, Component>()
@@ -44,10 +92,12 @@ const activeView = computed<Component | null>(() => {
   <main class="content-area">
     <iframe
       v-if="activePage"
+      ref="pageRef"
       :key="activePage"
       :src="activePage"
       class="content-page"
       title="extension page"
+      @load="onPageLoad"
     />
     <KeepAlive>
       <component

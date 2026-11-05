@@ -21,9 +21,7 @@ describe('pages.open / restartHost 链路', () => {
   })
 
   it('restartHost 走 main 的 app:relaunch', () => {
-    expect(read('src/renderer/src/core/extensionHostConsumer.ts')).toContain(
-      'window.api.relaunchApp()'
-    )
+    expect(read('src/renderer/src/core/hostQueryDeps.ts')).toContain('window.api.relaunchApp()')
     expect(read('src/main/capabilities.ts')).toContain("ipcMain.handle('app:relaunch'")
     expect(read('src/preload/index.ts')).toContain("invoke('app:relaunch')")
     expect(read('src/shared/types.ts')).toContain('relaunchApp(): Promise<void>')

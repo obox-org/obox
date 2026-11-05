@@ -42,7 +42,9 @@ export function extensionSourceDir(extId: string): string {
 export function getSystemExtensionsDir(): string {
   return app.isPackaged
     ? join(dirname(process.execPath), 'extensions')
-    : join(app.getAppPath(), '.build', 'extensions')
+    : // 开发期用 cwd：`app.getAppPath()` 在 `electron out/main/index.js` 下等于入口目录
+      // （`<repo>/out/main`），拿不到仓库根；electron-vite dev/preview 的 cwd 就是仓库根。
+      join(process.cwd(), '.build', 'extensions')
 }
 
 /** 两个扩展根（扫描、协议解析、卸载都从这里取，避免各处各拼一次） */

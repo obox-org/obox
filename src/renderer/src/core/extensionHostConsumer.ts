@@ -120,7 +120,6 @@ import type {
 } from '../../../api'
 import { RpcServer } from '../../../extension-host/rpc'
 import { appStore } from './appStore'
-import { keybindingStore } from './keybindings'
 import { extensionSettingsStore } from './extensionSettings'
 import {
   getExtensionHostBridge,
@@ -131,20 +130,8 @@ import { outputStore } from './outputStore'
 import { registry, type RegisteredStatusBarItem } from './registry'
 import { STORAGE_KEY, parsePersistedState, stateStore } from './state'
 import { runHostQuery } from './hostQuery'
+import { hostQueryDeps } from './hostQueryDeps'
 
-/** 懒取渲染侧 host（避免把 App.vue 静态拉进 node 侧测试的模块图） */
-async function awaitHost(): Promise<{
-  getExtensions(): unknown[]
-  setEnabled(id: string, enabled: boolean): unknown
-  uninstall(id: string): Promise<unknown>
-}> {
-  const mod = await import('./host')
-  return mod.host as unknown as {
-    getExtensions(): unknown[]
-    setEnabled(id: string, enabled: boolean): unknown
-    uninstall(id: string): Promise<unknown>
-  }
-}
 import { themeStore } from './theme'
 import { treeStore } from './treeStore'
 import { uiStore } from './uiStore'
@@ -970,36 +957,7 @@ export function createExtensionHostConsumer(
     if (typeof record.op !== 'string' || record.op === '') {
       throw new Error('ui.hostQuery 需要非空字符串 op')
     }
-    return runHostQuery(record.op, record.args, {
-      listExtensions: async () => (await awaitHost()).getExtensions(),
-      setEnabled: async (id, enabled) => {
-        ;(await awaitHost()).setEnabled(id, enabled)
-      },
-      uninstall: async (id) => {
-        await (await awaitHost()).uninstall(id)
-      },
-      // 重启走 main 的 app:relaunch（与扩展管理器的"立即重启"同一条路）
-      restartHost: () => {
-        void window.api.relaunchApp()
-      },
-      apps: () => [...appStore.items],
-      commands: () => [...registry.commands],
-      menus: () => [...registry.getMenusFor('')],
-      themeList: () => [...themeStore.themes],
-      themeCurrent: () => themeStore.currentId,
-      setTheme: (themeId) => themeStore.setTheme(themeId),
-      keybindingsList: () => keybindingStore.list(),
-      setKeybinding: (command, combo) => {
-        keybindingStore.setKey(command, combo)
-      },
-      resetKeybinding: (command) => keybindingStore.reset(command),
-      hostSettingGet: (key) => stateStore.getSetting(key),
-      hostSettingSet: (key, value) => stateStore.setSetting(key, value),
-      openPage: (pageId) =>
-        window.dispatchEvent(
-          new CustomEvent('obox:host-request', { detail: { action: 'open-page', pageId } })
-        )
-    })
+    return runHostQuery(record.op, record.args, hostQueryDeps())
   })
 
   /* --------------------------------- 输出通道 --------------------------------- */

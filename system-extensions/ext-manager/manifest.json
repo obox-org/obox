@@ -1,0 +1,21 @@
+{
+  "name": "ext-manager",
+  "displayName": "扩展",
+  "description": "系统扩展：扩展列表、启用/禁用、卸载与重启（随 obox 分发）",
+  "version": "1.0.0",
+  "author": "obox",
+  "apiVersion": 4,
+  "main": "./index.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "navItems": [
+      {
+        "id": "ext-manager.home",
+        "title": "扩展",
+        "icon": "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'><path d='M10 3h4v3a2 2 0 1 0 4 0h3v4h-3a2 2 0 1 0 0 4h3v4h-3a2 2 0 1 0-4 0v3h-4v-3a2 2 0 1 0-4 0H3v-4h3a2 2 0 1 0 0-4H3V7h4a2 2 0 1 0 4 0V3z'/></svg>",
+        "group": "top",
+        "page": "index.html"
+      }
+    ]
+  }
+}
