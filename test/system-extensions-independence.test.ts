@@ -71,3 +71,12 @@ describe('更新事件桥（下载进度）', () => {
     expect(page).toContain("ev.type === 'download-progress'")
   })
 })
+describe('主题跟随（CSS 变量不跨文档）', () => {
+  it('三个系统扩展页面都消费 obox-theme 下发的 token', () => {
+    for (const name of ['app', 'settings', 'ext-manager']) {
+      const src = readFileSync(`${root}${name}/page.js`, 'utf8')
+      expect(src, `${name} 缺少 obox-theme 监听`).toContain("data.type !== 'obox-theme'")
+      expect(src).toContain('setProperty(`--${key}`')
+    }
+  })
+})

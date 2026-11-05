@@ -108,3 +108,14 @@ async function refresh() {
 
 searchEl.addEventListener('input', render)
 void refresh()
+/**
+ * 主题跟随：CSS 变量不跨文档，壳子在 iframe 加载后以 `obox-theme` 下发 token。
+ * 这里把 token 写到根元素上（`--x` 形式），页面样式直接用 `var(--x)`。
+ */
+window.addEventListener('message', (event) => {
+  const data = event.data
+  if (!data || data.type !== 'obox-theme' || !data.tokens) return
+  for (const [key, value] of Object.entries(data.tokens)) {
+    if (typeof value === 'string') document.documentElement.style.setProperty(`--${key}`, value)
+  }
+})
