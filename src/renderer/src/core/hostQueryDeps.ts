@@ -43,6 +43,19 @@ export function hostQueryDeps(): HostQueryDeps {
       void window.api.relaunchApp()
     },
     apps: () => [...appStore.items],
+    // 打开卡片：与 AppView 的 openApp 同一条路（缺字段给安全默认值，避免主进程校验失败）
+    openApp: async (id) => {
+      const item = appStore.findById(id)
+      if (!item) throw new Error(`卡片不存在：${id}`)
+      await window.api.openAppWindow({
+        appId: item.id,
+        title: item.name,
+        multiOpen: item.multiOpen,
+        width: item.width,
+        height: item.height,
+        iconUrl: item.iconUrl
+      })
+    },
     commands: () => [...registry.commands],
     menus: () => [...registry.getMenusFor('')],
     themeList: () => [...themeStore.themes],

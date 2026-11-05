@@ -34,6 +34,15 @@ async function loadBuiltinManifest(id: string): Promise<ExtensionManifest | null
   return null
 }
 
+/**
+ * 已迁移为**系统扩展**的内置视图（change `system-extensions-from-install-dir`）：
+ * - `app` / `ext-manager`：由 `<安装目录>/extensions/<name>` 提供页面（`contributes.navItems[].page`）；
+ * - 继续留在 bundle 里的内置视图（`settings` / `theme-*`）不在此列，避免一处界面两种来源。
+ *
+ * 用名单而不是删目录：迁移期两边都要能跑（回退时把 id 从这里去掉即可恢复内置视图）。
+ */
+const MIGRATED_TO_SYSTEM_EXTENSIONS = new Set(['app', 'ext-manager'])
+
 export async function collectBuiltinExtensions(): Promise<ExtensionEntry[]> {
   const result: ExtensionEntry[] = []
   const seen = new Set<string>()
@@ -43,6 +52,7 @@ export async function collectBuiltinExtensions(): Promise<ExtensionEntry[]> {
     const id = match[1]
     if (seen.has(id)) continue
     seen.add(id)
+    if (MIGRATED_TO_SYSTEM_EXTENSIONS.has(id)) continue
     const manifest = await loadBuiltinManifest(id)
     if (!manifest) {
       console.warn(`[loader] 内置扩展 ${id} 缺少 manifest.json`)

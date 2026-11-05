@@ -17,6 +17,7 @@ export interface HostQueryDeps {
   uninstall(id: string): Promise<void>
   restartHost(): void
   apps(): unknown[] | Promise<unknown[]>
+  openApp(id: string): void | Promise<void>
   commands(): unknown[] | Promise<unknown[]>
   menus(): unknown[] | Promise<unknown[]>
   themeList(): unknown[]
@@ -75,6 +76,9 @@ export async function runHostQuery(
       return null
     case 'apps.list':
       return await deps.apps()
+    case 'apps.open':
+      await deps.openApp(requireString(args, 'id'))
+      return null
     case 'commands.list':
       return await deps.commands()
     case 'commands.menus':
@@ -118,6 +122,7 @@ export const HOST_QUERY_OPS = [
   'extensions.uninstall',
   'extensions.restartHost',
   'apps.list',
+  'apps.open',
   'commands.list',
   'commands.menus',
   'theme.list',

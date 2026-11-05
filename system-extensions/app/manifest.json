@@ -1,0 +1,21 @@
+{
+  "name": "app",
+  "displayName": "应用",
+  "description": "系统扩展：应用首页（卡片列表，点击打开独立窗口）",
+  "version": "1.0.0",
+  "author": "obox",
+  "apiVersion": 4,
+  "main": "./index.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "navItems": [
+      {
+        "id": "app.home",
+        "title": "应用",
+        "icon": "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'><rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/></svg>",
+        "group": "top",
+        "page": "index.html"
+      }
+    ]
+  }
+}

@@ -19,6 +19,7 @@ function deps(overrides: Partial<HostQueryDeps> = {}): HostQueryDeps {
     uninstall: async () => undefined,
     restartHost: () => undefined,
     apps: () => [{ id: 'rdp', title: '远程桌面' }],
+    openApp: () => undefined,
     commands: () => [{ id: 'app.showCommands', label: '命令面板' }],
     menus: () => [{ id: 'card.rdp', items: [] }],
     themeList: () => [{ id: 'theme-dark', label: '深色' }],
@@ -119,5 +120,16 @@ describe('ui.hostQuery 分发', () => {
 
   it('未知 op 给出可读错误（含 op 名）', async () => {
     await expect(runHostQuery('nope.nope', {}, deps())).rejects.toThrow(/nope\.nope/)
+  })
+})
+describe('apps.open', () => {
+  it('把卡片 id 透传给宿主（打开子窗口）', async () => {
+    const opened: string[] = []
+    await runHostQuery('apps.open', { id: 'rdp' }, deps({ openApp: (id) => opened.push(id) }))
+    expect(opened).toEqual(['rdp'])
+  })
+
+  it('缺 id → 可读错误', async () => {
+    await expect(runHostQuery('apps.open', {}, deps())).rejects.toThrow(/id/)
   })
 })
