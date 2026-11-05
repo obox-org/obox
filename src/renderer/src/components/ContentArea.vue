@@ -51,11 +51,21 @@ function onPageLoad(): void {
   )
 }
 
+/**
+ * 更新事件转发（`update:event`）：下载进度只存在于渲染进程的 main 事件里，
+ * 系统扩展的更新分区要显示百分比，就必须把事件推给它的 iframe。
+ */
+let offUpdateEvent: (() => void) | undefined
+
 onMounted(() => {
   window.addEventListener('message', onPageMessage)
+  offUpdateEvent = window.events.on('update:event', (event) => {
+    pageRef.value?.contentWindow?.postMessage({ type: 'obox-update-event', event }, '*')
+  })
 })
 onUnmounted(() => {
   window.removeEventListener('message', onPageMessage)
+  offUpdateEvent?.()
 })
 
 /** 组件定义缓存：view id → 异步组件包装（避免每次 computed 新建导致 KeepAlive 缓存失效） */

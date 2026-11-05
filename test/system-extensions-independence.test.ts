@@ -57,3 +57,17 @@ describe('查询结果可序列化（真机问题）', () => {
     expect(toSerializable(cyclic)).toBeNull()
   })
 })
+describe('更新事件桥（下载进度）', () => {
+  it('壳子把 update:event 转给页面，页面按事件渲染进度', () => {
+    const shell = readFileSync(
+      fileURLToPath(new URL('../src/renderer/src/components/ContentArea.vue', import.meta.url)),
+      'utf8'
+    )
+    expect(shell).toContain("window.events.on('update:event'")
+    expect(shell).toContain("type: 'obox-update-event'")
+
+    const page = readFileSync(`${root}settings/page.js`, 'utf8')
+    expect(page).toContain("data.type !== 'obox-update-event'")
+    expect(page).toContain("ev.type === 'download-progress'")
+  })
+})

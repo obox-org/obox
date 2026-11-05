@@ -20,6 +20,16 @@ window.addEventListener('message', (event) => {
   else entry.reject(new Error(data.error || '调用失败'))
 })
 
+let lastUpdateEvent = null
+
+// 更新事件由壳子转发（下载进度只存在于渲染进程的 main 事件里）
+window.addEventListener('message', (event) => {
+  const data = event.data
+  if (!data || data.type !== 'obox-update-event') return
+  lastUpdateEvent = data.event || null
+  if (active === 'update') render()
+})
+
 function call(op, args = {}) {
   const id = ++seq
   return new Promise((resolve, reject) => {
@@ -279,6 +289,26 @@ const renderers = {
       mkButton('安装并重启', () => call('update.install'))
     )
     frag.append(actions, status)
+
+    if (lastUpdateEvent) {
+      const ev = lastUpdateEvent
+      const line = el('p', 'note')
+      if (ev.type === 'download-progress') {
+        const bar = el('progress', 'progress')
+        bar.max = 100
+        bar.value = Number(ev.percent) || 0
+        line.append(bar, document.createTextNode(` ${Math.round(Number(ev.percent) || 0)}%`))
+      } else if (ev.type === 'update-downloaded') {
+        line.textContent = `已下载：${(ev.info && ev.info.version) || ''}，点「安装并重启」生效`
+      } else if (ev.type === 'update-available') {
+        line.textContent = `发现新版本：${(ev.info && ev.info.version) || ''}`
+      } else if (ev.type === 'error') {
+        line.textContent = `更新出错：${ev.message || '未知错误'}`
+      } else {
+        line.textContent = `事件：${ev.type}`
+      }
+      frag.append(line)
+    }
     frag.append(note('更新由当前生效的「更新提供者」扩展驱动；没有提供者时检查会提示。'))
     return frag
   },
