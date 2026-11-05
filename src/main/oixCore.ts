@@ -53,10 +53,15 @@ export class OixInstallError extends Error {
   }
 }
 
-/** 从 manifest 派生安装目录名：<name>_<清洗后 author> */
+/**
+ * 从 manifest 派生安装目录名：**`<name>.<author>`**（change `system-extensions-from-install-dir`）。
+ *
+ * 与扫描器 `expectedExtensionId()` 必须逐字同一规则：清洗（小写 + 去掉 `[^a-z0-9._-]`）后
+ * 用点号连接；没有 author 时目录名就是 name。
+ */
 export function deriveDirName(name: string, author?: string): string {
   const safeAuthor = (author ?? '').toLowerCase().replace(/[^a-z0-9._-]/g, '')
-  return safeAuthor ? `${name}_${safeAuthor}` : name
+  return safeAuthor ? `${name}.${safeAuthor}` : name
 }
 
 function readRootManifest(zip: AdmZip): Record<string, unknown> | null {

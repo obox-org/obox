@@ -151,7 +151,7 @@ export async function scanExtensionSources(
         continue
       }
 
-      const expectedId = manifestAuthor === '' ? manifestName : `${manifestName}.${manifestAuthor}`
+      const expectedId = expectedExtensionId('user', manifest) ?? ''
       if (manifestName === '' || expectedId !== name) {
         user.push({
           id: name,
@@ -186,7 +186,10 @@ export function expectedExtensionId(
   manifest: { name?: unknown; author?: unknown }
 ): string | null {
   const name = typeof manifest.name === 'string' ? manifest.name.trim() : ''
-  const author = typeof manifest.author === 'string' ? manifest.author.trim() : ''
+  const rawAuthor = typeof manifest.author === 'string' ? manifest.author.trim() : ''
+  // 与安装器 `deriveDirName()` 逐字同一清洗：否则 author 带大写/空格时，装完的目录名
+  // 会被扫描判成"与清单不一致"（真机验收会直接撞上）。
+  const author = rawAuthor.toLowerCase().replace(/[^a-z0-9._-]/g, '')
   if (name === '') return null
   return source === 'system' ? name : author === '' ? name : `${name}.${author}`
 }
