@@ -184,6 +184,9 @@ function discoverRealExtensions(): RealExtension[] {
     const dir = path.join(EXTENSIONS_DIR, entry.name)
     const manifestPath = path.join(dir, 'manifest.json')
     if (!existsSync(manifestPath)) continue
+    // 运行时包（根目录带 runtime.json，如 python3.11）没有 UI 行为，不属于本门禁范围：
+    // 它们由「设置 → 开发运行时」识别，plugin 只记一行日志，断言"必须有 api 调用"没有意义。
+    if (existsSync(path.join(dir, 'runtime.json'))) continue
 
     let manifest: ExtensionManifest | null = null
     let problems: string[] = []
