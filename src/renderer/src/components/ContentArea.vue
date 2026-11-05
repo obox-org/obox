@@ -13,6 +13,17 @@ const props = defineProps<{
 /** 组件定义缓存：view id → 异步组件包装（避免每次 computed 新建导致 KeepAlive 缓存失效） */
 const asyncCache = new Map<string, Component>()
 
+/**
+ * 系统扩展的页面（`contributes.navItems[].page`）：磁盘扩展只能给 HTML，
+ * 壳子用 iframe 加载它，地址走既有的 `app://extensions/<id>/<rest>`（系统根优先解析）。
+ */
+const activePage = computed<string | null>(() => {
+  if (!props.activeNavId) return null
+  const item = registry.navItems.find((i) => i.id === props.activeNavId && i.active)
+  if (!item?.page || !item.extensionId) return null
+  return `app://extensions/${encodeURIComponent(item.extensionId)}/${item.page}`
+})
+
 const activeView = computed<Component | null>(() => {
   if (!props.activeNavId) return null
   const item = registry.navItems.find((i) => i.id === props.activeNavId && i.active)
@@ -31,15 +42,22 @@ const activeView = computed<Component | null>(() => {
 
 <template>
   <main class="content-area">
+    <iframe
+      v-if="activePage"
+      :key="activePage"
+      :src="activePage"
+      class="content-page"
+      title="extension page"
+    />
     <KeepAlive>
       <component
         :is="activeView"
-        v-if="activeView"
+        v-if="activeView && !activePage"
         :key="activeNavId"
         :active-nav-id="activeNavId"
       />
     </KeepAlive>
-    <div v-if="!activeView" class="content-empty">
+    <div v-if="!activeView && !activePage" class="content-empty">
       <p>{{ t('content.empty') }}</p>
     </div>
   </main>
@@ -51,6 +69,13 @@ const activeView = computed<Component | null>(() => {
   overflow: auto;
   background: var(--bg, #1e1e1e);
   color: var(--fg, #cccccc);
+}
+.content-page {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: var(--bg, #1e1e1e);
 }
 .content-empty {
   height: 100%;

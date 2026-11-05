@@ -237,6 +237,26 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
       message: 'navItems 必须是 [{id, title, icon, view?}] 数组'
     })
   }
+  // 系统扩展的页面入口（page）：必须是扩展目录内的 .html，且与 view 二选一
+  if (Array.isArray(contributes?.navItems)) {
+    for (const nav of contributes.navItems as Array<Record<string, unknown>>) {
+      const page = nav?.page
+      if (page === undefined) continue
+      if (typeof page !== 'string' || page === '' || page.includes('..')) {
+        messages.push({
+          severity: 'error',
+          message: `navItems[].page 必须是非空相对路径：${String(page)}`
+        })
+      } else if (!/\.html?$/i.test(page) || page.startsWith('/') || /^[A-Za-z]:/.test(page)) {
+        messages.push({
+          severity: 'error',
+          message: `navItems[].page 必须是扩展目录内的 .html 文件（不得绝对路径）：${page}`
+        })
+      } else if (nav?.view !== undefined) {
+        messages.push({ severity: 'error', message: 'navItems[] 的 page 与 view 不能同时给出' })
+      }
+    }
+  }
   if (contributes?.statusBarItems !== undefined && !Array.isArray(contributes.statusBarItems)) {
     messages.push({ severity: 'error', message: 'statusBarItems 必须是 [{id, name}] 数组' })
   }
