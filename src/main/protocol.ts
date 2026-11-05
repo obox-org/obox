@@ -2,7 +2,9 @@ import { app, protocol, net } from 'electron'
 import { realpathSync } from 'node:fs'
 import { join, normalize, sep } from 'path'
 import { pathToFileURL } from 'url'
-import { getUserExtensionsDir } from './capabilities'
+import { getExtensionRoots } from './paths'
+import { resolveExtensionRoot } from './extensionSources'
+import { existsSync } from 'node:fs'
 import type { DebugExtensionsMap } from './debug'
 
 /**
@@ -43,9 +45,16 @@ export function registerExtensionProtocol(debugExtensions?: DebugExtensionsMap):
       }
 
       let root: string | null = null
-      if (hostname === 'extensions') root = getUserExtensionsDir()
-      else if (hostname === 'builtin') root = join(process.resourcesPath, 'extensions')
-      else if (hostname === 'debug' && debugExtensions) {
+      if (hostname === 'extensions') {
+        // 按 id 解析根：**系统根优先、用户根兜底**（change 任务 3.1）
+        const slash = rest.indexOf('/')
+        const id = slash < 0 ? rest : rest.slice(0, slash)
+        root = resolveExtensionRoot(id, getExtensionRoots(), (dir) =>
+          existsSync(join(dir, 'manifest.json'))
+        )
+      } else if (hostname === 'builtin') {
+        root = getExtensionRoots().systemRoot
+      } else if (hostname === 'debug' && debugExtensions) {
         // app://debug/<id>/<rest> → 调试扩展本地目录（首段为 id）
         const slash = rest.indexOf('/')
         const id = slash < 0 ? rest : rest.slice(0, slash)

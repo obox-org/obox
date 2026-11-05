@@ -17,6 +17,7 @@ import { getBuiltinExtensionsDir, getExtensionRoots, getUserExtensionsDir } from
 import {
   scanExtensionSources,
   selectLoadableExtensions,
+  systemExtensionError,
   toUserExtensionEntry
 } from './extensionSources'
 
@@ -75,6 +76,9 @@ export function registerCapabilityIpc(): void {
     // 防路径穿越：id 一律经守卫规范化（只允许 [a-z0-9._-]，拒绝分隔符与 ..），
     // 再校验目标确实是 userData/extensions 的直接子目录
     const safeId = normalizeExtensionId(id)
+    // 系统扩展随安装包分发，不允许卸载（change 任务 3.2：底层拒绝，UI 只是不渲染按钮）
+    const systemGuard = systemExtensionError(await scanAllExtensions(), safeId, '卸载')
+    if (systemGuard) throw new Error(systemGuard)
     const target = join(root, safeId)
     const parent = join(target, '..')
     if (basename(target) !== safeId || parent !== root) {

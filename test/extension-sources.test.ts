@@ -3,7 +3,9 @@ import {
   expectedExtensionId,
   toUserExtensionEntry,
   isLegacyExtensionDirName,
+  resolveExtensionRoot,
   scanExtensionSources,
+  systemExtensionError,
   selectLoadableExtensions,
   type ScannedExtension
 } from '../src/main/extensionSources'
@@ -163,5 +165,41 @@ describe('IPC 载荷映射', () => {
     expect(
       toUserExtensionEntry({ id: 'x', source: 'user', dir: 'C:/u/x', error: '坏清单' })
     ).toEqual({ id: 'x', path: 'C:/u/x', source: 'user', error: '坏清单' })
+  })
+})
+describe('根解析与系统扩展保护', () => {
+  const roots = { systemRoot: 'C:/app/extensions', userRoot: 'C:/user/extensions' }
+  const existsIn =
+    (dirs: string[]) =>
+    (dir: string): boolean =>
+      dirs.includes(dir.replace(/\\/g, '/'))
+
+  it('同 id 两个根都有 ⇒ 系统根优先', () => {
+    const root = resolveExtensionRoot(
+      'settings',
+      roots,
+      existsIn(['C:/app/extensions/settings', 'C:/user/extensions/settings'])
+    )
+    expect(root).toBe(roots.systemRoot)
+  })
+
+  it('只在用户根 ⇒ 用户根', () => {
+    expect(
+      resolveExtensionRoot('pet.chenzhi', roots, existsIn(['C:/user/extensions/pet.chenzhi']))
+    ).toBe(roots.userRoot)
+  })
+
+  it('两个根都没有 ⇒ null', () => {
+    expect(resolveExtensionRoot('nope', roots, () => false)).toBeNull()
+  })
+
+  it('系统扩展不可卸载/禁用；用户扩展不受限', () => {
+    const entries = [
+      { id: 'settings', source: 'system' as const, dir: 'C:/app/extensions/settings' },
+      { id: 'pet.chenzhi', source: 'user' as const, dir: 'C:/user/extensions/pet.chenzhi' }
+    ]
+    expect(systemExtensionError(entries, 'settings', '卸载')).toContain('系统扩展不可卸载')
+    expect(systemExtensionError(entries, 'settings', '禁用')).toContain('系统扩展不可禁用')
+    expect(systemExtensionError(entries, 'pet.chenzhi', '卸载')).toBeNull()
   })
 })

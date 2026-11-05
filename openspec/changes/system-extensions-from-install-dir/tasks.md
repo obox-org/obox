@@ -16,9 +16,9 @@
 
 ## 3. 协议与权限
 
-- [ ] 3.1 `protocol.ts`：`app://extensions/<id>` 按扫描表解析根；`app://builtin/<id>` 指向系统根；验证：单测覆盖两个根与越界 403
-- [ ] 3.2 `extensions:uninstall` 与宿主/渲染的 `setEnabled` 对 `source==='system'` 拒绝；验证：单测断言返回「系统扩展不可卸载/不可禁用」
-- [ ] 3.3 overlay URL 允许范围随 id 规则更新（`app://extensions/<id>` 与 `<installDir>` 根）；验证：既有 overlay-window 用例全绿 + 新增系统根用例
+- [x] 3.1 `protocol.ts`：`app://extensions/<id>` 按扫描表解析根；`app://builtin/<id>` 指向系统根；验证：单测覆盖两个根与越界 403
+- [x] 3.2 `extensions:uninstall` 与宿主/渲染的 `setEnabled` 对 `source==='system'` 拒绝；验证：单测断言返回「系统扩展不可卸载/不可禁用」
+- [x] 3.3 overlay URL 允许范围随 id 规则更新（`app://extensions/<id>` 与 `<installDir>` 根）；验证：既有 overlay-window 用例全绿 + 新增系统根用例
 
 ## 4. 打包链
 

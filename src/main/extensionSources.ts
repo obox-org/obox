@@ -217,3 +217,33 @@ export function toUserExtensionEntry(entry: ScannedExtension): {
     ...(entry.error ? { error: entry.error } : {})
   }
 }
+/**
+ * `app://extensions/<id>` 的根解析：**系统根优先，用户根兜底**（change 任务 3.1）。
+ *
+ * `exists` 注入是为了单测（真实调用方传 `manifest.json` 是否存在的检查）；
+ * 返回 null 表示两个根都没有这个 id。
+ */
+export function resolveExtensionRoot(
+  id: string,
+  roots: { systemRoot: string; userRoot: string },
+  exists: (dir: string) => boolean
+): string | null {
+  const system = join(roots.systemRoot, id)
+  if (exists(system)) return roots.systemRoot
+  const user = join(roots.userRoot, id)
+  if (exists(user)) return roots.userRoot
+  return null
+}
+
+/**
+ * 系统扩展不可卸载 / 不可禁用（change 任务 3.2）：底层统一在这里判定，
+ * UI 只是不渲染按钮，不作为唯一防线。
+ */
+export function systemExtensionError(
+  entries: ScannedExtension[],
+  id: string,
+  action: '卸载' | '禁用'
+): string | null {
+  const hit = entries.find((e) => e.id === id && e.source === 'system')
+  return hit ? `系统扩展不可${action}（${id} 随安装包分发）` : null
+}

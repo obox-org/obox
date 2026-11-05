@@ -62,7 +62,7 @@ export interface ExtensionEntry {
   manifest: ExtensionManifest
   load: () => Promise<ExtensionModule>
   /** 来源：内置（随应用打包，只读）/ 用户（userData，可卸载）/ 调试（--debug-extension，不安装） */
-  source: 'builtin' | 'user' | 'debug'
+  source: 'builtin' | 'user' | 'debug' | 'system'
   /**
    * 扩展根目录的**绝对路径**（用户扩展由主进程 `extensions:list-user` 给出）。
    * 只有 EH-A4 的清单交接用得到它：宿主按这个路径 `require`/`import` 扩展入口；

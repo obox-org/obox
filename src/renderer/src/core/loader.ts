@@ -124,7 +124,7 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
     result.push({
       id: entry.id,
       manifest,
-      source: 'user',
+      source: entry.source === 'system' ? 'system' : 'user',
       // 宿主据此 `require`/`import` 入口（EH-A4 的清单交接要用它；只读展示路径不用）
       path: entry.path,
       installedTimestamp: meta.installedTimestamp,
@@ -169,7 +169,7 @@ export async function buildUserExtensionEntry(id: string): Promise<ExtensionEntr
   return {
     id,
     manifest,
-    source: 'user',
+    source: listed.source === 'system' ? 'system' : 'user',
     // 同上：宿主加载入口需要绝对路径
     path: listed.path,
     installedTimestamp: meta.installedTimestamp,
