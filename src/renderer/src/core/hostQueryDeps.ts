@@ -91,6 +91,7 @@ export function hostQueryDeps(): HostQueryDeps {
           providers: updaterStore.providers.map((p) => ({ extensionId: p.extensionId })),
           activeId: updaterStore.activeId ?? null
         },
+        devRuntime: await window.api.devRuntimeScan(),
         extensionPages: extensionSettingsStore.pages.map((p) => ({
           id: p.id,
           title: p.title,
@@ -119,6 +120,15 @@ export function hostQueryDeps(): HostQueryDeps {
     aiTest: (baseUrl, apiKey) => window.api.aiTestConnection({ baseUrl, apiKey }),
     // 目录选择（扩展设置里的 directory 字段）
     pickDirectory: (title) => window.api.dialogOpen({ title, properties: ['openDirectory'] }),
+    // 文件选择（开发运行时：手动选 .oix 运行时包）
+    pickFile: (title) =>
+      window.api.dialogOpen({
+        title,
+        properties: ['openFile'],
+        filters: [{ name: 'Obox 运行时包', extensions: ['oix'] }]
+      }),
+    installFromPath: (path) => window.api.installUserExtensionFromPath(path),
+    devRuntimeScan: () => window.api.devRuntimeScan(),
     // 安装：走系统文件选择器（与旧管理器同一个 IPC），返回安装结果
     installExtension: () => window.api.installUserExtensionViaDialog(),
     apps: () => [...appStore.items],

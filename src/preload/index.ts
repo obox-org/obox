@@ -31,6 +31,8 @@ const api: MainApi = {
   getAppInfo: () => ipcRenderer.invoke('app:get-info'),
   // 重启应用（扩展管理器的立即重启与 api.extensions.restartHost 共用一条路）
   relaunchApp: () => ipcRenderer.invoke('app:relaunch'),
+  // 开发运行时：扫描本机解释器 + 扩展目录里的内置运行时
+  devRuntimeScan: () => ipcRenderer.invoke('dev-runtime:scan'),
   listUserExtensions: () => ipcRenderer.invoke('extensions:list-user'),
   listDebugExtensions: () => ipcRenderer.invoke('extensions:list-debug'),
   uninstallUserExtension: (id) => ipcRenderer.invoke('extensions:uninstall', id),

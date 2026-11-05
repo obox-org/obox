@@ -30,6 +30,9 @@ function deps(overrides: Partial<HostQueryDeps> = {}): HostQueryDeps {
     updateInstall: async () => undefined,
     aiTest: async () => ({ ok: true, message: 'ok' }),
     pickDirectory: async () => ({ canceled: true, filePaths: [] }),
+    pickFile: async () => ({ canceled: true, filePaths: [] }),
+    installFromPath: async () => ({ ok: true }),
+    devRuntimeScan: async () => ({ builtin: [], local: [] }),
     commands: () => [{ id: 'app.showCommands', label: '命令面板' }],
     menus: () => [{ id: 'card.rdp', items: [] }],
     themeList: () => [{ id: 'theme-dark', label: '深色' }],
@@ -207,5 +210,35 @@ describe('更新 / AI / 目录选择', () => {
       deps({ pickDirectory: (title) => titles.push(title) })
     )
     expect(titles).toEqual(['选择目录'])
+  })
+})
+describe('开发运行时', () => {
+  it('devRuntime.scan 透传扫描结果', async () => {
+    const result = await runHostQuery(
+      'devRuntime.scan',
+      {},
+      deps({ devRuntimeScan: async () => ({ builtin: [{ version: '3.12.4' }], local: [] }) })
+    )
+    expect(result).toEqual({ builtin: [{ version: '3.12.4' }], local: [] })
+  })
+
+  it('installFromPath 透传路径（手动安装运行时包）', async () => {
+    const seen: string[] = []
+    await runHostQuery(
+      'extensions.installFromPath',
+      { path: 'C:/x/python.oix' },
+      deps({ installFromPath: (path) => seen.push(path) })
+    )
+    expect(seen).toEqual(['C:/x/python.oix'])
+  })
+
+  it('dialog.openFile 透传标题', async () => {
+    const titles: string[] = []
+    await runHostQuery(
+      'dialog.openFile',
+      { title: '选择运行时包' },
+      deps({ pickFile: (title) => titles.push(title) })
+    )
+    expect(titles).toEqual(['选择运行时包'])
   })
 })

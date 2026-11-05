@@ -56,6 +56,7 @@ const SECTIONS = [
   { id: 'keyboard', label: '快捷键' },
   { id: 'update', label: '更新' },
   { id: 'network', label: '网络' },
+  { id: 'devRuntime', label: '开发运行时' },
   { id: 'ai', label: 'AI' },
   { id: 'notification', label: '通知' },
   { id: 'extension', label: '扩展' }
@@ -348,6 +349,88 @@ const renderers = {
       void saveProxy({ ...proxy, noProxy: list })
     })
     frag.append(row('不代理的域名', textarea))
+    return frag
+  },
+
+  devRuntime() {
+    const data = snapshot.devRuntime || { builtin: [], local: [] }
+    const DEFAULT_KEY = 'devRuntime.python.default'
+    const current = String(setting(DEFAULT_KEY, ''))
+    const frag = document.createDocumentFragment()
+    frag.append(heading('开发运行时'))
+
+    const install = el('button', 'btn', '安装运行时…')
+    install.type = 'button'
+    install.addEventListener('click', async () => {
+      install.disabled = true
+      try {
+        const picked = await call('dialog.openFile', { title: '选择 Python 运行时包（.oix）' })
+        if (!picked || picked.canceled) return
+        const file = (picked.filePaths && picked.filePaths[0]) || ''
+        if (!file) return
+        const outcome = await call('extensions.installFromPath', { path: file })
+        if (outcome && outcome.ok === false) {
+          noteMessage(`安装失败：${outcome.error}`)
+        }
+        await reload()
+      } catch (error) {
+        noteMessage(`安装失败：${error.message}`)
+      } finally {
+        install.disabled = false
+      }
+    })
+    frag.append(row('安装内置版本', install))
+    frag.append(
+      note(
+        '内置版本以用户扩展方式安装（包内根目录需有 runtime.json：{"language":"python","version":"3.12.4"} 并附带 python/python.exe）。'
+      )
+    )
+
+    const rows = el('ul', 'plain')
+    const addEntry = (key, version, detail, tag) => {
+      const li = el('li', 'key-row')
+      const name = el(
+        'span',
+        'key-name',
+        tag === '内置' ? `${version}（内置）` : `${version || '未知版本'}`
+      )
+      name.append(document.createTextNode(`  ·  ${detail}`))
+      li.append(name)
+      if (key === current) {
+        li.append(el('span', 'key-combo', '默认'))
+      } else {
+        const btn = el('button', 'btn', '设为默认')
+        btn.type = 'button'
+        btn.addEventListener('click', async () => {
+          await setSetting(DEFAULT_KEY, key)
+          await reload()
+        })
+        li.append(btn)
+      }
+      rows.appendChild(li)
+    }
+
+    for (const item of data.builtin || []) {
+      addEntry(
+        `builtin:${item.extensionId}`,
+        item.version,
+        item.hasExecutable ? item.dir : `${item.dir}（缺 python/python.exe）`,
+        '内置'
+      )
+    }
+    for (const item of data.local || []) {
+      addEntry(`local:${item.path}`, item.version, item.path, '本机')
+    }
+    if (rows.childElementCount === 0) {
+      frag.append(note('还没有可用的 Python：安装内置版本包，或先在本机装 Python（会自动发现）。'))
+    } else {
+      frag.append(rows)
+    }
+    frag.append(
+      note(
+        '多版本可并存（内置按版本、本机按路径区分）；「默认」是 api.python 与新装扩展使用的解释器。'
+      )
+    )
     return frag
   },
 

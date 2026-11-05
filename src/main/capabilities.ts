@@ -14,6 +14,7 @@ import { runExtensionHook } from './hookRunner'
 
 /** 路径约定实现在 ./paths（独立模块，避免与 hookRunner 形成循环依赖）；此处转出以兼容既有引用 */
 import { getBuiltinExtensionsDir, getExtensionRoots, getUserExtensionsDir } from './paths'
+import { scanDevRuntimes } from './devRuntime'
 import {
   scanExtensionSources,
   selectLoadableExtensions,
@@ -73,6 +74,8 @@ export function registerCapabilityIpc(): void {
       app.exit(0)
     })
   })
+
+  ipcMain.handle('dev-runtime:scan', async () => scanDevRuntimes())
 
   ipcMain.handle('extensions:list-user', async (): Promise<UserExtensionEntry[]> => {
     const entries = await scanAllExtensions()

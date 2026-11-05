@@ -28,6 +28,9 @@ export interface HostQueryDeps {
   updateInstall(): unknown | Promise<unknown>
   aiTest(baseUrl: string, apiKey: string): unknown | Promise<unknown>
   pickDirectory(title: string): unknown | Promise<unknown>
+  pickFile(title: string): unknown | Promise<unknown>
+  installFromPath(path: string): unknown | Promise<unknown>
+  devRuntimeScan(): unknown | Promise<unknown>
   commands(): unknown[] | Promise<unknown[]>
   menus(): unknown[] | Promise<unknown[]>
   themeList(): unknown[]
@@ -126,6 +129,18 @@ export async function runHostQuery(
           ? String((args as Record<string, unknown>).apiKey)
           : ''
       )
+    case 'dialog.openFile':
+      return await deps.pickFile(
+        typeof args === 'object' &&
+          args !== null &&
+          typeof (args as Record<string, unknown>).title === 'string'
+          ? String((args as Record<string, unknown>).title)
+          : '选择文件'
+      )
+    case 'devRuntime.scan':
+      return await deps.devRuntimeScan()
+    case 'extensions.installFromPath':
+      return await deps.installFromPath(requireString(args, 'path'))
     case 'dialog.openDirectory':
       return await deps.pickDirectory(
         typeof args === 'object' &&
@@ -188,6 +203,9 @@ export const HOST_QUERY_OPS = [
   'update.install',
   'ai.test',
   'dialog.openDirectory',
+  'dialog.openFile',
+  'devRuntime.scan',
+  'extensions.installFromPath',
   'settings.host.get',
   'settings.host.set',
   'keybindings.list',
