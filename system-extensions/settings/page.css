@@ -66,11 +66,26 @@ body {
   font-weight: 600;
 }
 
+/* 行卡片化：每项配置一张卡（向旧设置页的分组观感靠拢，但更轻） */
 .row {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+}
+
+.row:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.section-title {
+  margin: 4px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
 }
 
 .row-label {
