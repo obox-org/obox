@@ -97,3 +97,11 @@ describe('文档同步（扩展来源/打包路径变了）', () => {
     expect(readRepo('docs/extension-api/troubleshooting.md')).toContain('## 47.')
   })
 })
+describe('应用页卡片交互', () => {
+  it('卡片支持右键菜单：打开 / 在扩展管理中查看', () => {
+    const page = readFileSync(`${root}app/page.js`, 'utf8')
+    expect(page).toContain("addEventListener('contextmenu'")
+    expect(page).toContain("label: '打开'")
+    expect(page).toContain("pages.open', { pageId: 'ext-manager'")
+  })
+})

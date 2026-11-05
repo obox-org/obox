@@ -61,7 +61,7 @@ function card(item) {
   desc.textContent = item.description || ''
   el.appendChild(desc)
 
-  el.addEventListener('click', async () => {
+  const open = async () => {
     el.disabled = true
     try {
       await call('apps.open', { id: item.id })
@@ -70,9 +70,52 @@ function card(item) {
     } finally {
       el.disabled = false
     }
+  }
+  el.addEventListener('click', () => void open())
+  el.addEventListener('contextmenu', (event) => {
+    event.preventDefault()
+    showMenu(event.clientX, event.clientY, [
+      { label: '打开', run: open },
+      {
+        label: '在扩展管理中查看',
+        run: async () => {
+          await call('pages.open', { pageId: 'ext-manager' })
+        }
+      }
+    ])
   })
   return el
 }
+
+/** 卡片右键菜单（页面内自绘；点空白处关闭） */
+let menuEl = null
+function closeMenu() {
+  menuEl?.remove()
+  menuEl = null
+}
+function showMenu(x, y, items) {
+  closeMenu()
+  menuEl = document.createElement('div')
+  menuEl.className = 'ctx-menu'
+  for (const item of items) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'ctx-item'
+    btn.textContent = item.label
+    btn.addEventListener('click', () => {
+      closeMenu()
+      void item.run()
+    })
+    menuEl.appendChild(btn)
+  }
+  menuEl.style.left = `${x}px`
+  menuEl.style.top = `${y}px`
+  document.body.appendChild(menuEl)
+}
+window.addEventListener('click', closeMenu)
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeMenu()
+})
 
 function render() {
   const q = (searchEl.value || '').trim().toLowerCase()
