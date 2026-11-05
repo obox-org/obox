@@ -28,7 +28,7 @@
 
 ## 5. 公共 API 增量
 
-- [ ] 5.1 `api.settings.host.*`（get/set/onChanged）+ `api.theme.*` + `api.keybindings.*`；验证：单测 + 文档条目
+- [x] 5.1 `api.settings.host.*`（get/set/onChanged）+ `api.theme.*` + `api.keybindings.*`；验证：单测 + 文档条目
 - [ ] 5.2 `api.extensions.*`（list/setEnabled/uninstall/restartHost）与 `api.apps.list` / `api.commands.*` / `api.pages.open`；验证：单测 + 文档条目
 - [x] 5.3 `apiVersion` +1（3 → 4）并同步 `core/manifest.ts`、`scripts/validate-manifest.mjs` 与 parity 测试；验证：`npm test` 中 parity 用例全绿
 - [ ] 5.4 `docs/extension-api/` 记录新能力与"对所有扩展开放"的信任模型说明；验证：文档含信任模型段落

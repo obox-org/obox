@@ -232,7 +232,9 @@ export const UI_RENDERER_RPC = {
   /** 进度结束（渲染侧拆除进度条） */
   progressEnd: 'ui.progressEnd',
   /** 更新门控判定（**渲染侧权威**：`updaterStore.isActive(extId)`） */
-  updateGate: 'ui.updateGate'
+  updateGate: 'ui.updateGate',
+  /** 通用宿主查询（change 任务 5.1/5.2）：op 由渲染侧 `runHostQuery` 分发 */
+  hostQuery: 'ui.hostQuery'
 } as const
 
 /**
@@ -690,6 +692,8 @@ export interface UiPlaneExtension {
   readonly output: ExtensionActivationApi['output']
   /** EH-B3b-2：更新门控（渲染侧 `updaterStore` 判定，放行后回 main） */
   readonly update: UiPlaneUpdateCapabilities
+  /** 通用宿主查询：`op` 交给渲染侧的 `runHostQuery` 分发（扩展表/卡片表/命令表/主题/快捷键/设置） */
+  readonly hostQuery: (op: string, args?: unknown) => Promise<unknown>
   /** 发 dispose 事件并清掉本扩展在 hub 里的一切（停用时调用；幂等） */
   dispose(): void
 }
@@ -2075,6 +2079,14 @@ export function createUiPlaneHub(options: UiPlaneHubOptions = {}): UiPlaneHub {
         names(): string[] {
           return [...state.httpHandlers.keys()]
         }
+      },
+      /**
+       * 通用宿主查询：把 op 交给渲染侧的 `runHostQuery` 分发。
+       * 一个新通道承载一批宿主动作（扩展表/卡片表/命令表/主题/快捷键/宿主设置），
+       * 避免每个命名空间各加一条 RPC 与三处同步。
+       */
+      hostQuery(op: string, args?: unknown): Promise<unknown> {
+        return callRenderer(UI_RENDERER_RPC.hostQuery, { op, args })
       },
       dispose: disposeExtension
     }

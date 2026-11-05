@@ -510,7 +510,15 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     overlay: hostMain.overlay,
     // EH-B3b-1：文案在宿主解析（manifest contributes.i18n + registerMessages），语言由渲染侧推
     i18n: plane.i18n,
-    settings: plane.settings,
+    settings: {
+      ...plane.settings,
+      // 宿主级设置（代理/语言/通知/扩展宿主开关）：真相在渲染侧 stateStore
+      host: {
+        get: (key: string): Promise<unknown> => plane.hostQuery('settings.host.get', { key }),
+        set: (key: string, value: unknown): Promise<unknown> =>
+          plane.hostQuery('settings.host.set', { key, value })
+      }
+    },
     update: {
       // EH-B3a：v1 里这两项**没有**提供者门控（`getVersion` 直接读 app 版本；`onEvent` 只订阅），
       // 因此可以照原样搬过来。
@@ -533,7 +541,35 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
     clipboard: io.clipboard,
     env,
     // EH-B3b-1：只读缓存（渲染侧 themeStore 推当前主题 id；真正的 token 应用在渲染侧）
-    theme: plane.theme,
+    // EH-B3b-1：只读缓存（渲染侧 themeStore 推当前主题 id；真正的 token 应用在渲染侧）
+    theme: {
+      ...plane.theme,
+      list: (): Promise<unknown> => plane.hostQuery('theme.list'),
+      set: (themeId: string): Promise<unknown> => plane.hostQuery('theme.set', { themeId })
+    },
+    // 系统扩展需要的宿主状态查询（change 任务 5.1/5.2：一个通道 + op 分发，渲染侧 runHostQuery）
+    extensions: {
+      list: (): Promise<unknown> => plane.hostQuery('extensions.list'),
+      setEnabled: (id: string, enabled: boolean): Promise<unknown> =>
+        plane.hostQuery('extensions.setEnabled', { id, enabled }),
+      uninstall: (id: string): Promise<unknown> => plane.hostQuery('extensions.uninstall', { id }),
+      restartHost: (): Promise<unknown> => plane.hostQuery('extensions.restartHost')
+    },
+    apps: { list: (): Promise<unknown> => plane.hostQuery('apps.list') },
+    commands: {
+      list: (): Promise<unknown> => plane.hostQuery('commands.list'),
+      menus: (): Promise<unknown> => plane.hostQuery('commands.menus')
+    },
+    keybindings: {
+      list: (): Promise<unknown> => plane.hostQuery('keybindings.list'),
+      set: (command: string, combo: string): Promise<unknown> =>
+        plane.hostQuery('keybindings.set', { command, combo }),
+      reset: (command: string): Promise<unknown> =>
+        plane.hostQuery('keybindings.reset', { command })
+    },
+    pages: {
+      open: (pageId: string): Promise<unknown> => plane.hostQuery('pages.open', { pageId })
+    },
     fs: fsApi,
     // EH-B3b-2：四模态 + toast 由渲染侧 uiStore 渲染（宿主经 RpcClient 发请求等应答）
     ui: plane.ui,

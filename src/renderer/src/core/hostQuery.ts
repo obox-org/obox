@@ -12,13 +12,13 @@
 
 /** 分发器需要的宿主能力（渲染侧真实实现注入；单测注入假实现） */
 export interface HostQueryDeps {
-  listExtensions(): unknown[]
+  listExtensions(): unknown[] | Promise<unknown[]>
   setEnabled(id: string, enabled: boolean): void
   uninstall(id: string): Promise<void>
   restartHost(): void
-  apps(): unknown[]
-  commands(): unknown[]
-  menus(): unknown[]
+  apps(): unknown[] | Promise<unknown[]>
+  commands(): unknown[] | Promise<unknown[]>
+  menus(): unknown[] | Promise<unknown[]>
   themeList(): unknown[]
   themeCurrent(): string
   setTheme(themeId: string): void
@@ -63,7 +63,7 @@ export async function runHostQuery(
 ): Promise<unknown> {
   switch (op) {
     case 'extensions.list':
-      return deps.listExtensions()
+      return await deps.listExtensions()
     case 'extensions.setEnabled':
       deps.setEnabled(requireString(args, 'id'), requireBoolean(args, 'enabled'))
       return null
@@ -74,11 +74,11 @@ export async function runHostQuery(
       deps.restartHost()
       return null
     case 'apps.list':
-      return deps.apps()
+      return await deps.apps()
     case 'commands.list':
-      return deps.commands()
+      return await deps.commands()
     case 'commands.menus':
-      return deps.menus()
+      return await deps.menus()
     case 'theme.list':
       return deps.themeList()
     case 'theme.current':

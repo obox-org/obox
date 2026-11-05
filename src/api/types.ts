@@ -298,6 +298,16 @@ export interface ExtensionActivationApi {
     set(key: string, value: unknown): void
     /** 设置变更监听（≈VS Code onDidChangeConfiguration；返回注销函数） */
     onChanged(callback: (key: string) => void): Disposable
+    /**
+     * 宿主级设置（代理 / 语言 / 通知 / 扩展宿主开关等）。
+     *
+     * 与上面"扩展自己的设置"区分：这是设置页要改的**应用级**配置，真相在渲染侧 `stateStore`。
+     * 2.0.4 起提供给系统扩展（设置页）使用；对所有扩展开放（信任模型见 ADR-0015）。
+     */
+    host?: {
+      get(key: string): Promise<unknown>
+      set(key: string, value: unknown): Promise<unknown>
+    }
   }
   /** 更新能力（仅"更新提供者扩展"可用；设置-更新选择生效的提供者） */
   update: {
@@ -432,12 +442,48 @@ export interface ExtensionActivationApi {
     /** obox 版本号 */
     getOboxVersion(): Promise<string>
   }
-  /** 主题（读当前主题/监听切换） */
+  /** 主题（读当前主题/监听切换；2.0.4 起可枚举与切换，供设置页使用） */
   theme: {
     /** 当前主题 id（如 theme-dark） */
     getCurrent(): string
     /** 主题切换监听（返回注销函数） */
     onChanged(callback: (themeId: string) => void): Disposable
+    /** 主题列表（`{ id, label }[]`；系统主题 + 扩展注册的主题） */
+    list?(): Promise<unknown>
+    /** 切换主题（立即生效，其它窗口同步） */
+    set?(themeId: string): Promise<unknown>
+  }
+  /**
+   * 扩展管理（2.0.4，供"扩展管理"系统扩展使用）。
+   *
+   * 对所有扩展开放：用户扩展本来就拥有完整运行权限（ADR-0015），能力封装不是安全边界。
+   */
+  extensions?: {
+    /** 扩展表（id / 来源 / 版本 / 启用状态）；系统扩展不可卸载 */
+    list(): Promise<unknown>
+    setEnabled(id: string, enabled: boolean): Promise<unknown>
+    uninstall(id: string): Promise<unknown>
+    /** 重启扩展宿主（让新装/新禁用的扩展生效） */
+    restartHost(): Promise<unknown>
+  }
+  /** 卡片表（App 首页渲染用） */
+  apps?: {
+    list(): Promise<unknown>
+  }
+  /** 命令与菜单（命令面板、卡片操作菜单） */
+  commands?: {
+    list(): Promise<unknown>
+    menus(): Promise<unknown>
+  }
+  /** 快捷键（设置页的按键绑定区） */
+  keybindings?: {
+    list(): Promise<unknown>
+    set(command: string, combo: string): Promise<unknown>
+    reset(command: string): Promise<unknown>
+  }
+  /** 打开宿主页面（设置 / 应用 / 扩展管理） */
+  pages?: {
+    open(pageId: string): Promise<unknown>
   }
   /** 文件系统（限定扩展自己的数据目录，相对路径；自动建目录） */
   fs: {
