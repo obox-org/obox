@@ -3,23 +3,27 @@
 基于 Electron + Vue + TypeScript 的桌面程序宿主。以布局框架为骨架，通过**扩展系统**（仿照 VS Code 扩展模型；内置扩展的宿主是 Cordis）向应用贡献功能；**用户扩展的代码跑在独立的 Extension Host Process 里**（完整 Node，不在渲染进程）。
 
 - 布局：无边框自定义标题栏 + 图标导航栏 + 内容栏（keep-alive）+ 状态栏
-- 扩展：声明式贡献点（导航项/状态栏项/命令），用户扩展按 `activationEvents` 懒激活（4 类 + 缺省 `*`），依赖拓扑排序，清单校验（宿主当前 `apiVersion: 3`）
+- 扩展：声明式贡献点（导航项/状态栏项/命令），用户扩展按 `activationEvents` 懒激活（4 类 + 缺省 `*`），依赖拓扑排序，清单校验（宿主当前 `apiVersion: 4`）
 - 进程隔离：**2.0.0 起用户扩展默认在独立进程执行**（设置 → 通用 → 「在独立进程中运行扩展」，需重启生效）；扩展崩溃/卡死不带走 UI，宿主启动失败会自动回退渲染进程并提示
-- 内置扩展：**扩展管理器**（Grid 展示/详情/禁用/卸载）、**应用**（插件卡片注册 + 独立子窗口 iframe 渲染）
+- 系统扩展（随安装包分发，作者固定 `obox`）：**设置**（树状导航 + 主题/语言/快捷键/更新/网络/AI/通知/扩展设置）、
+  **应用**（卡片首页 + 独立子窗口）、**扩展管理**（列表/安装/启用/禁用/卸载/重启）。三者都是磁盘上的 HTML 页面，
+  由壳子用 iframe 装载（`contributes.navItems[].page`），位置 `<安装目录>/extensions/<name>`
 
 ## 核心架构
 
 **三端分工**（详见 [ADR-0026](docs/adr/0026-extension-host-process.md)）：
 
-| 进程                       | 职责                                                                                                                                                |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **main**                   | 外壳：窗口 / 托盘 / 菜单 / `app://` 协议 / 更新 / 密钥 / 通知等系统能力；负责拉起并守护扩展宿主进程                                                  |
-| **renderer**               | UI + **内置扩展** + 渲染侧运行时（Cordis 宿主、贡献点注册表、命令面板/状态栏）；用户扩展的贡献点仍在这里注册，UI 也由这里渲染                        |
-| **Extension Host Process** | **用户扩展**（`.oix`）的执行环境：完整 Node、**无 DOM/localStorage**，可 `require` 内置模块、装任意 npm 包                                            |
+| 进程                       | 职责                                                                                                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **main**                   | 外壳：窗口 / 托盘 / 菜单 / `app://` 协议 / 更新 / 密钥 / 通知等系统能力；负责拉起并守护扩展宿主进程                           |
+| **renderer**               | UI + **内置扩展** + 渲染侧运行时（Cordis 宿主、贡献点注册表、命令面板/状态栏）；用户扩展的贡献点仍在这里注册，UI 也由这里渲染 |
+| **Extension Host Process** | **用户扩展**（`.oix`）的执行环境：完整 Node、**无 DOM/localStorage**，可 `require` 内置模块、装任意 npm 包                    |
 
 **为什么**：隔离——扩展崩溃或死循环不会带走 UI（不同进程），宿主进程还能单独重启；能力直接以 Node 提供，不必为每个新能力在渲染进程上加一条 IPC。
 
 ```
+system-extensions/    # 系统扩展源码（随安装包分发；author 固定 obox）：app / settings / ext-manager
+.extensions/          # 系统扩展构建产物（gitignore；项目内构建 → 打包时 extraFiles → 安装目录 extensions/）
 src/
 ├── api/             # 扩展 API 类型（面向扩展作者；聚合出口 index.ts，扩展经相对路径导入）
 ├── main/            # Electron 主进程（窗口/系统能力；下列扩展能力服务**内置扩展与回退路径**，用户扩展默认由 src/extension-host/capabilities/ 实现）
@@ -87,25 +91,25 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ### 渲染侧扩展运行时（`renderer/src/core/`）
 
-| 文件                   | 职责                                                                                                                                                                                                   |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `types.ts`             | 历史兼容入口：再导出 `src/api/`（扩展 API 类型已迁至 `src/api/`：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable；新代码直接 import `src/api`） |
-| `host.ts`              | **渲染侧**扩展宿主（内置扩展）：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效；用户扩展的贡献点在这里注册，**激活交给宿主进程**（关掉独立进程时才在本进程激活） |
-| `manifest.ts`          | 清单校验（name/version/main 必填、semver、**apiVersion 门槛**、`activationEvents` 合法性、依赖检测）+ 错误收集                                                                                         |
-| `registry.ts`          | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive）                                                                                                                                        |
-| `loader.ts`            | 内置扩展 Vite 静态收集 + 用户扩展 app:// 加载（**仅关掉独立进程时的回退路径**）+ 调试扩展 app://debug 加载                                                                                            |
-| `extensionHostBridge.ts` | 渲染侧接宿主进程的开关判定与通道：**设置 > 环境变量 `OBOX_EXTENSION_HOST` > 默认开**、启动失败回退、请求超时与错误文案                                                                              |
-| `extensionHostConsumer.ts` | 宿主数据面消费者：把宿主上报的贡献点/状态接回渲染侧注册表，并把用户操作转成对宿主的激活请求                                                                                                          |
-| `state.ts`             | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）**                                                                                                   |
-| `appStore.ts`          | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理）                                                                                                                                              |
-| `theme.ts`             | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题                                                                                                                                      |
-| `keybindings.ts`       | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化、**捕获态守卫**（改键时全局快捷键让路，ADR-0006 修订）                                                                                            |
-| `extensionSettings.ts` | 扩展设置页注册表（api.settings.register / manifest 声明）                                                                                                                                              |
-| `extensionI18n.ts`     | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间）                                                                                                                                                 |
-| `uiStore.ts`           | 应用内交互状态（模态/表单/quickPick/进度/toast），主窗口与 App 子窗口共用，驱动 `PromptHost`/`ToastHost`                                                                                               |
-| `outputStore.ts`       | 输出面板通道（api.output.createChannel），底部 `OutputPanel` 渲染                                                                                                                                      |
-| `treeStore.ts`         | 树视图数据源注册表（api.views.registerTreeProvider，按扩展 id 隔离）                                                                                                                                   |
-| `updaterStore.ts`      | 更新提供者注册表（`contributes.updater`，**仅一个生效**，设置-更新里选择）                                                                                                                             |
+| 文件                       | 职责                                                                                                                                                                                                           |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `types.ts`                 | 历史兼容入口：再导出 `src/api/`（扩展 API 类型已迁至 `src/api/`：`ExtensionActivationApi`、`AppRegistration`、贡献点类型（含 themes/settings/i18n）、Memento/Disposable；新代码直接 import `src/api`）         |
+| `host.ts`                  | **渲染侧**扩展宿主（内置扩展）：两阶段启动（注册贡献点 → 释放 barrier → 激活）、依赖拓扑排序、热安装/热移除/禁用卸载重启生效；用户扩展的贡献点在这里注册，**激活交给宿主进程**（关掉独立进程时才在本进程激活） |
+| `manifest.ts`              | 清单校验（name/version/main 必填、semver、**apiVersion 门槛**、`activationEvents` 合法性、依赖检测）+ 错误收集                                                                                                 |
+| `registry.ts`              | 贡献点注册表：导航项/状态栏项/命令 + 视图组件表（Vue reactive）                                                                                                                                                |
+| `loader.ts`                | 内置扩展 Vite 静态收集 + 用户扩展 app:// 加载（**仅关掉独立进程时的回退路径**）+ 调试扩展 app://debug 加载                                                                                                     |
+| `extensionHostBridge.ts`   | 渲染侧接宿主进程的开关判定与通道：**设置 > 环境变量 `OBOX_EXTENSION_HOST` > 默认开**、启动失败回退、请求超时与错误文案                                                                                         |
+| `extensionHostConsumer.ts` | 宿主数据面消费者：把宿主上报的贡献点/状态接回渲染侧注册表，并把用户操作转成对宿主的激活请求                                                                                                                    |
+| `state.ts`                 | 状态持久化（userData JSON）：禁用列表、上次导航项、Memento、**统一设置存储（主题/快捷键/扩展设置）**                                                                                                           |
+| `appStore.ts`              | App（应用）插件卡片注册表（reactive + 持久化 + 停用清理）                                                                                                                                                      |
+| `theme.ts`                 | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题                                                                                                                                              |
+| `keybindings.ts`           | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化、**捕获态守卫**（改键时全局快捷键让路，ADR-0006 修订）                                                                                                    |
+| `extensionSettings.ts`     | 扩展设置页注册表（api.settings.register / manifest 声明）                                                                                                                                                      |
+| `extensionI18n.ts`         | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间）                                                                                                                                                         |
+| `uiStore.ts`               | 应用内交互状态（模态/表单/quickPick/进度/toast），主窗口与 App 子窗口共用，驱动 `PromptHost`/`ToastHost`                                                                                                       |
+| `outputStore.ts`           | 输出面板通道（api.output.createChannel），底部 `OutputPanel` 渲染                                                                                                                                              |
+| `treeStore.ts`             | 树视图数据源注册表（api.views.registerTreeProvider，按扩展 id 隔离）                                                                                                                                           |
+| `updaterStore.ts`          | 更新提供者注册表（`contributes.updater`，**仅一个生效**，设置-更新里选择）                                                                                                                                     |
 
 ### i18n（`renderer/src/i18n/`）
 
@@ -130,19 +134,20 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ## 常用命令
 
-| 命令                                                               | 说明                                                                                |
-| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `npm run dev`                                                      | 开发模式（HMR，Electron 窗口自动打开）                                              |
-| `npm test`                                                         | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具）                                 |
-| `npm run typecheck`                                                | 类型检查（node 主进程 + web 渲染进程）                                              |
-| `npm run lint`                                                     | ESLint 检查（0 errors 为门槛）                                                      |
-| `npm run security:audit`                                           | 依赖安全审计（`npm audit --audit-level=moderate`，0 告警为门槛；CI 与发版同样强制） |
-| `npm run build`                                                    | typecheck + electron-vite 构建到 `out/`                                             |
-| `npm run build:win`                                                | 打包 Windows 安装包（electron-builder）                                             |
-| `npm run format`                                                   | Prettier 格式化                                                                     |
-| `node scripts/validate-manifest.mjs --all`                         | 校验全部内置扩展 manifest（规则与宿主一致，有差分门禁守着）                         |
-| `node skills/obox-ext-init/scripts/create-extension.mjs <id>`      | 生成新内置扩展骨架                                                                  |
-| `node skills/obox-ext-init/scripts/create-user-extension.mjs <id>` | 生成新用户扩展项目（纯 ESM 入口 + `node --test` + `.oix` 打包脚本）                 |
+| 命令                                                               | 说明                                                                                           |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `npm run dev`                                                      | 开发模式（HMR，Electron 窗口自动打开）                                                         |
+| `npm test`                                                         | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具）                                            |
+| `npm run typecheck`                                                | 类型检查（node 主进程 + web 渲染进程）                                                         |
+| `npm run lint`                                                     | ESLint 检查（0 errors 为门槛）                                                                 |
+| `npm run security:audit`                                           | 依赖安全审计（`npm audit --audit-level=moderate`，0 告警为门槛；CI 与发版同样强制）            |
+| `npm run build:extensions`                                         | 构建系统扩展（`system-extensions/` → 项目 `.extensions/`；打包时映射到安装目录 `extensions/`） |
+| `npm run build`                                                    | typecheck + 构建系统扩展 + electron-vite 构建到 `out/`                                         |
+| `npm run build:win`                                                | 打包 Windows 安装包（electron-builder）                                                        |
+| `npm run format`                                                   | Prettier 格式化                                                                                |
+| `node scripts/validate-manifest.mjs --all`                         | 校验全部内置扩展 manifest（规则与宿主一致，有差分门禁守着）                                    |
+| `node skills/obox-ext-init/scripts/create-extension.mjs <id>`      | 生成新内置扩展骨架                                                                             |
+| `node skills/obox-ext-init/scripts/create-user-extension.mjs <id>` | 生成新用户扩展项目（纯 ESM 入口 + `node --test` + `.oix` 打包脚本）                            |
 
 ## 发布（GitHub CI + Releases）
 
@@ -170,16 +175,16 @@ git push origin v1.0.0
 
 ## 文档导航
 
-| 文档                                                                               | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [README.md](README.md)                                                             | 本文件：项目概览 / 快速上手（导航入口，不重复细节）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| [CONTEXT.md](CONTEXT.md)                                                           | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| [AGENTS.md](AGENTS.md)                                                             | 开发者约定：提问约定 + 扩展文档同步要求 + 强制提交流程（**分支 + PR**）+ 质量门槛                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| [docs/extension-api/](docs/extension-api/)                                         | 扩展 API 与 manifest 贡献点文档（`api-reference.md` / `manifest-reference.md` / `themes-settings.md` / `troubleshooting.md`）：按**扩展宿主进程模型**重写（宿主进程能力面、`apiVersion: 3`、`activationEvents`），扩展开发文档的公共位置与唯一真相，不在别处保留副本 |
-| [docs/extension-host-migration.md](docs/extension-host-migration.md)               | 扩展宿主进程迁移计划：阶段与任务卡、并行组、风险与回退、**技术债登记（23 条）**                                                                                                                                                                                        |
-| [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 文档                                                                               | 内容                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [README.md](README.md)                                                             | 本文件：项目概览 / 快速上手（导航入口，不重复细节）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| [CONTEXT.md](CONTEXT.md)                                                           | 术语表（Title Bar/导航栏/内容栏/状态栏/扩展/贡献点/命令/App 等）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| [AGENTS.md](AGENTS.md)                                                             | 开发者约定：提问约定 + 扩展文档同步要求 + 强制提交流程（**分支 + PR**）+ 质量门槛                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| [docs/extension-api/](docs/extension-api/)                                         | 扩展 API 与 manifest 贡献点文档（`api-reference.md` / `manifest-reference.md` / `themes-settings.md` / `troubleshooting.md`）：按**扩展宿主进程模型**重写（宿主进程能力面、`apiVersion: 3`、`activationEvents`），扩展开发文档的公共位置与唯一真相，不在别处保留副本                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| [docs/extension-host-migration.md](docs/extension-host-migration.md)               | 扩展宿主进程迁移计划：阶段与任务卡、并行组、风险与回退、**技术债登记（23 条）**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| [docs/update-and-release-verification.md](docs/update-and-release-verification.md) | 更新/发布链路验证清单与已知限制（arm64 端到端、代码签名、认证代理、降级重装）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | [docs/adr/](docs/adr/)                                                             | 架构决策记录：0001–0004 宿主与贡献点/启动 / 0005 oix 分发 / 0006 设置·i18n·主题·快捷键 / 0007 更新提供者与代理 / 0008 分支保护与 PR 流程 / 0009–0014 调试扩展·API 版本·扩展能力·热安装 / **0015 扩展信任模型与身份守卫** / 0016 IPC 传输与协议 / 0017 决策提问格式 / 0018 Python 运行时 / **0019 托盘常驻与关闭行为** / **0020 扩展开发流程与文档分层** / **0021 扩展数据升级保留与 JS 助手运行时** / **0022 宿主向 `url` 型 App 子窗口下发主题 token** / **0023 扩展开发九步链与 OpenSpec 产物范式** / **0024 `overlay` 窗体能力（apiVersion 2）** / **0025 宿主 AI 选项（OpenAI 兼容参数 + 掩码 + 主进程测试连接）** / **0026 Extension Host Process（用户扩展移入 `utilityProcess`；取代 0001、0004）** |
-| [docs/spec/](docs/spec/)                                                           | 需求 spec 与设计文档归档（与 ADR 同源：ADR 记**决策**，spec 记**需求与验收**；扩展类需求归档到该扩展目录的 `docs/`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| [docs/spec/](docs/spec/)                                                           | 需求 spec 与设计文档归档（与 ADR 同源：ADR 记**决策**，spec 记**需求与验收**；扩展类需求归档到该扩展目录的 `docs/`）                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 ## 技术栈
 

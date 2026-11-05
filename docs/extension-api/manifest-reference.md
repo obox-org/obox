@@ -80,6 +80,19 @@
 
 > 这八类（`ipcChannels` / `keybindings` / `menus` / `views` / `navItems` / `statusBarItems` / `commands` / `themes`）的值**必须是数组**：写成 `{}` / `5` / `true` 会让清单**无效**（error，见文末「八类数组形状 error」）。数组内**逐项**缺必填字段只是 warning（该项跳过、扩展仍加载）。
 
+### 扩展来源与目录命名（2.1.0 起）
+
+| 来源         | 磁盘位置                                                | 目录名 = 扩展 id  | 作者        | 卸载/禁用 |
+| ------------ | ------------------------------------------------------- | ----------------- | ----------- | --------- |
+| **系统扩展** | `<安装目录>/extensions/<name>/`（随安装包）             | `<name>`          | 必须 `obox` | 都不可    |
+| **用户扩展** | `<userData>/extensions/<name>.<author>/`（`.oix` 安装） | `<name>.<author>` | 任意        | 可        |
+
+- **id = 目录名**：系统 `settings`、用户 `pet.chenzhi`；
+- 扫描顺序：**系统根优先**；同 id 时系统胜出，用户那份在管理器中标注「已遮蔽」且不加载；
+- 旧的下划线命名（`pet_chenzhi`）**不再识别**（升级时请重装为用户扩展）；
+- 数据目录统一在 `<userData>/extensions/<id>/data`——系统扩展代码在安装目录（只读），数据不回写；
+- 安装器按 `<name>.<author>` 建目录（author 做小写 + 去非法字符清洗），与扫描器同一规则。
+
 ### 系统扩展的页面入口：`contributes.navItems[].page`
 
 系统扩展（`author: obox`，随安装包分发到 `<安装目录>/extensions/<name>`）只提供 **HTML 页面**，

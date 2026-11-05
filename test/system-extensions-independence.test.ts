@@ -80,3 +80,20 @@ describe('主题跟随（CSS 变量不跨文档）', () => {
     }
   })
 })
+describe('文档同步（扩展来源/打包路径变了）', () => {
+  const readRepo = (rel: string): string =>
+    readFileSync(fileURLToPath(new URL('../' + rel, import.meta.url)), 'utf8')
+
+  it('README 写明 system-extensions/ 与 .extensions/ 构建产物', () => {
+    const readme = readRepo('README.md')
+    expect(readme).toContain('system-extensions/')
+    expect(readme).toContain('.extensions/')
+    expect(readme).toContain('build:extensions')
+    expect(readme).toContain('apiVersion: 4')
+  })
+
+  it('manifest-reference 有「扩展来源与目录命名」，troubleshooting 有 47 条', () => {
+    expect(readRepo('docs/extension-api/manifest-reference.md')).toContain('扩展来源与目录命名')
+    expect(readRepo('docs/extension-api/troubleshooting.md')).toContain('## 47.')
+  })
+})
