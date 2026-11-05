@@ -427,10 +427,10 @@ describe('两侧契约', () => {
     assert.equal(UI_MODAL_TIMEOUT_MS, 60_000, '模态框等待上限与 v1 的 60s 一致')
   })
 
-  test('渲染侧 RpcServer 注册的 method 恰好是 8 条宿主 → 渲染侧方法', async () => {
+  test('渲染侧 RpcServer 注册的 method 恰好是 9 条宿主 → 渲染侧方法', async () => {
     const { consumer } = await makeHarness()
     assert.deepEqual(consumer.rendererRpcMethods(), Object.values(HOSTED_RENDERER_RPC).sort())
-    assert.equal(consumer.rendererRpcMethods().length, 8)
+    assert.equal(consumer.rendererRpcMethods().length, 9)
   })
 })
 
@@ -1056,7 +1056,7 @@ describe('update 门控', () => {
 /* -------------------------------------------------------------------------------------------- */
 
 describe('对照表', () => {
-  test('EH-B3b-2 之后 99 已实现 + 0 桩（最后 10 项全部落地）', async () => {
+  test('EH-B3b-2 之后 114 已实现 + 0 桩（最后 10 项全部落地）', async () => {
     const root = await makeTempDir()
     const ext = await makeExtension(root, 'table-b3b2')
     const hub = createUiPlaneHub({ rendererPort: null, log: logger })
@@ -1073,8 +1073,8 @@ describe('对照表', () => {
     const stubs = rows.filter((row) => row.status === 'stub')
     const implemented = rows.filter((row) => row.status === 'implemented')
 
-    assert.equal(rows.length, 103, '对照表共 103 项')
-    assert.equal(implemented.length, 103, '103 项全部已实现')
+    assert.equal(rows.length, 118, '对照表共 118 项')
+    assert.equal(implemented.length, 118, '103 项全部已实现')
     assert.equal(stubs.length, 0, '桩必须为 0（阶段 B 的能力面已全部落地）')
 
     // 本卡的 10 项逐一确认存在

@@ -13,51 +13,35 @@ import {
 import { runExtensionHook } from './hookRunner'
 
 /** 路径约定实现在 ./paths（独立模块，避免与 hookRunner 形成循环依赖）；此处转出以兼容既有引用 */
-import { getBuiltinExtensionsDir, getUserExtensionsDir } from './paths'
+import { getBuiltinExtensionsDir, getExtensionRoots, getUserExtensionsDir } from './paths'
+import { scanDevRuntimes } from './devRuntime'
+import {
+  scanExtensionSources,
+  selectLoadableExtensions,
+  systemExtensionError,
+  toUserExtensionEntry
+} from './extensionSources'
 
 export { getBuiltinExtensionsDir, getUserExtensionsDir }
 
-async function listDirectories(root: string): Promise<string[]> {
-  try {
-    const entries = await fs.readdir(root, { withFileTypes: true })
-    return entries.filter((e) => e.isDirectory()).map((e) => e.name)
-  } catch {
-    return []
-  }
-}
-
-/**
- * 用户扩展目录清单。
- *
- * 过滤两类目录：
- * 1. `.` 开头的内部目录（如安装暂存目录 `.tmp`）；
- * 2. **没有 `manifest.json` 的目录**——扩展运行时会用 `extensions/<id>/data` 存数据，调试扩展
- *    （`--debug-extension`）的 id 也会在这里出现；不过滤的话渲染进程会把数据目录当扩展去读清单，
- *    打出 `manifest 读取失败或缺失` 的噪音（GUI 级端到端验证时看到的）。这类目录记一条日志，
- *    真正损坏的安装仍能被发现。
- */
-async function listUserExtensionIds(): Promise<string[]> {
+/** 扫描两个根（系统 → 用户）；顺带为用户扩展补一次旧目录数据继承（2.0.2 的行为） */
+async function scanAllExtensions(): Promise<Awaited<ReturnType<typeof scanExtensionSources>>> {
+  const entries = await scanExtensionSources(getExtensionRoots())
   const root = getUserExtensionsDir()
-  const ids = (await listDirectories(root)).filter((id) => !id.startsWith('.'))
-  const valid: string[] = []
-  for (const id of ids) {
+  for (const entry of selectLoadableExtensions(entries)) {
+    if (entry.source !== 'user') continue
     try {
-      await fs.access(join(root, id, 'manifest.json'))
-      valid.push(id)
-      // 旧目录名的数据继承（2.0.2）：安装目录名曾是 `<manifest.name>`，现在是
-      // `<name>_<author>`；从旧版升级上来的用户数据会留在旧目录里 ⇒ 这里补一次复制。
-      // 放在扫描期而不是只在安装时：**已经升级过**的用户下次启动也能自动迁移。
-      const migration = await migrateLegacyExtensionData(root, id)
+      const migration = await migrateLegacyExtensionData(root, entry.id)
       if (migration.migrated) {
         console.log(
-          `[capabilities] 已继承旧目录数据：${id} ⇐ ${migration.from}（${migration.files ?? 0} 个文件）`
+          `[capabilities] 已继承旧目录数据：${entry.id} ⇐ ${migration.from}（${migration.files ?? 0} 个文件）`
         )
       }
     } catch {
-      console.warn(`[capabilities] 跳过没有 manifest.json 的目录: ${id}（扩展数据目录或调试扩展）`)
+      // 迁移是尽力而为：失败只影响旧数据，不影响扩展本身
     }
   }
-  return valid
+  return entries
 }
 
 /** 刷新"已知扩展"的磁盘扫描部分（启动与每次列目录时调用；不影响调试扩展与安装登记） */
@@ -82,11 +66,21 @@ export function registerCapabilityIpc(): void {
     version: app.getVersion()
   }))
 
+  ipcMain.handle('app:relaunch', async (): Promise<void> => {
+    // 先 relaunch 再 exit（顺序反了新进程起不来，Electron 官方示例同序）。
+    // setImmediate 让 invoke 的 Promise 先结算，渲染侧不会把"已经重启"看成"调用失败"。
+    setImmediate(() => {
+      app.relaunch()
+      app.exit(0)
+    })
+  })
+
+  ipcMain.handle('dev-runtime:scan', async () => scanDevRuntimes())
+
   ipcMain.handle('extensions:list-user', async (): Promise<UserExtensionEntry[]> => {
-    const root = getUserExtensionsDir()
-    const ids = await listUserExtensionIds()
-    refreshKnownExtensions(ids)
-    return ids.map((id) => ({ id, path: join(root, id) }))
+    const entries = await scanAllExtensions()
+    refreshKnownExtensions(selectLoadableExtensions(entries).map((e) => e.id))
+    return entries.map(toUserExtensionEntry)
   })
 
   ipcMain.handle('extensions:uninstall', async (_e, id: string): Promise<void> => {
@@ -94,6 +88,9 @@ export function registerCapabilityIpc(): void {
     // 防路径穿越：id 一律经守卫规范化（只允许 [a-z0-9._-]，拒绝分隔符与 ..），
     // 再校验目标确实是 userData/extensions 的直接子目录
     const safeId = normalizeExtensionId(id)
+    // 系统扩展随安装包分发，不允许卸载（change 任务 3.2：底层拒绝，UI 只是不渲染按钮）
+    const systemGuard = systemExtensionError(await scanAllExtensions(), safeId, '卸载')
+    if (systemGuard) throw new Error(systemGuard)
     const target = join(root, safeId)
     const parent = join(target, '..')
     if (basename(target) !== safeId || parent !== root) {

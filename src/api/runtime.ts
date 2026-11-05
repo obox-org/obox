@@ -16,7 +16,7 @@ export interface ValidationMessage {
 }
 
 /** 扩展来源 */
-export type ExtensionSource = 'builtin' | 'user' | 'debug'
+export type ExtensionSource = 'builtin' | 'user' | 'debug' | 'system'
 
 /** 扩展运行时状态 */
 export interface ExtensionInfo {

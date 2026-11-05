@@ -13,6 +13,7 @@ import AdmZip from 'adm-zip'
 import { promises as fs } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 import type { ExtensionMeta, InstallOixErrorCode, InstallOixResult } from '../shared/types'
+import { findRuntimeVersionConflict, readRuntimeMarker } from './runtimeInstallGuard'
 import { isPythonCoreError, toPythonArch, validatePythonDeclaration } from './pythonCore'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
@@ -53,10 +54,15 @@ export class OixInstallError extends Error {
   }
 }
 
-/** 从 manifest 派生安装目录名：<name>_<清洗后 author> */
+/**
+ * 从 manifest 派生安装目录名：**`<name>.<author>`**（change `system-extensions-from-install-dir`）。
+ *
+ * 与扫描器 `expectedExtensionId()` 必须逐字同一规则：清洗（小写 + 去掉 `[^a-z0-9._-]`）后
+ * 用点号连接；没有 author 时目录名就是 name。
+ */
 export function deriveDirName(name: string, author?: string): string {
   const safeAuthor = (author ?? '').toLowerCase().replace(/[^a-z0-9._-]/g, '')
-  return safeAuthor ? `${name}_${safeAuthor}` : name
+  return safeAuthor ? `${name}.${safeAuthor}` : name
 }
 
 function readRootManifest(zip: AdmZip): Record<string, unknown> | null {
@@ -285,6 +291,22 @@ export async function installFromPackage(
     try {
       await fs.mkdir(stage, { recursive: true })
       await extractToStage(zip, stage, limits)
+      // 运行时包唯一性（change「开发运行时」）：同一个 Python 版本只允许一个内置运行时。
+      // 放在 rename 之前：冲突时 stage 会被清掉，磁盘上不留半成品。
+      const runtimeMarker = await readRuntimeMarker(stage)
+      if (runtimeMarker) {
+        const conflict = await findRuntimeVersionConflict(
+          opts.targetRoot,
+          runtimeMarker.version,
+          id
+        )
+        if (conflict) {
+          throw new OixInstallError(
+            'runtime-version-conflict',
+            `已存在 Python ${runtimeMarker.version} 的内置运行时（${conflict}）；同一版本只允许安装一个`
+          )
+        }
+      }
       const now = Date.now()
       const meta: ExtensionMeta = {
         installedTimestamp: now,

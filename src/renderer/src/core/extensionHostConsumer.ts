@@ -129,6 +129,9 @@ import {
 import { outputStore } from './outputStore'
 import { registry, type RegisteredStatusBarItem } from './registry'
 import { STORAGE_KEY, parsePersistedState, stateStore } from './state'
+import { runHostQuery, toSerializable } from './hostQuery'
+import { hostQueryDeps } from './hostQueryDeps'
+
 import { themeStore } from './theme'
 import { treeStore } from './treeStore'
 import { uiStore } from './uiStore'
@@ -187,7 +190,9 @@ export const HOSTED_RENDERER_RPC = {
   withProgress: 'ui.withProgress',
   progressUpdate: 'ui.progressUpdate',
   progressEnd: 'ui.progressEnd',
-  updateGate: 'ui.updateGate'
+  updateGate: 'ui.updateGate',
+  /** 通用宿主查询（2.0.4）：op 由 `runHostQuery` 分发 */
+  hostQuery: 'ui.hostQuery'
 } as const
 
 /** 本卡新增的 `event` channel（与宿主侧 `UI_PLANE_EVENT_CHANNELS` 逐字一致） */
@@ -938,6 +943,21 @@ export function createExtensionHostConsumer(
     }
     const feedUrl = updaterStore.active?.feedUrl
     return typeof feedUrl === 'string' && feedUrl !== '' ? { ok: true, feedUrl } : { ok: true }
+  })
+
+  /**
+   * 通用宿主查询（2.0.4）：宿主把 `{op, args}` 发过来，这里用渲染侧真实状态分发。
+   *
+   * 为什么由渲染侧回答：扩展表（host）、卡片表（appStore）、命令表（registry）、主题
+   * （themeStore）、快捷键（keybindingStore）、宿主设置（stateStore）的**真相都在渲染进程**；
+   * 宿主只持有缓存。分发逻辑在 `./hostQuery.ts`（纯函数 + 依赖注入，单测覆盖）。
+   */
+  uiServer.register(HOSTED_RENDERER_RPC.hostQuery, async (params) => {
+    const record = asRecord(params)
+    if (typeof record.op !== 'string' || record.op === '') {
+      throw new Error('ui.hostQuery 需要非空字符串 op')
+    }
+    return toSerializable(await runHostQuery(record.op, record.args, hostQueryDeps()))
   })
 
   /* --------------------------------- 输出通道 --------------------------------- */

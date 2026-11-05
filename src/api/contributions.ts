@@ -22,6 +22,11 @@ export interface NavItemContribution {
   group?: NavGroup
   /** 绑定的视图组件 id（扩展入口具名导出的组件名），点击导航项时渲染 */
   view?: string
+  /**
+   * **页面**入口（相对扩展根目录的 HTML，如 `index.html`）：系统扩展用它提供整页 UI。
+   * 与 `view` 二选一——磁盘扩展拿不到壳子的 Vue 组件，页面由壳子用 iframe 加载。
+   */
+  page?: string
   /** 数字徽标初始值（扩展运行时可用 ctx.navbar.setBadge 更新） */
   badge?: number
 }

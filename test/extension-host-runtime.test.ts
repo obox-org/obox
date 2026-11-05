@@ -528,9 +528,12 @@ test('运行时验收：在宿主里加载测试扩展并完成一次 fs 读写�
   assert.equal(harness.runtime.statusOf('roundtrip')?.state, 'active')
   assert.equal(state.fsRoundTrip, 'hello from host', '扩展经 api.fs 读到的内容应与写入一致')
 
-  // 落点必须是 `<dataDir>/<extId>/data/`——R62 起与 main 的 `dataDirFor` 逐字一致
-  // （此前宿主写的是 `<dataDir>/<extId>/`，升级后老扩展的 fs 数据会"看不见"）
-  const onDisk = await readFile(path.join(dataDir, 'roundtrip', 'data', 'hello.txt'), 'utf8')
+  // 落点必须是 `<userData>/extensions/<id>/data/`（2.0.4 起数据根按 id 算，不再跟着扩展代码目录：
+  // 系统扩展的代码在安装目录、只读，数据只能落 userData）
+  const onDisk = await readFile(
+    path.join(dataDir, 'extensions', 'roundtrip', 'data', 'hello.txt'),
+    'utf8'
+  )
   assert.equal(onDisk, 'hello from host')
 
   harness.host.receive(createTerminateEnvelope(1000))
@@ -546,7 +549,7 @@ test('apiVersion 超限的扩展被标记不可加载（不 import、不崩）',
   const future = await createFixture(dataDir, {
     id: 'future',
     source: sourceActivate('future'),
-    apiVersion: 4
+    apiVersion: 5
   })
   const normal = await createFixture(dataDir, { id: 'normal', source: sourceActivate('normal') })
 
@@ -558,7 +561,7 @@ test('apiVersion 超限的扩展被标记不可加载（不 import、不崩）',
   const futureStatus = harness.runtime.statusOf('future')
   assert.equal(futureStatus?.state, 'rejected')
   assert.equal(futureStatus?.failure?.kind, 'not-loadable')
-  assert.match(futureStatus?.failure?.message ?? '', /v4/)
+  assert.match(futureStatus?.failure?.message ?? '', /v5/)
   assert.equal(state.activations.includes('future'), false, '不可加载的扩展不得被激活')
 
   // 其它扩展不受影响
@@ -1150,127 +1153,145 @@ test('api 形状：与 ExtensionActivationApi 对齐，「已实现 / 桩」对�
     .filter((row) => row.status === 'implemented')
     .map((row) => row.capability)
     .sort()
-  assert.deepEqual(implemented, [
-    // EH-B3b-1：注册面数据面（28 项——app / i18n / navbar / on·emit / settings / statusBar /
-    // theme / views / workspaceState / globalState / registerCommand / executeCommand）
-    'app.onMessage',
-    'app.register',
-    'appInfo.get',
-    'clipboard.readText',
-    'clipboard.writeText',
-    // EH-B3a：主进程类能力族（dialog 3 / notification 1 / overlay 4 / proxy.get /
-    // secrets 3 / shell 2 / update 2 / window 7）
-    'dialog.showMessageBox',
-    'dialog.showOpenDialog',
-    'dialog.showSaveDialog',
-    'emit',
-    'env.arch',
-    'env.getOboxVersion',
-    'env.language',
-    'env.nodeVersion',
-    'env.platform',
-    'executeCommand',
-    'fs.exists',
-    'fs.readDir',
-    'fs.readFile',
-    'fs.remove',
-    'fs.unwatch',
-    'fs.watch',
-    'fs.writeFile',
-    'globalState.get',
-    'globalState.keys',
-    'globalState.update',
-    'http.names',
-    'http.register',
-    'i18n.locale',
-    'i18n.onLocaleChanged',
-    'i18n.registerMessages',
-    'i18n.t',
-    // EH-B2：ipc 全量 14 项 + python.run + sqlite.open（进程与存储族）
-    'ipc.broadcast',
-    'ipc.channels',
-    'ipc.close',
-    'ipc.connect',
-    'ipc.listen',
-    'ipc.notify',
-    'ipc.onClose',
-    'ipc.onConnection',
-    'ipc.onDisconnect',
-    'ipc.onNotification',
-    'ipc.onReconnect',
-    'ipc.onRequest',
-    'ipc.onStderr',
-    'ipc.request',
-    'log',
-    'navbar.setBadge',
-    'net.fetch',
-    'notification.show',
-    'on',
-    // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
-    'output.createChannel',
-    'overlay.beginDrag',
-    'overlay.create',
-    'overlay.destroy',
-    'overlay.endDrag',
-    'overlay.setMouseThrough',
-    'overlay.setPosition',
-    'proxy.get',
-    'python.run',
-    'registerCommand',
-    'secrets.delete',
-    'secrets.get',
-    'secrets.set',
-    'settings.get',
-    'settings.onChanged',
-    'settings.register',
-    'settings.set',
-    'shell.openExternal',
-    'shell.openPath',
-    'sqlite.open',
-    'statusBar.createItem',
-    'statusBar.hide',
-    'statusBar.setText',
-    'statusBar.setTooltip',
-    'statusBar.show',
-    'theme.getCurrent',
-    'theme.onChanged',
-    'timer.clearInterval',
-    'timer.clearTimeout',
-    'timer.setInterval',
-    'timer.setTimeout',
-    // EH-B3b-2：交互 UI 5 项（渲染侧 uiStore 渲染）
-    'ui.showForm',
-    'ui.showInputBox',
-    'ui.showMessage',
-    'ui.showQuickPick',
-    'ui.withProgress',
-    // EH-B3b-2：更新门控 4 条（渲染侧判定 + 放行后回 main）
-    'update.check',
-    'update.download',
-    'update.getVersion',
-    'update.install',
-    'update.onEvent',
-    'update.resolveFeed',
-    'views.registerTreeProvider',
-    'window.close',
-    'window.isFocused',
-    'window.isMaximized',
-    'window.minimize',
-    'window.onFocusChanged',
-    'window.setProgressBar',
-    'window.toggleMaximize',
-    'workspaceState.get',
-    'workspaceState.keys',
-    'workspaceState.update'
-  ])
+  assert.deepEqual(
+    [...implemented].sort(),
+    [
+      // EH-B3b-1：注册面数据面（28 项——app / i18n / navbar / on·emit / settings / statusBar /
+      // theme / views / workspaceState / globalState / registerCommand / executeCommand）
+      'app.onMessage',
+      'app.register',
+      'appInfo.get',
+      'clipboard.readText',
+      'clipboard.writeText',
+      // EH-B3a：主进程类能力族（dialog 3 / notification 1 / overlay 4 / proxy.get /
+      // secrets 3 / shell 2 / update 2 / window 7）
+      'dialog.showMessageBox',
+      'dialog.showOpenDialog',
+      'dialog.showSaveDialog',
+      'emit',
+      'env.arch',
+      'env.getOboxVersion',
+      'env.language',
+      'env.nodeVersion',
+      'env.platform',
+      'executeCommand',
+      'fs.exists',
+      'fs.readDir',
+      'fs.readFile',
+      'fs.remove',
+      'fs.unwatch',
+      'fs.watch',
+      'fs.writeFile',
+      'globalState.get',
+      'globalState.keys',
+      'globalState.update',
+      'http.names',
+      'http.register',
+      'i18n.locale',
+      'i18n.onLocaleChanged',
+      'i18n.registerMessages',
+      'i18n.t',
+      // EH-B2：ipc 全量 14 项 + python.run + sqlite.open（进程与存储族）
+      'ipc.broadcast',
+      'ipc.channels',
+      'ipc.close',
+      'ipc.connect',
+      'ipc.listen',
+      'ipc.notify',
+      'ipc.onClose',
+      'ipc.onConnection',
+      'ipc.onDisconnect',
+      'ipc.onNotification',
+      'ipc.onReconnect',
+      'ipc.onRequest',
+      'ipc.onStderr',
+      'ipc.request',
+      'log',
+      'navbar.setBadge',
+      'net.fetch',
+      'notification.show',
+      'on',
+      // EH-B3b-2：输出通道（渲染侧 outputStore 持有）
+      'output.createChannel',
+      'overlay.beginDrag',
+      'overlay.create',
+      'overlay.destroy',
+      'overlay.endDrag',
+      'overlay.setMouseThrough',
+      'overlay.setPosition',
+      'proxy.get',
+      'python.run',
+      'registerCommand',
+      'secrets.delete',
+      'secrets.get',
+      'secrets.set',
+      'settings.get',
+      'settings.onChanged',
+      'settings.register',
+      'settings.set',
+      'shell.openExternal',
+      'shell.openPath',
+      'sqlite.open',
+      'statusBar.createItem',
+      'statusBar.hide',
+      'statusBar.setText',
+      'statusBar.setTooltip',
+      'statusBar.show',
+      'theme.getCurrent',
+      'theme.onChanged',
+      'timer.clearInterval',
+      'timer.clearTimeout',
+      'timer.setInterval',
+      'timer.setTimeout',
+      // EH-B3b-2：交互 UI 5 项（渲染侧 uiStore 渲染）
+      'ui.showForm',
+      'ui.showInputBox',
+      'ui.showMessage',
+      'ui.showQuickPick',
+      'ui.withProgress',
+      // EH-B3b-2：更新门控 4 条（渲染侧判定 + 放行后回 main）
+      'update.check',
+      'update.download',
+      'update.getVersion',
+      'update.install',
+      'update.onEvent',
+      'update.resolveFeed',
+      'views.registerTreeProvider',
+      'window.close',
+      'window.isFocused',
+      'window.isMaximized',
+      'window.minimize',
+      'window.onFocusChanged',
+      'window.setProgressBar',
+      'window.toggleMaximize',
+      'workspaceState.get',
+      'workspaceState.keys',
+      'workspaceState.update',
+      'apps.list',
+      'commands.list',
+      'commands.menus',
+      'extensions.list',
+      'extensions.restartHost',
+      'extensions.setEnabled',
+      'extensions.uninstall',
+      'keybindings.list',
+      'keybindings.reset',
+      'keybindings.set',
+      'pages.open',
+      'settings.host.get',
+      'settings.host.set',
+      'theme.list',
+      'theme.set'
+    ].sort()
+  )
 
   const stubs = rows.filter((row) => row.status === 'stub')
   // 行数与分布锁死：阶段 B 把某个桩落地时这里会失败，提醒同步对照表（而不是悄悄少一行）
-  assert.equal(rows.length, 103, '对照表共 103 项（103 已实现 + 0 桩）')
+  assert.equal(rows.length, 118, '对照表共 118 项（118 已实现 + 0 桩）')
   assert.equal(
     implemented.length,
-    103,
-    '已实现 103 项（EH-B3b-2 的 10 项 + 2.0.3 跟手拖动的 2 项）'
+    118,
+    '已实现 118 项（EH-B3b-2 的 10 项 + 2.0.3 跟手拖动的 2 项）'
   )
   assert.equal(stubs.length, 0, '桩 0 项（阶段 B 的能力面已全部落地）')
   assert.equal(

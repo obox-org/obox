@@ -45,7 +45,7 @@ describe('扩展 data/ 目录：升级保留 + 包内禁含', () => {
 
     await installFromPackage(await makeOix('v1.oix', [['index.js', 'v1']], manifest('1.0.0')), opts)
 
-    const dataDir = join(targetRoot, 'probe-ext_chenzhi', EXT_DATA_DIR)
+    const dataDir = join(targetRoot, 'probe-ext.chenzhi', EXT_DATA_DIR)
     await fs.mkdir(dataDir, { recursive: true })
     await fs.writeFile(join(dataDir, 'rdp.db'), 'SQLite format 3\0', 'utf8')
     await fs.writeFile(join(dataDir, 'notes.txt'), '用户数据', 'utf8')
@@ -57,14 +57,14 @@ describe('扩展 data/ 目录：升级保留 + 包内禁含', () => {
     expect(upgraded.replaced).toBe(true)
 
     // 新版本入口已就位
-    expect(await fs.readFile(join(targetRoot, 'probe-ext_chenzhi', 'index.js'), 'utf8')).toBe('v2')
+    expect(await fs.readFile(join(targetRoot, 'probe-ext.chenzhi', 'index.js'), 'utf8')).toBe('v2')
     // 数据被保留
     expect(existsSync(join(dataDir, 'rdp.db'))).toBe(true)
     expect(existsSync(join(dataDir, 'notes.txt'))).toBe(true)
     expect(await fs.readFile(join(dataDir, 'notes.txt'), 'utf8')).toBe('用户数据')
     // 暂存/备份目录不留残留
     const leftovers = existsSync(tmpRoot) ? await fs.readdir(tmpRoot) : []
-    expect(leftovers.filter((n) => n.includes('probe-ext_chenzhi'))).toEqual([])
+    expect(leftovers.filter((n) => n.includes('probe-ext.chenzhi'))).toEqual([])
   })
 
   it('首次安装（非覆盖）不涉及保留逻辑，正常成功', async () => {
@@ -74,7 +74,7 @@ describe('扩展 data/ 目录：升级保留 + 包内禁含', () => {
       { targetRoot, tmpRoot }
     )
     expect(first.replaced).toBe(false)
-    expect(existsSync(join(targetRoot, 'probe-ext_chenzhi', 'index.js'))).toBe(true)
+    expect(existsSync(join(targetRoot, 'probe-ext.chenzhi', 'index.js'))).toBe(true)
   })
 
   it('拒绝含 data/ 的包：抛 forbidden-entry，且不落盘、无残留', async () => {
@@ -95,7 +95,7 @@ describe('扩展 data/ 目录：升级保留 + 包内禁含', () => {
       code: 'forbidden-entry'
     })
 
-    expect(existsSync(join(targetRoot, 'probe-ext_chenzhi'))).toBe(false)
+    expect(existsSync(join(targetRoot, 'probe-ext.chenzhi'))).toBe(false)
     const leftovers = existsSync(tmpRoot) ? await fs.readdir(tmpRoot) : []
     expect(leftovers).toEqual([])
   })

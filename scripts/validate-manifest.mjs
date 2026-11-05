@@ -265,6 +265,23 @@ function collectWarnings(m, messages) {
   const asArray = (v) => (Array.isArray(v) ? v : [])
 
   for (const nav of asArray(c.navItems)) {
+    // 系统扩展的页面入口：必须是扩展目录内的 .html，且与 view 二选一（与宿主 core/manifest.ts 同口径）
+    if (nav && nav.page !== undefined) {
+      const page = nav.page
+      if (typeof page !== 'string' || page === '' || page.includes('..')) {
+        messages.push({
+          level: 'error',
+          message: `navItems[].page 必须是非空相对路径：${String(page)}`
+        })
+      } else if (!/\.html?$/i.test(page) || page.startsWith('/') || /^[A-Za-z]:/.test(page)) {
+        messages.push({
+          level: 'error',
+          message: `navItems[].page 必须是扩展目录内的 .html 文件（不得绝对路径）：${page}`
+        })
+      } else if (nav.view !== undefined) {
+        messages.push({ level: 'error', message: 'navItems[] 的 page 与 view 不能同时给出' })
+      }
+    }
     if (!(nav && nav.id && nav.title && nav.icon)) {
       messages.push({
         level: 'warning',

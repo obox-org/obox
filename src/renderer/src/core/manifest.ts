@@ -144,7 +144,7 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
   if (typeof m.version !== 'string' || !SEMVER_RE.test(m.version)) {
     messages.push({ severity: 'error', message: 'version 必填且必须是 semver（如 1.0.0）' })
   }
-  // apiVersion 门槛：宿主值**单源**读根 `package.json` 的 `apiVersion`（ADR-0026 决策 8 起为 **3**，
+  // apiVersion 门槛：宿主值**单源**读根 `package.json` 的 `apiVersion`（ADR-0026 决策 8 起为 **3**，2.0.4 起为 **4**，
   // 运行时环境变了：无 DOM/localStorage、能力来自宿主进程）。规则本身不变——清单声明 **高于**宿主值
   // 才拒绝加载（`2 <= 3` 合法：pet 这类老扩展照常加载）；文案里的"当前 obox 为 vN"也由该字段给出，
   // 不硬编码版本号，升级时不需要再回来改这一句。
@@ -236,6 +236,26 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
       severity: 'error',
       message: 'navItems 必须是 [{id, title, icon, view?}] 数组'
     })
+  }
+  // 系统扩展的页面入口（page）：必须是扩展目录内的 .html，且与 view 二选一
+  if (Array.isArray(contributes?.navItems)) {
+    for (const nav of contributes.navItems as Array<Record<string, unknown>>) {
+      const page = nav?.page
+      if (page === undefined) continue
+      if (typeof page !== 'string' || page === '' || page.includes('..')) {
+        messages.push({
+          severity: 'error',
+          message: `navItems[].page 必须是非空相对路径：${String(page)}`
+        })
+      } else if (!/\.html?$/i.test(page) || page.startsWith('/') || /^[A-Za-z]:/.test(page)) {
+        messages.push({
+          severity: 'error',
+          message: `navItems[].page 必须是扩展目录内的 .html 文件（不得绝对路径）：${page}`
+        })
+      } else if (nav?.view !== undefined) {
+        messages.push({ severity: 'error', message: 'navItems[] 的 page 与 view 不能同时给出' })
+      }
+    }
   }
   if (contributes?.statusBarItems !== undefined && !Array.isArray(contributes.statusBarItems)) {
     messages.push({ severity: 'error', message: 'statusBarItems 必须是 [{id, name}] 数组' })

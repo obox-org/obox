@@ -132,14 +132,14 @@ describe('oixCore · 正常安装', () => {
     const file = await makeOix('ok.oix', [['index.js', 'export default () => {}\n']])
     const r = await installFromPackage(file, opts())
     expect(r).toEqual({
-      id: 'demo-ext_chenzhi',
+      id: 'demo-ext.chenzhi',
       name: 'demo-ext',
       displayName: undefined,
       version: '1.0.0',
       author: 'chenzhi',
       replaced: false
     })
-    const dir = join(targetRoot, 'demo-ext_chenzhi')
+    const dir = join(targetRoot, 'demo-ext.chenzhi')
     expect(existsSync(join(dir, 'index.js'))).toBe(true)
     expect(existsSync(join(dir, 'manifest.json'))).toBe(true)
     const meta = JSON.parse(readFileSync(join(dir, '.obox-meta.json'), 'utf8')) as {
@@ -158,7 +158,7 @@ describe('oixCore · 正常安装', () => {
       ['app/page.html', '<html/>']
     ])
     await installFromPackage(file, opts())
-    expect(existsSync(join(targetRoot, 'demo-ext_chenzhi', 'app', 'page.html'))).toBe(true)
+    expect(existsSync(join(targetRoot, 'demo-ext.chenzhi', 'app', 'page.html'))).toBe(true)
   })
 
   it('author 缺失 → 目录名退化为纯 name', async () => {
@@ -187,9 +187,9 @@ describe('oixCore · 正常安装', () => {
     expect(r.version).toBe('2.0.0')
     // E2E 抓到的缺口：升级时必须能给出 ctx.previousVersion（目录替换后就查不到了，所以这里留痕）
     expect(r.previousVersion).toBe('1.0.0')
-    expect(readFileSync(join(targetRoot, 'demo-ext_chenzhi', 'index.js'), 'utf8')).toBe('v2')
+    expect(readFileSync(join(targetRoot, 'demo-ext.chenzhi', 'index.js'), 'utf8')).toBe('v2')
     const meta = JSON.parse(
-      readFileSync(join(targetRoot, 'demo-ext_chenzhi', '.obox-meta.json'), 'utf8')
+      readFileSync(join(targetRoot, 'demo-ext.chenzhi', '.obox-meta.json'), 'utf8')
     ) as { pendingInstall?: { version: string; previousVersion?: string } }
     expect(meta.pendingInstall).toMatchObject({ version: '2.0.0', previousVersion: '1.0.0' })
   })
@@ -197,7 +197,7 @@ describe('oixCore · 正常安装', () => {
   it('覆盖安装继承旧的 install 钩子记录（"同一版本只跑一次"的判定依据）', async () => {
     const v1 = await makeOix('v1.oix', [['index.js', 'v1']])
     await installFromPackage(v1, opts())
-    const metaPath = join(targetRoot, 'demo-ext_chenzhi', '.obox-meta.json')
+    const metaPath = join(targetRoot, 'demo-ext.chenzhi', '.obox-meta.json')
     // 模拟"install 钩子已为 1.0.0 跑过"（真实流程由渲染进程回写）
     await fs.writeFile(
       metaPath,
@@ -240,7 +240,7 @@ describe('oixCore · 失败不破坏已安装版本（回滚）', () => {
     const bad = makeMaliciousOix(join(workDir, 'bad.oix'), evilEntry)
     await expect(installFromPackage(bad, opts())).rejects.toMatchObject({ code: 'entry-invalid' })
 
-    const dir = join(targetRoot, 'demo-ext_chenzhi')
+    const dir = join(targetRoot, 'demo-ext.chenzhi')
     expect(readFileSync(join(dir, 'index.js'), 'utf8')).toBe('GOOD')
     expect(existsSync(join(workDir, 'escape.txt'))).toBe(false)
     // 暂存目录被清理（不留半安装状态）
@@ -277,8 +277,8 @@ describe('oixCore · 并发串行', () => {
       installFromPackage(b, opts())
     ])
     // 两者都成功且指向同一目录；后完成者的内容为最终状态
-    expect([ra.id, rb.id]).toEqual(['demo-ext_chenzhi', 'demo-ext_chenzhi'])
-    const dir = join(targetRoot, 'demo-ext_chenzhi')
+    expect([ra.id, rb.id]).toEqual(['demo-ext.chenzhi', 'demo-ext.chenzhi'])
+    const dir = join(targetRoot, 'demo-ext.chenzhi')
     const finalIndex = readFileSync(join(dir, 'index.js'), 'utf8')
     expect(['A', 'B']).toContain(finalIndex)
     // 关键：最终目录是"某一个完整包"的状态，不存在另一个包的残留文件
@@ -301,7 +301,7 @@ describe('oixCore · 限额', () => {
     await expect(installFromPackage(file, { ...opts(), maxEntries: 5 })).rejects.toMatchObject({
       code: 'too-large'
     })
-    expect(existsSync(join(targetRoot, 'demo-ext_chenzhi'))).toBe(false)
+    expect(existsSync(join(targetRoot, 'demo-ext.chenzhi'))).toBe(false)
   })
 
   it('解压总量超限 → too-large', async () => {
@@ -389,7 +389,7 @@ describe('oixCore · Python 运行时声明（安装期校验，issue #51）', (
       python: '3.13'
     })
     const r = await installFromPackage(file, opts())
-    expect(r.id).toBe('py-ext_chenzhi')
+    expect(r.id).toBe('py-ext.chenzhi')
     expect(existsSync(join(targetRoot, r.id, 'index.js'))).toBe(true)
   })
 
@@ -430,7 +430,7 @@ describe('oixCore · Python 运行时声明（安装期校验，issue #51）', (
   it('没有声明 Python 的普通扩展不受影响', async () => {
     const file = await makeOix('plain.oix', [['index.js', 'x']])
     const r = await installFromPackage(file, opts())
-    expect(r.id).toBe('demo-ext_chenzhi')
+    expect(r.id).toBe('demo-ext.chenzhi')
   })
 
   // issue #82：`requirements` 已从 pythonCore 的类型与校验里移除（决策：不做"安装期装依赖"）。
@@ -454,7 +454,7 @@ describe('oixCore · Python 运行时声明（安装期校验，issue #51）', (
         requirements
       })
       const r = await installFromPackage(file, opts())
-      expect(r.id, label).toBe(`${name}_chenzhi`)
+      expect(r.id, label).toBe(`${name}.chenzhi`)
       expect(existsSync(join(targetRoot, r.id, 'index.js')), label).toBe(true)
     }
   })

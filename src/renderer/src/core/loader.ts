@@ -34,6 +34,15 @@ async function loadBuiltinManifest(id: string): Promise<ExtensionManifest | null
   return null
 }
 
+/**
+ * 已迁移为**系统扩展**的内置视图（change `system-extensions-from-install-dir`）：
+ * - `app` / `ext-manager`：由 `<安装目录>/extensions/<name>` 提供页面（`contributes.navItems[].page`）；
+ * - 继续留在 bundle 里的内置视图（`settings` / `theme-*`）不在此列，避免一处界面两种来源。
+ *
+ * 用名单而不是删目录：迁移期两边都要能跑（回退时把 id 从这里去掉即可恢复内置视图）。
+ */
+const MIGRATED_TO_SYSTEM_EXTENSIONS = new Set(['app', 'ext-manager', 'settings'])
+
 export async function collectBuiltinExtensions(): Promise<ExtensionEntry[]> {
   const result: ExtensionEntry[] = []
   const seen = new Set<string>()
@@ -43,6 +52,7 @@ export async function collectBuiltinExtensions(): Promise<ExtensionEntry[]> {
     const id = match[1]
     if (seen.has(id)) continue
     seen.add(id)
+    if (MIGRATED_TO_SYSTEM_EXTENSIONS.has(id)) continue
     const manifest = await loadBuiltinManifest(id)
     if (!manifest) {
       console.warn(`[loader] 内置扩展 ${id} 缺少 manifest.json`)
@@ -107,6 +117,13 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
   const entries = await window.api.listUserExtensions()
   const result: ExtensionEntry[] = []
   for (const entry of entries) {
+    // 2.0.4：扫描结果里带 error / shadowed 的条目不加载（管理器仍会显示它们与原因）
+    if (entry.error || entry.shadowed) {
+      console.warn(
+        `[loader] 跳过扩展 ${entry.id}（${entry.shadowed ? '已被系统扩展遮蔽' : entry.error}）`
+      )
+      continue
+    }
     const manifest = await fetchUserManifest(entry.id)
     if (!manifest) {
       console.warn(`[loader] 用户扩展 ${entry.id} manifest 读取失败或缺失`)
@@ -117,7 +134,7 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
     result.push({
       id: entry.id,
       manifest,
-      source: 'user',
+      source: entry.source === 'system' ? 'system' : 'user',
       // 宿主据此 `require`/`import` 入口（EH-A4 的清单交接要用它；只读展示路径不用）
       path: entry.path,
       installedTimestamp: meta.installedTimestamp,
@@ -162,7 +179,7 @@ export async function buildUserExtensionEntry(id: string): Promise<ExtensionEntr
   return {
     id,
     manifest,
-    source: 'user',
+    source: listed.source === 'system' ? 'system' : 'user',
     // 同上：宿主加载入口需要绝对路径
     path: listed.path,
     installedTimestamp: meta.installedTimestamp,

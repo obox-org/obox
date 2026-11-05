@@ -72,10 +72,16 @@ export interface AppInfo {
 
 /** 用户扩展目录下的一个扩展（由主进程扫描，供渲染进程加载/管理） */
 export interface UserExtensionEntry {
-  /** 目录名（= 扩展 id） */
+  /** 目录名（= 扩展 id）：系统 `<name>`、用户 `<name>.<author>` */
   id: string
   /** 绝对路径（渲染进程经 app:// 协议访问，不可直接读盘） */
   path: string
+  /** 来源：系统扩展随安装包分发、不可卸载；用户扩展可装卸 */
+  source?: 'system' | 'user'
+  /** 被同 id 的系统扩展遮蔽（只有用户扩展会为 true） */
+  shadowed?: boolean
+  /** 清单/命名校验不通过时的可读原因（有它就不加载，但管理器要能显示） */
+  error?: string
 }
 
 /** 调试扩展（--debug-extension 声明）：本地目录直接加载，不经过 .oix 安装 */
@@ -145,6 +151,8 @@ export type InstallOixErrorCode =
   | 'path-invalid'
   | 'write-failed'
   | 'arch-mismatch'
+  // 同一个 Python 版本只允许一个内置运行时包（change「开发运行时」）
+  | 'runtime-version-conflict'
 
 /**
  * .oix 安装结果：成功或失败都以**返回值**表达（不再靠 IPC 抛错传消息），
@@ -257,6 +265,10 @@ export interface MainApi {
   setAutoStart(enabled: boolean): Promise<AutoStartState>
   /** 应用信息 */
   getAppInfo(): Promise<AppInfo>
+  /** 重启应用（扩展管理器的立即重启与 api.extensions.restartHost 共用） */
+  relaunchApp(): Promise<void>
+  /** 开发运行时扫描：内置（扩展目录 marker）+ 本机（py/where） */
+  devRuntimeScan(): Promise<unknown>
   /** 用户扩展目录扫描（返回 userData/extensions 下的扩展目录清单） */
   listUserExtensions(): Promise<UserExtensionEntry[]>
   /** 调试扩展清单（--debug-extension 声明；不安装，重启消失） */

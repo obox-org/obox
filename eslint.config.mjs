@@ -10,9 +10,18 @@ export default defineConfig(
       '**/node_modules',
       '**/dist',
       '**/out',
+      // 打包产物目录：`electron-builder --dir` 的输出里有系统扩展的副本（纯浏览器 JS），
+      // 不该被仓库的 TS 规则检查（否则每次打包后 lint 都会炸）。
+      'release/**',
       '**/vendor',
       'skills/**',
       'extensions/**',
+      // 系统扩展（system-extensions/）是**运行时页面脚本**：纯浏览器 JS（无 TS 类型标注），
+      // 要能被整目录复制到安装目录直接跑；它们的门禁是清单校验 + 页面用例，
+      // 不是仓库的 TS 规则（与 scripts/**/*.mjs 同理）。
+      'system-extensions/**',
+      // 系统扩展的构建产物（scripts/build-extensions.mjs 输出 .extensions/，已 gitignore）
+      '.extensions/**',
       // 仓库级独立 Node 脚本（如 scripts/validate-manifest.mjs）：纯 JS、不带 TS 类型标注，
       // 且要能被整份复制到**没有 obox 源码**的扩展仓库里直接跑（见 ADR-0020 决策 3、ADR-0023 决策 5）。
       // 它不参与 TS 编译，要求 `explicit-function-return-type` 只会逼出仓库专属的豁免注释。
