@@ -151,6 +151,8 @@ export type InstallOixErrorCode =
   | 'path-invalid'
   | 'write-failed'
   | 'arch-mismatch'
+  // 同一个 Python 版本只允许一个内置运行时包（change「开发运行时」）
+  | 'runtime-version-conflict'
 
 /**
  * .oix 安装结果：成功或失败都以**返回值**表达（不再靠 IPC 抛错传消息），

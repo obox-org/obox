@@ -13,6 +13,7 @@ import AdmZip from 'adm-zip'
 import { promises as fs } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 import type { ExtensionMeta, InstallOixErrorCode, InstallOixResult } from '../shared/types'
+import { findRuntimeVersionConflict, readRuntimeMarker } from './runtimeInstallGuard'
 import { isPythonCoreError, toPythonArch, validatePythonDeclaration } from './pythonCore'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
@@ -290,6 +291,22 @@ export async function installFromPackage(
     try {
       await fs.mkdir(stage, { recursive: true })
       await extractToStage(zip, stage, limits)
+      // 运行时包唯一性（change「开发运行时」）：同一个 Python 版本只允许一个内置运行时。
+      // 放在 rename 之前：冲突时 stage 会被清掉，磁盘上不留半成品。
+      const runtimeMarker = await readRuntimeMarker(stage)
+      if (runtimeMarker) {
+        const conflict = await findRuntimeVersionConflict(
+          opts.targetRoot,
+          runtimeMarker.version,
+          id
+        )
+        if (conflict) {
+          throw new OixInstallError(
+            'runtime-version-conflict',
+            `已存在 Python ${runtimeMarker.version} 的内置运行时（${conflict}）；同一版本只允许安装一个`
+          )
+        }
+      }
       const now = Date.now()
       const meta: ExtensionMeta = {
         installedTimestamp: now,
