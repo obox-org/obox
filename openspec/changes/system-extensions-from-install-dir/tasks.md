@@ -45,4 +45,4 @@
 
 - [x] 7.1 全量门槛：`npm run typecheck` / `lint` / `npm test` / `npm run build` 全绿
 - [x] 7.2 真机验收：安装包安装后，安装目录存在 `extensions/{settings,app,ext-manager}`；管理器显示三者「系统扩展」；用户扩展仍可装卸
-- [ ] 7.3 发版：版本 +1（minor）、`docs/update-and-release-verification.md` 记录发版数据与"不迁移"的兼容说明
+- [x] 7.3 发版：版本 +1（minor）、`docs/update-and-release-verification.md` 记录发版数据与"不迁移"的兼容说明

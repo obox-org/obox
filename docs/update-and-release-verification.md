@@ -364,6 +364,11 @@ electron-updater 默认 `allowDowngrade = false`，且版本相同时按 semver 
 
 ## 16. 2026-11-04：`minimatch` 告警（构建工具链，已按 AGENTS 兜底登记）
 
+**2026-11-06 复核（发版 2.1.0）**：Dependabot 再次报出同一条 `minimatch`（GHSA-g3hv-75wg-m249，
+`>=7.0.0,<11.0.1`，patched `11.0.1`，scope=development，来自 `glob@7` 链）。`npm run security:audit`
+（`--omit=dev`）仍为 0；不升 glob 8 是因为 electron-builder/构建脚本依赖 `glob@7` 的 API。
+已按 `tolerable_risk` 关闭（#82），理由与本条一致。
+
 **告警**：`minimatch < 11.0.1`（moderate，GHSA-g3hv-75wg-m249：globparts 放大的 DoS）。
 
 **来源链**（全部是**构建/开发工具**，不进安装包）：
@@ -438,11 +443,13 @@ electron-builder → app-builder-lib → filelist  → minimatch@…
 从 Vue 内置视图迁移为**磁盘系统扩展**（iframe 页面 + 公共 API）；用户扩展目录命名改为
 `<name>.<author>`（点号），新增「设置 → 开发运行时」（Python 本机发现 + 内置运行时安装）。
 
-| 项         | 值                                                                                                                   |
-| ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| 版本       | `2.1.0`（minor；含**破坏性变更**：旧下划线目录不再识别、`app://builtin` 指向安装目录）                               |
-| apiVersion | `4`（新增公共 API：theme/extensions/apps/commands/keybindings/pages/settings.host）                                  |
-| tag        | `v2.1.0`                                                                                                             |
-| 构建产物   | 待发布流水线完成后回填（x64 / arm64 / no-arch 安装包 + blockmap + latest.yml）                                       |
-| 验收       | typecheck 0 / lint 0 error / `npm test` 1373 passed + 5 skipped；打包版真机验证 3 系统扩展 + 用户扩展装卸            |
-| 兼容性     | **不迁移**旧目录：`pet_chenzhi` 等需重装为 `pet.chenzhi`；外部 HTTP 指令名 `pet_chenzhi:state` → `pet.chenzhi:state` |
+| 项         | 值                                                                                                                                                                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 版本       | `2.1.0`（minor；含**破坏性变更**：旧下划线目录不再识别、`app://builtin` 指向安装目录）                                                                                                                                               |
+| apiVersion | `4`（新增公共 API：theme/extensions/apps/commands/keybindings/pages/settings.host）                                                                                                                                                  |
+| tag        | `v2.1.0`                                                                                                                                                                                                                             |
+| 构建产物   | `obox-2.1.0-x64-setup.exe` 134,129,862 B · `obox-2.1.0-arm64-setup.exe` 128,860,384 B · `obox-2.1.0-setup.exe` 262,152,398 B（no-arch 合并包）· 三个 `.blockmap`（141,923 / 135,689 / 274,859 B）· `latest.yml` 649 B（共 7 个资产） |
+| 发布地址   | https://github.com/obox-org/obox/releases/tag/v2.1.0（`latest` = v2.1.0）                                                                                                                                                            |
+| 依赖安全   | `npm run security:audit`（`--omit=dev`）= **0**；Dependabot 开放告警 **0**（`minimatch` 仅 dev 链，见 §16）                                                                                                                          |
+| 验收       | typecheck 0 / lint 0 error / `npm test` 1373 passed + 5 skipped；打包版真机验证 3 系统扩展 + 用户扩展装卸                                                                                                                            |
+| 兼容性     | **不迁移**旧目录：`pet_chenzhi` 等需重装为 `pet.chenzhi`；外部 HTTP 指令名 `pet_chenzhi:state` → `pet.chenzhi:state`                                                                                                                 |
