@@ -34,6 +34,14 @@ function call(op, args = {}) {
 const statusEl = document.getElementById('status')
 const listEl = document.getElementById('list')
 
+/** 建元素小工具（本页独立，不依赖其它扩展） */
+function el(tag, className, text) {
+  const node = document.createElement(tag)
+  if (className) node.className = className
+  if (text !== undefined) node.textContent = text
+  return node
+}
+
 function sourceLabel(source) {
   return source === 'system' ? '系统' : '用户'
 }
@@ -61,9 +69,36 @@ function row(ext) {
       ? '已禁用'
       : ext.error
         ? `清单错误：${ext.error}`
-        : '已启用'
+        : ext.isActive
+          ? '已启用 · 运行中'
+          : '已启用'
   meta.appendChild(state)
+
+  // 详情（点击行展开）：版本/作者/入口/描述/校验错误——排障时最常看这几项
+  const details = document.createElement('dl')
+  details.className = 'ext-details'
+  const manifest = ext.manifest || {}
+  const addRow = (label, value) => {
+    if (value === undefined || value === null || value === '') return
+    details.append(el('dt', '', label), el('dd', '', String(value)))
+  }
+  addRow('版本', manifest.version)
+  addRow('作者', manifest.author)
+  addRow('入口', manifest.main)
+  addRow('描述', manifest.description || manifest.displayName)
+  addRow('来源', ext.source === 'system' ? '系统扩展（安装目录）' : '用户扩展（userData）')
+  if (ext.requiresRestart) addRow('状态', '需重启生效')
+  for (const v of ext.validations || []) {
+    if (v && v.severity === 'error') addRow('校验错误', v.message)
+  }
+
+  const toggle = () => {
+    const open = details.classList.toggle('open')
+    li.classList.toggle('expanded', open)
+  }
+  meta.addEventListener('click', toggle)
   li.appendChild(meta)
+  li.appendChild(details)
 
   if (ext.source !== 'system' && !ext.shadowed) {
     const actions = document.createElement('div')

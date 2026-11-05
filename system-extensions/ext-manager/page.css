@@ -47,6 +47,7 @@ body {
 
 .ext-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -115,4 +116,35 @@ body {
 
 .btn.ghost {
   color: var(--fg-dim);
+}
+.ext-row.expanded {
+  border-color: var(--accent);
+}
+
+.ext-meta {
+  cursor: pointer;
+  flex: 1;
+}
+
+.ext-details {
+  display: none;
+  width: 100%;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--border);
+  gap: 2px 12px;
+}
+
+.ext-details.open {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+}
+
+.ext-details dt {
+  color: var(--fg-dim);
+}
+
+.ext-details dd {
+  margin: 0;
+  word-break: break-all;
 }

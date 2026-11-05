@@ -105,3 +105,14 @@ describe('应用页卡片交互', () => {
     expect(page).toContain("pages.open', { pageId: 'ext-manager'")
   })
 })
+describe('扩展管理器详情', () => {
+  it('行内详情展示版本/作者/入口/来源与校验错误', () => {
+    const page = readFileSync(`${root}ext-manager/page.js`, 'utf8')
+    expect(page).toContain("addRow('版本'")
+    expect(page).toContain("addRow('作者'")
+    expect(page).toContain("addRow('入口'")
+    expect(page).toContain("addRow('来源'")
+    expect(page).toContain('validations')
+    expect(page).toContain('ext-details')
+  })
+})
