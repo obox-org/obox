@@ -22,9 +22,9 @@
 
 ## 4. 打包链
 
-- [ ] 4.1 三个系统扩展各自加 `vite build` 配置，输出 `.build/extensions/<name>/`；验证：`npm run build` 后三个目录各有 `index.html` 与 manifest
-- [ ] 4.2 `electron-builder.yml` 增加 `extraFiles`（`.build/extensions` → `extensions`）；验证：`--dir` 打包产物里 `<installDir>/extensions/settings` 存在
-- [ ] 4.3 `/extensions/` 的 gitignore 规则调整：系统扩展目录（`extensions/settings` 等）入库，用户扩展仓库仍忽略；验证：`git check-ignore` 对两者分别成立
+- [x] 4.1 三个系统扩展各自加 `vite build` 配置，输出 `.build/extensions/<name>/`；验证：`npm run build` 后三个目录各有 `index.html` 与 manifest
+- [x] 4.2 `electron-builder.yml` 增加 `extraFiles`（`.build/extensions` → `extensions`）；验证：`--dir` 打包产物里 `<installDir>/extensions/settings` 存在
+- [x] 4.3 `/extensions/` 的 gitignore 规则调整：系统扩展目录（`extensions/settings` 等）入库，用户扩展仓库仍忽略；验证：`git check-ignore` 对两者分别成立
 
 ## 5. 公共 API 增量
 

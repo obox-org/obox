@@ -10,6 +10,9 @@ export default defineConfig(
       '**/node_modules',
       '**/dist',
       '**/out',
+      // 打包产物目录：`electron-builder --dir` 的输出里有系统扩展的副本（纯浏览器 JS），
+      // 不该被仓库的 TS 规则检查（否则每次打包后 lint 都会炸）。
+      'release/**',
       '**/vendor',
       'skills/**',
       'extensions/**',
