@@ -407,6 +407,9 @@ export class ExtensionHostRuntime {
         createExtensionApi({
           ext: extension.info,
           extensionDataDir: loader.dataDirFor(extension.info.id),
+          // 数据根按 id 放 userData（change system-extensions-from-install-dir 任务 2.2）：
+          // 系统扩展代码在安装目录（只读），数据不能跟着代码目录走。
+          userDataDir: this.dataDir,
           // R63：POSIX 套接字目录显式给成 `<init.dataDir>/ipc`（与 main 的 `ipcSocketDir()` 逐字一致）。
           // 不在这里给，apiFactory 就只能从 extensionDataDir 反推 userData（隐式约定，布局一换就算错）。
           socketDir: join(this.dataDir, 'ipc'),

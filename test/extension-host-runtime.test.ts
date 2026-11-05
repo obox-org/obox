@@ -528,9 +528,12 @@ test('运行时验收：在宿主里加载测试扩展并完成一次 fs 读写�
   assert.equal(harness.runtime.statusOf('roundtrip')?.state, 'active')
   assert.equal(state.fsRoundTrip, 'hello from host', '扩展经 api.fs 读到的内容应与写入一致')
 
-  // 落点必须是 `<dataDir>/<extId>/data/`——R62 起与 main 的 `dataDirFor` 逐字一致
-  // （此前宿主写的是 `<dataDir>/<extId>/`，升级后老扩展的 fs 数据会"看不见"）
-  const onDisk = await readFile(path.join(dataDir, 'roundtrip', 'data', 'hello.txt'), 'utf8')
+  // 落点必须是 `<userData>/extensions/<id>/data/`（2.0.4 起数据根按 id 算，不再跟着扩展代码目录：
+  // 系统扩展的代码在安装目录、只读，数据只能落 userData）
+  const onDisk = await readFile(
+    path.join(dataDir, 'extensions', 'roundtrip', 'data', 'hello.txt'),
+    'utf8'
+  )
   assert.equal(onDisk, 'hello from host')
 
   harness.host.receive(createTerminateEnvelope(1000))

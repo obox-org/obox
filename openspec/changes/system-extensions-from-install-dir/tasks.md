@@ -10,9 +10,9 @@
 
 ## 2. 数据根解耦
 
-- [ ] 2.1 `extensionDataDirOf` 改为按 id 拼 `<userData>/extensions/<id>/data`（宿主侧），main 的 fs/sqlite/python 保持同一算式；验证：单测断言两处逐字相等（含系统扩展 id）
-- [ ] 2.2 宿主 `init` 不再用 `ext.path` 推导数据目录；验证：接缝测试用系统根路径传入，断言数据仍落在 userData
-- [ ] 2.3 文档 `docs/extension-api/api-reference.md` 写明"代码在安装目录、数据在 userData"；验证：文档含该句与示例
+- [x] 2.1 `extensionDataDirOf` 改为按 id 拼 `<userData>/extensions/<id>/data`（宿主侧），main 的 fs/sqlite/python 保持同一算式；验证：单测断言两处逐字相等（含系统扩展 id）
+- [x] 2.2 宿主 `init` 不再用 `ext.path` 推导数据目录；验证：接缝测试用系统根路径传入，断言数据仍落在 userData
+- [x] 2.3 文档 `docs/extension-api/api-reference.md` 写明"代码在安装目录、数据在 userData"；验证：文档含该句与示例
 
 ## 3. 协议与权限
 

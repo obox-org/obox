@@ -170,6 +170,17 @@ export function extensionDataDirOf(extensionDir: string): string {
   return path.join(path.resolve(extensionDir), 'data')
 }
 
+/**
+ * **数据目录的唯一权威**（change `system-extensions-from-install-dir` 任务 2.1）：
+ * `<userData>/extensions/<id>/data`。
+ *
+ * 为什么不再从代码目录推导：系统扩展的代码在 `<安装目录>/extensions/<name>`（Program Files，
+ * 普通用户不可写，且随升级整体替换）。数据必须与代码解耦，否则写不进去或升级被覆盖。
+ */
+export function dataDirForExtensionId(userDataDir: string, extId: string): string {
+  return path.join(path.resolve(userDataDir), 'extensions', extId, 'data')
+}
+
 /* -------------------------------------------------------------------------------------------- */
 /* 工厂                                                                                          */
 /* -------------------------------------------------------------------------------------------- */
@@ -185,6 +196,11 @@ export interface ExtensionApiOptions {
    * `loader.dataDirFor()`（`<init.dataDir>/<extId>`）**不会被用来算 data 目录**。
    */
   extensionDataDir?: string
+  /**
+   * userData 根（`init.dataDir`）。给了就用 {@link dataDirForExtensionId} 按 id 算数据目录；
+   * 未给（单测/嵌入场景）退回按扩展目录推导。
+   */
+  userDataDir?: string
   /**
    * POSIX 套接字目录（`<userData>/ipc`，与 main 的 `ipcSocketDir()` 逐字一致）。
    * R63：由 `runtime.ts` 显式透传 `join(init.dataDir, 'ipc')`；未给时退回 `<扩展 data 目录>/ipc`
@@ -256,7 +272,11 @@ export function createExtensionApi(options: ExtensionApiOptions): BuiltExtension
   // `mkdir -p`：main 以前在 dataDirFor 之后由各自的 IPC 顺手建，宿主侧统一在装配时建好，
   // 免得"能力没用到就没人建目录"。
   const extensionDir = path.resolve(options.ext.path)
-  const root = extensionDataDirOf(extensionDir)
+  // 数据根按 id 放 userData（change system-extensions-from-install-dir 任务 2.1）：
+  // 系统扩展代码在安装目录（只读、随升级替换），数据必须与代码解耦；老路径留给单测/嵌入场景。
+  const root = options.userDataDir
+    ? dataDirForExtensionId(options.userDataDir, extId)
+    : extensionDataDirOf(extensionDir)
   mkdirSync(root, { recursive: true })
   const timers = new Map<string, ExtensionTimer>()
 
