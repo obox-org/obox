@@ -91,6 +91,8 @@ export default {
     },
     notices: {
       installed: '"{name}" v{version} installed and activated (effective immediately)',
+      installedHostMode:
+        '"{name}" v{version} installed (handled by the extension host; takes effect after restarting obox)',
       installFailed: 'Install failed: {msg}',
       uninstalledHot: 'Uninstalled (effective immediately)',
       uninstalledRestart: 'Uninstalled. Click "Reload Now" to apply',

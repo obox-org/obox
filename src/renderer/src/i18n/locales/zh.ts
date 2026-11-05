@@ -91,6 +91,7 @@ export default {
     },
     notices: {
       installed: '「{name}」v{version} 安装成功并已激活（立即生效）',
+      installedHostMode: '「{name}」v{version} 安装成功（由扩展宿主接管，重启 obox 后生效）',
       installFailed: '安装失败: {msg}',
       uninstalledHot: '已卸载（立即生效）',
       uninstalledRestart: '已卸载，点击"立即重启"生效',

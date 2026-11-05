@@ -166,12 +166,20 @@ async function hotInstall(result: {
   const info = await host.loadUserExtension(entry)
   refreshTick.value++
   const name = info.manifest.displayName ?? info.id
+  const version = info.manifest.version
   if (info.isActive) {
-    showNotice(t('extManager.notices.installed', { name, version: info.manifest.version }))
-  } else {
+    showNotice(t('extManager.notices.installed', { name, version }))
+  } else if (!info.isValid) {
+    // 真的清单无效（校验有 error）——只有这一条才该说"清单无效"
     showNotice(
-      `「${name}」${info.activationError ? t('extManager.states.activationFailed') + ': ' + info.activationError : t('extManager.invalidManifest')}`
+      `「${name}」v${version} ${t('extManager.invalidManifest')}：${info.validations[0]?.message ?? ''}`
     )
+  } else if (info.activationError) {
+    showNotice(`「${name}」${t('extManager.states.activationFailed')}: ${info.activationError}`)
+  } else {
+    // **宿主模式**（默认）：热安装只登记清单，激活交给扩展宿主，重启后生效。
+    // 原来这里落到"清单无效"，把"装好了但没在本进程激活"误报成故障（真机反馈过）。
+    showNotice(t('extManager.notices.installedHostMode', { name, version }))
   }
 }
 
