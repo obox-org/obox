@@ -22,6 +22,7 @@ export interface HostQueryDeps {
   settingsSnapshot(): unknown | Promise<unknown>
   setCloseBehavior(behavior: string): void | Promise<void>
   setLocale(code: string): void | Promise<void>
+  setNotificationDisabled(id: string, disabled: boolean): void | Promise<void>
   commands(): unknown[] | Promise<unknown[]>
   menus(): unknown[] | Promise<unknown[]>
   themeList(): unknown[]
@@ -104,6 +105,12 @@ export async function runHostQuery(
     case 'i18n.setLocale':
       await deps.setLocale(requireString(args, 'code'))
       return null
+    case 'settings.notification.set':
+      await deps.setNotificationDisabled(
+        requireString(args, 'id'),
+        requireBoolean(args, 'disabled')
+      )
+      return null
     case 'settings.host.get':
       return deps.hostSettingGet(requireString(args, 'key'))
     case 'settings.host.set': {
@@ -146,6 +153,7 @@ export const HOST_QUERY_OPS = [
   'settings.snapshot',
   'window.setCloseBehavior',
   'i18n.setLocale',
+  'settings.notification.set',
   'settings.host.get',
   'settings.host.set',
   'keybindings.list',

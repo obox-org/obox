@@ -51,6 +51,11 @@ export function hostQueryDeps(): HostQueryDeps {
       const appInfo = await window.api.getAppInfo()
       const closeBehavior = await window.api.getCloseBehavior()
       const hostSwitch = readExtensionHostSwitch()
+      const extensions = (await (await lazyHost()).getExtensions()) as Array<{
+        id: string
+        source: string
+        enabled: boolean
+      }>
       return {
         app: { version: appInfo.version },
         theme: {
@@ -72,8 +77,16 @@ export function hostQueryDeps(): HostQueryDeps {
         extensionHost: {
           enabled: hostSwitch.enabled,
           source: hostSwitch.source,
-          sourceText: hostSwitch.source
+          sourceText: hostSwitch.source,
+          // 显式设置值（undefined = 从未设过）；设置页用它渲染"跟随默认/强制开/强制关"
+          setting: stateStore.getExtensionHostEnabled() ?? null
         },
+        extensions: extensions.map((e) => ({
+          id: e.id,
+          source: e.source,
+          enabled: e.enabled,
+          notificationDisabled: stateStore.isNotificationDisabled(e.id)
+        })),
         update: {
           providers: updaterStore.providers.map((p) => ({ extensionId: p.extensionId })),
           activeId: updaterStore.activeId ?? null
@@ -91,6 +104,9 @@ export function hostQueryDeps(): HostQueryDeps {
       await window.api.setCloseBehavior(behavior as 'ask' | 'hide' | 'quit')
     },
     setLocale: (code) => setLocale(code as 'zh' | 'en'),
+    setNotificationDisabled: (id, disabled) => {
+      stateStore.setNotificationDisabled(id, disabled)
+    },
     // 安装：走系统文件选择器（与旧管理器同一个 IPC），返回安装结果
     installExtension: () => window.api.installUserExtensionViaDialog(),
     apps: () => [...appStore.items],

@@ -24,6 +24,7 @@ function deps(overrides: Partial<HostQueryDeps> = {}): HostQueryDeps {
     settingsSnapshot: async () => ({ app: { version: '2.0.5' } }),
     setCloseBehavior: () => undefined,
     setLocale: () => undefined,
+    setNotificationDisabled: () => undefined,
     commands: () => [{ id: 'app.showCommands', label: '命令面板' }],
     menus: () => [{ id: 'card.rdp', items: [] }],
     themeList: () => [{ id: 'theme-dark', label: '深色' }],
@@ -163,5 +164,16 @@ describe('settings.snapshot / 关闭行为 / 语言', () => {
     await runHostQuery('window.setCloseBehavior', { behavior: 'hide' }, d)
     await runHostQuery('i18n.setLocale', { code: 'en' }, d)
     expect(calls).toEqual(['close:hide', 'locale:en'])
+  })
+})
+describe('settings.notification.set', () => {
+  it('按扩展写屏蔽状态', async () => {
+    const calls: Array<[string, boolean]> = []
+    await runHostQuery(
+      'settings.notification.set',
+      { id: 'pet.chenzhi', disabled: true },
+      deps({ setNotificationDisabled: (id, disabled) => calls.push([id, disabled]) })
+    )
+    expect(calls).toEqual([['pet.chenzhi', true]])
   })
 })

@@ -152,10 +152,26 @@ const renderers = {
       )
     )
     const host = snapshot.extensionHost
+    const current = host.setting === null ? 'default' : host.setting ? 'on' : 'off'
     frag.append(
-      row('扩展宿主', el('span', 'value', host.enabled ? `已启用（${host.source}）` : '未启用'))
+      row(
+        '扩展宿主',
+        select(
+          [
+            { value: 'default', label: `跟随默认（当前${host.enabled ? '启用' : '关闭'}）` },
+            { value: 'on', label: '强制启用' },
+            { value: 'off', label: '强制关闭' }
+          ],
+          current,
+          (value) =>
+            void setSetting(
+              'extensionHost.enabled',
+              value === 'default' ? undefined : value === 'on'
+            )
+        )
+      )
     )
-    frag.append(note('扩展宿主开关在下次启动生效；如需切换请使用旧设置页或配置文件。'))
+    frag.append(note('扩展宿主在下次启动生效；关闭后用户扩展改为在渲染进程执行（兼容模式）。'))
     return frag
   },
 
@@ -325,7 +341,19 @@ const renderers = {
         )
       )
     )
-    frag.append(note('按扩展屏蔽通知请在「扩展」分区中逐个设置。'))
+    frag.append(note('以下按扩展屏蔽：取消勾选后该扩展的 toast 不再显示。'))
+    const list = el('ul', 'plain')
+    for (const ext of snapshot.extensions || []) {
+      const li = el('li', 'key-row')
+      li.append(el('span', 'key-name', ext.id))
+      const toggle = checkbox(!ext.notificationDisabled, async (enabled) => {
+        await call('settings.notification.set', { id: ext.id, disabled: !enabled })
+        ext.notificationDisabled = !enabled
+      })
+      li.append(toggle)
+      list.appendChild(li)
+    }
+    frag.append(list)
     return frag
   },
 
@@ -341,20 +369,70 @@ const renderers = {
       const title = el('h3', 'ext-title', page.title || page.id)
       box.appendChild(title)
       for (const field of page.fields || []) {
-        box.append(
-          row(
-            field.label || field.key,
-            input(
-              setting(field.key, field.default ?? ''),
-              field.placeholder || '',
-              (value) => void setSetting(field.key, value)
-            )
-          )
-        )
+        box.append(row(field.label || field.key, fieldControl(field)))
       }
       frag.append(box)
     }
     return frag
+  }
+}
+
+/**
+ * 扩展设置字段的控件（按 `SettingField.type`）。
+ *
+ * 为什么不是一律 text：设置项类型是扩展声明的契约（`checkbox` / `select` / `number` / 日期等），
+ * 全渲染成文本框会让"布尔值存成字符串 ''"这类脏值进设置库。
+ * `status` / `progress` 是**只读**展示字段（扩展自己写值），这里不给输入控件。
+ */
+function fieldControl(field) {
+  const value = setting(field.key, field.default)
+  const commit = (next) => void setSetting(field.key, next)
+  switch (field.type) {
+    case 'checkbox':
+      return checkbox(Boolean(value), (checked) => commit(checked))
+    case 'select':
+      return select(
+        (field.options || []).map((o) => ({ value: o.value, label: o.label })),
+        String(value ?? ''),
+        (next) => commit(next)
+      )
+    case 'number': {
+      const node = input(
+        value ?? '',
+        field.placeholder || '',
+        (next) => {
+          const num = Number(next)
+          commit(next === '' ? undefined : Number.isFinite(num) ? num : undefined)
+        },
+        'number'
+      )
+      return node
+    }
+    case 'date':
+      return input(value ?? '', '', (next) => commit(next || undefined), 'date')
+    case 'time':
+      return input(value ?? '', '', (next) => commit(next || undefined), 'time')
+    case 'textarea': {
+      const node = el('textarea', 'textarea')
+      node.value = value ?? ''
+      node.placeholder = field.placeholder || ''
+      node.addEventListener('change', () => commit(node.value))
+      return node
+    }
+    case 'status':
+      return el('span', 'value', String(value ?? '（未设置）'))
+    case 'progress': {
+      const max = typeof field.max === 'number' && field.max > 0 ? field.max : 100
+      const cur = Math.min(Math.max(Number(value) || 0, 0), max)
+      const bar = el('progress', 'progress')
+      bar.max = max
+      bar.value = cur
+      const wrap = el('span', 'value')
+      wrap.append(bar, document.createTextNode(` ${Math.floor(cur)}/${max}`))
+      return wrap
+    }
+    default:
+      return input(value ?? '', field.placeholder || '', (next) => commit(next))
   }
 }
 
