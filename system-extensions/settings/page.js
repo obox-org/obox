@@ -253,7 +253,33 @@ const renderers = {
       providers.appendChild(el('li', 'note', '暂无扩展声明更新提供者'))
     }
     frag.append(providers)
-    frag.append(note('检查/下载/安装更新由更新提供者扩展执行（命令面板中可找到对应命令）。'))
+    const status = el('p', 'note', '')
+    const actions = el('div', 'row')
+    const mkButton = (label, run) => {
+      const btn = el('button', 'btn', label)
+      btn.type = 'button'
+      btn.addEventListener('click', async () => {
+        btn.disabled = true
+        status.textContent = `${label}…`
+        try {
+          const result = await run()
+          status.textContent =
+            result && result.ok === false ? `失败：${result.error || '未知错误'}` : `${label}：完成`
+        } catch (error) {
+          status.textContent = `${label}失败：${error.message}`
+        } finally {
+          btn.disabled = false
+        }
+      })
+      return btn
+    }
+    actions.append(
+      mkButton('检查更新', () => call('update.check')),
+      mkButton('下载更新', () => call('update.download')),
+      mkButton('安装并重启', () => call('update.install'))
+    )
+    frag.append(actions, status)
+    frag.append(note('更新由当前生效的「更新提供者」扩展驱动；没有提供者时检查会提示。'))
     return frag
   },
 
@@ -326,6 +352,28 @@ const renderers = {
         )
       )
     )
+    const aiStatus = el('p', 'note', '')
+    const testBtn = el('button', 'btn', '测试连接')
+    testBtn.type = 'button'
+    testBtn.addEventListener('click', async () => {
+      testBtn.disabled = true
+      aiStatus.textContent = '测试中…'
+      try {
+        const result = await call('ai.test', {
+          baseUrl: String(setting('ai.baseUrl', '')),
+          apiKey: String(setting('ai.apiKey', ''))
+        })
+        aiStatus.textContent =
+          result && result.ok
+            ? `连接成功：${result.message || ''}`
+            : `失败：${(result && result.message) || '未知错误'}`
+      } catch (error) {
+        aiStatus.textContent = `失败：${error.message}`
+      } finally {
+        testBtn.disabled = false
+      }
+    })
+    frag.append(testBtn, aiStatus)
     return frag
   },
 
@@ -419,6 +467,17 @@ function fieldControl(field) {
       node.addEventListener('change', () => commit(node.value))
       return node
     }
+    case 'directory': {
+      const wrap = el('span', 'row')
+      const shown = input(value ?? '', field.placeholder || '', () => undefined)
+      shown.readOnly = true
+      shown.addEventListener('click', () => void browse(field, shown))
+      const btn = el('button', 'btn', '浏览…')
+      btn.type = 'button'
+      btn.addEventListener('click', () => void browse(field, shown))
+      wrap.append(shown, btn)
+      return wrap
+    }
     case 'status':
       return el('span', 'value', String(value ?? '（未设置）'))
     case 'progress': {
@@ -433,6 +492,21 @@ function fieldControl(field) {
     }
     default:
       return input(value ?? '', field.placeholder || '', (next) => commit(next))
+  }
+}
+
+/** directory 字段：选目录（取消不改值） */
+async function browse(field, shown) {
+  try {
+    const result = await call('dialog.openDirectory', { title: field.label || '选择目录' })
+    if (!result || result.canceled) return
+    const picked = (result.filePaths && result.filePaths[0]) || ''
+    if (!picked) return
+    shown.value = picked
+    await setSetting(field.key, picked)
+  } catch (error) {
+    shown.value = String(setting(field.key, ''))
+    noteMessage(`选择目录失败：${error.message}`)
   }
 }
 

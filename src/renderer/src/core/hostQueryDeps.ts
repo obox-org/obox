@@ -107,6 +107,18 @@ export function hostQueryDeps(): HostQueryDeps {
     setNotificationDisabled: (id, disabled) => {
       stateStore.setNotificationDisabled(id, disabled)
     },
+    // 更新区动作：与旧设置页同一组 IPC（feedUrl 由当前生效的更新提供者扩展给出）
+    updateCheck: async () => {
+      const active = updaterStore.active
+      if (!active || !active.feedUrl) return { ok: false, error: '没有可用的更新提供者' }
+      return await window.api.checkUpdate({ feedUrl: active.feedUrl })
+    },
+    updateDownload: () => window.api.downloadUpdate(),
+    updateInstall: () => window.api.installUpdate(),
+    // AI 测试连接：main 侧统一走 net.fetch（与扩展 api.net 同一套代理策略）
+    aiTest: (baseUrl, apiKey) => window.api.aiTestConnection({ baseUrl, apiKey }),
+    // 目录选择（扩展设置里的 directory 字段）
+    pickDirectory: (title) => window.api.dialogOpen({ title, properties: ['openDirectory'] }),
     // 安装：走系统文件选择器（与旧管理器同一个 IPC），返回安装结果
     installExtension: () => window.api.installUserExtensionViaDialog(),
     apps: () => [...appStore.items],

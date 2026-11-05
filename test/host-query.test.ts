@@ -25,6 +25,11 @@ function deps(overrides: Partial<HostQueryDeps> = {}): HostQueryDeps {
     setCloseBehavior: () => undefined,
     setLocale: () => undefined,
     setNotificationDisabled: () => undefined,
+    updateCheck: async () => ({ ok: true }),
+    updateDownload: async () => ({ ok: true }),
+    updateInstall: async () => undefined,
+    aiTest: async () => ({ ok: true, message: 'ok' }),
+    pickDirectory: async () => ({ canceled: true, filePaths: [] }),
     commands: () => [{ id: 'app.showCommands', label: '命令面板' }],
     menus: () => [{ id: 'card.rdp', items: [] }],
     themeList: () => [{ id: 'theme-dark', label: '深色' }],
@@ -175,5 +180,32 @@ describe('settings.notification.set', () => {
       deps({ setNotificationDisabled: (id, disabled) => calls.push([id, disabled]) })
     )
     expect(calls).toEqual([['pet.chenzhi', true]])
+  })
+})
+describe('更新 / AI / 目录选择', () => {
+  it('update.* 三个动作转发到宿主', async () => {
+    expect(await runHostQuery('update.check', {}, deps())).toEqual({ ok: true })
+    expect(await runHostQuery('update.download', {}, deps())).toEqual({ ok: true })
+    expect(await runHostQuery('update.install', {}, deps())).toBeNull()
+  })
+
+  it('ai.test 透传 baseUrl 与 apiKey', async () => {
+    const seen: Array<[string, string]> = []
+    await runHostQuery(
+      'ai.test',
+      { baseUrl: 'https://x/v1', apiKey: 'k' },
+      deps({ aiTest: (baseUrl, apiKey) => seen.push([baseUrl, apiKey]) })
+    )
+    expect(seen).toEqual([['https://x/v1', 'k']])
+  })
+
+  it('dialog.openDirectory 透传标题', async () => {
+    const titles: string[] = []
+    await runHostQuery(
+      'dialog.openDirectory',
+      { title: '选择目录' },
+      deps({ pickDirectory: (title) => titles.push(title) })
+    )
+    expect(titles).toEqual(['选择目录'])
   })
 })

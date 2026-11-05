@@ -23,6 +23,11 @@ export interface HostQueryDeps {
   setCloseBehavior(behavior: string): void | Promise<void>
   setLocale(code: string): void | Promise<void>
   setNotificationDisabled(id: string, disabled: boolean): void | Promise<void>
+  updateCheck(): unknown | Promise<unknown>
+  updateDownload(): unknown | Promise<unknown>
+  updateInstall(): unknown | Promise<unknown>
+  aiTest(baseUrl: string, apiKey: string): unknown | Promise<unknown>
+  pickDirectory(title: string): unknown | Promise<unknown>
   commands(): unknown[] | Promise<unknown[]>
   menus(): unknown[] | Promise<unknown[]>
   themeList(): unknown[]
@@ -105,6 +110,30 @@ export async function runHostQuery(
     case 'i18n.setLocale':
       await deps.setLocale(requireString(args, 'code'))
       return null
+    case 'update.check':
+      return await deps.updateCheck()
+    case 'update.download':
+      return await deps.updateDownload()
+    case 'update.install':
+      await deps.updateInstall()
+      return null
+    case 'ai.test':
+      return await deps.aiTest(
+        requireString(args, 'baseUrl'),
+        typeof args === 'object' &&
+          args !== null &&
+          typeof (args as Record<string, unknown>).apiKey === 'string'
+          ? String((args as Record<string, unknown>).apiKey)
+          : ''
+      )
+    case 'dialog.openDirectory':
+      return await deps.pickDirectory(
+        typeof args === 'object' &&
+          args !== null &&
+          typeof (args as Record<string, unknown>).title === 'string'
+          ? String((args as Record<string, unknown>).title)
+          : '选择目录'
+      )
     case 'settings.notification.set':
       await deps.setNotificationDisabled(
         requireString(args, 'id'),
@@ -154,6 +183,11 @@ export const HOST_QUERY_OPS = [
   'window.setCloseBehavior',
   'i18n.setLocale',
   'settings.notification.set',
+  'update.check',
+  'update.download',
+  'update.install',
+  'ai.test',
+  'dialog.openDirectory',
   'settings.host.get',
   'settings.host.set',
   'keybindings.list',
