@@ -444,6 +444,28 @@ export interface MainApi {
     proxy?: ProxyConfig
   ): Promise<{ ok: boolean; status?: number; statusText?: string; data?: unknown; error?: string }>
   /**
+   * 扩展能力：`api.net.download` 的渲染侧通道（**仍属扩展能力面**，与 `netFetch` 同一条代理链路）。
+   *
+   * 主进程实现见 `src/main/net.ts` 的 `downloadToExtensionDataDir`：流式写盘到
+   * `<userData>/extensions/<extId>/data`，`relPath` 的相对路径与 `onExist` 语义由
+   * `src/shared/netDownload.ts` 决定（绝对路径/`..` 拒绝）。
+   */
+  netDownload(
+    req: {
+      extId?: string
+      url?: string
+      relPath?: string
+      onExist?: 'rename' | 'overwrite' | 'skip'
+    },
+    proxy?: ProxyConfig
+  ): Promise<{
+    ok: boolean
+    path?: string
+    bytes?: number
+    skipped?: boolean
+    error?: string
+  }>
+  /**
    * 宿主内部（**不属扩展 API 面**，扩展读代理请用 `api.proxy.get()`）：把「网络代理」设置推给主进程。
    *
    * 渲染进程在**启动时**与**代理设置变化时**调用；主进程据此在扩展联网（`obox-net`）与更新

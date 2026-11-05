@@ -103,6 +103,7 @@ const api: MainApi = {
   httpSyncCommands: (names) => ipcRenderer.send('http:sync-commands', names),
   // 扩展能力：网络（主进程 fetch + 代理）
   netFetch: (req, proxy) => ipcRenderer.invoke('net:fetch', req, proxy),
+  netDownload: (req, proxy) => ipcRenderer.invoke('net:download', req, proxy),
   // 宿主内部：渲染进程启动 / 代理设置变化时把代理推给主进程，由其同时应用到
   // 扩展联网（obox-net）与更新（electron-updater）两个 session（卡 20；主进程侧 registerProxyIpc）
   applyProxy: (proxy) => ipcRenderer.invoke('proxy:apply', proxy),

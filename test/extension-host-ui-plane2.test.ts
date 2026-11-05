@@ -1073,8 +1073,8 @@ describe('对照表', () => {
     const stubs = rows.filter((row) => row.status === 'stub')
     const implemented = rows.filter((row) => row.status === 'implemented')
 
-    assert.equal(rows.length, 118, '对照表共 118 项')
-    assert.equal(implemented.length, 118, '103 项全部已实现')
+    assert.equal(rows.length, 124, '对照表共 124 项')
+    assert.equal(implemented.length, 124, '124 项全部已实现')
     assert.equal(stubs.length, 0, '桩必须为 0（阶段 B 的能力面已全部落地）')
 
     // 本卡的 10 项逐一确认存在

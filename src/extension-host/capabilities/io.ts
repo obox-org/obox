@@ -53,7 +53,7 @@ import tls from 'node:tls'
 import { FRAME_LIMIT_BYTES, EhProtocolError } from '../../shared/extensionHostProtocol'
 import { normalizeProxyConfig, type ProxyConfigInput } from '../../shared/proxyConfig'
 import type { ProxyConfig } from '../../shared/types'
-import type { ExtensionActivationApi } from '../../api/types'
+import type { ExtensionActivationApi, NetDownloadResult } from '../../api/types'
 import { toErrorMessage } from '../errors'
 import type { HostLogger } from '../log'
 import type { SafeRunner } from '../safety'
@@ -68,6 +68,18 @@ export const PROXY_CONFIG_METHOD = 'host.proxyConfig'
 
 /** 宿主 → main：剪贴板读写（宿主内部 RPC，不进扩展 API 面） */
 export const CLIPBOARD_METHOD = 'host.clipboard'
+
+/**
+ * 宿主 → main：`api.net.download` 的落盘（宿主内部 RPC，不进扩展 API 面）。
+ *
+ * 为什么下载要回 main：真实生效的代理/忽略 SSL 在 **Chromium session**（`applyProxyToSession`），
+ * 宿主进程只有 Node 的 http/https；且流式写盘与「扩展 data 目录」的唯一权威在 main
+ * （`downloadToExtensionDataDir`，与 `net:download` IPC 共用同一函数）。
+ */
+export const NET_DOWNLOAD_METHOD = 'host.netDownload'
+
+/** `net.download` 的默认超时：与 main 侧 15min 连接兜底一致（大安装包本来就要更久） */
+export const DEFAULT_DOWNLOAD_TIMEOUT_MS = 15 * 60_000
 
 /** `net.fetch` 的默认超时（与 `src/main/net.ts` 的 30s 一致） */
 export const DEFAULT_NET_TIMEOUT_MS = 30_000
@@ -721,6 +733,8 @@ export interface IoCapabilitiesOptions {
   netTimeoutMs?: number
   /** `net.fetch` 响应体上限（字节，缺省 `FRAME_LIMIT_BYTES` = 8MB） */
   maxBodyBytes?: number
+  /** `net.download` 的硬超时（毫秒，缺省 15min；与 main 侧连接兜底一致） */
+  downloadTimeoutMs?: number
 }
 
 /** 一项 `net.fetch` 的返回（与 `src/api/types.ts` 的声明逐字一致） */
@@ -772,6 +786,7 @@ export function createIoCapabilities(options: IoCapabilitiesOptions): IoCapabili
   const watchBackend = options.watchBackend ?? nodeWatchBackend
   const netTimeoutMs = options.netTimeoutMs ?? DEFAULT_NET_TIMEOUT_MS
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+  const downloadTimeoutMs = options.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS
 
   const watchers = new Map<string, WatchEntry>()
   let disposed = false
@@ -841,6 +856,38 @@ export function createIoCapabilities(options: IoCapabilitiesOptions): IoCapabili
       }
     }
     return text
+  }
+
+  /**
+   * 主进程 `net:download` / `host.netDownload` 的回包 → 扩展 API 的形状。
+   *
+   * 为什么不信 `raw as ...`：宿主与 main 之间只有 JSON 信封，一个字段改名就会让扩展拿到
+   * `path: undefined` 却 `ok: true`（最难排查的一类"下载成功但文件没了"），所以逐字段窄化。
+   */
+  const readDownloadResult = (raw: unknown): NetDownloadResult => {
+    if (typeof raw !== 'object' || raw === null) {
+      return { ok: false, error: '主进程返回了无法识别的下载结果' }
+    }
+    const record = raw as {
+      ok?: unknown
+      path?: unknown
+      bytes?: unknown
+      skipped?: unknown
+      error?: unknown
+    }
+    if (record.ok !== true) {
+      const message = typeof record.error === 'string' ? record.error.trim() : ''
+      return { ok: false, error: message === '' ? '下载失败（主进程未给出原因）' : message }
+    }
+    if (record.skipped === true) return { ok: true, skipped: true }
+    if (typeof record.path !== 'string' || record.path === '') {
+      return { ok: false, error: '主进程返回的下载结果缺少 path' }
+    }
+    return {
+      ok: true,
+      path: record.path,
+      ...(typeof record.bytes === 'number' ? { bytes: record.bytes } : {})
+    }
   }
 
   const net: ExtensionActivationApi['net'] = {
@@ -951,6 +998,62 @@ export function createIoCapabilities(options: IoCapabilitiesOptions): IoCapabili
           statusText: response.statusText,
           data: decodeBody(response, opts.json === true)
         }
+      }
+    },
+
+    /* ------------------------- 便捷方法族（fetch 的薄包装） ------------------------- */
+
+    async get(url, opts = {}): Promise<NetFetchResult> {
+      return net.fetch(url, { ...opts, method: 'GET' })
+    },
+
+    async post(url, body, opts = {}): Promise<NetFetchResult> {
+      return net.fetch(url, { ...opts, method: 'POST', ...(body === undefined ? {} : { body }) })
+    },
+
+    async put(url, body, opts = {}): Promise<NetFetchResult> {
+      return net.fetch(url, { ...opts, method: 'PUT', ...(body === undefined ? {} : { body }) })
+    },
+
+    async delete(url, opts = {}): Promise<NetFetchResult> {
+      return net.fetch(url, { ...opts, method: 'DELETE' })
+    },
+
+    async request(url, opts): Promise<NetFetchResult> {
+      if (typeof opts?.method !== 'string' || opts.method.trim() === '') {
+        return { ok: false, error: 'net.request 必须给 opts.method（如 "PATCH"）' }
+      }
+      return net.fetch(url, opts)
+    },
+
+    /* --------------------------------- 下载（落盘） -------------------------------- */
+
+    async download(url, relPath, opts = {}): Promise<NetDownloadResult> {
+      if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+        return { ok: false, error: 'url 必须是 http/https 地址' }
+      }
+      if (typeof relPath !== 'string' || relPath.trim() === '') {
+        return { ok: false, error: 'relPath 必须是相对扩展 data 目录的路径' }
+      }
+      const bridge = options.hostMain
+      if (bridge === undefined) {
+        // 落盘与代理的真实生效点都在 main（Chromium session + data 目录权威），宿主侧没有等价实现
+        return {
+          ok: false,
+          error: 'net.download 需要主进程 IPC：宿主未接线 hostMain（代理与落盘都在 main）'
+        }
+      }
+      const onExist =
+        opts.onExist === 'overwrite' || opts.onExist === 'skip' ? opts.onExist : 'rename'
+      try {
+        const raw = await bridge.request(
+          NET_DOWNLOAD_METHOD,
+          { extId, url, relPath, onExist },
+          { timeoutMs: downloadTimeoutMs }
+        )
+        return readDownloadResult(raw)
+      } catch (error) {
+        return { ok: false, error: `下载失败：${toErrorMessage(error)}` }
       }
     }
   }
