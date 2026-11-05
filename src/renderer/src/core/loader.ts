@@ -107,6 +107,13 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
   const entries = await window.api.listUserExtensions()
   const result: ExtensionEntry[] = []
   for (const entry of entries) {
+    // 2.0.4：扫描结果里带 error / shadowed 的条目不加载（管理器仍会显示它们与原因）
+    if (entry.error || entry.shadowed) {
+      console.warn(
+        `[loader] 跳过扩展 ${entry.id}（${entry.shadowed ? '已被系统扩展遮蔽' : entry.error}）`
+      )
+      continue
+    }
     const manifest = await fetchUserManifest(entry.id)
     if (!manifest) {
       console.warn(`[loader] 用户扩展 ${entry.id} manifest 读取失败或缺失`)

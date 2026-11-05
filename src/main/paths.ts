@@ -5,7 +5,7 @@
  * 若路径函数留在 `capabilities.ts`，两者就形成循环依赖。抽到这里后依赖是单向的。
  */
 import { app } from 'electron'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { resolveExtensionDir } from './extensionDirs'
 
 /** 用户扩展目录：userData/extensions */
@@ -28,4 +28,24 @@ export function getBuiltinExtensionsDir(): string {
  */
 export function extensionSourceDir(extId: string): string {
   return resolveExtensionDir(extId, getUserExtensionsDir())
+}
+/**
+ * 系统扩展目录（提案 `system-extensions-from-install-dir` D-1/D-6）：
+ * - 打包后：`<安装目录>/extensions`（electron-builder `extraFiles` 落在 exe 同级）
+ * - 开发期：`<仓库>/.build/extensions`（`npm run build:extensions` 的产物）
+ *
+ * 为什么不复用 `resources/extensions`：`process.resourcesPath` 指向 `resources/`，
+ * 而需求要求系统扩展放在**安装目录**下；`extraFiles` 正好落在 exe 旁边。
+ * 开发期回落到 `.build/extensions` 而不是仓库 `extensions/`：后者是**用户扩展**的开发副本，
+ * 按 author 会被判成用户扩展，混在一起会误报"系统扩展 author 不是 obox"。
+ */
+export function getSystemExtensionsDir(): string {
+  return app.isPackaged
+    ? join(dirname(process.execPath), 'extensions')
+    : join(app.getAppPath(), '.build', 'extensions')
+}
+
+/** 两个扩展根（扫描、协议解析、卸载都从这里取，避免各处各拼一次） */
+export function getExtensionRoots(): { systemRoot: string; userRoot: string } {
+  return { systemRoot: getSystemExtensionsDir(), userRoot: getUserExtensionsDir() }
 }

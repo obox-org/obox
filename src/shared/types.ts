@@ -72,10 +72,16 @@ export interface AppInfo {
 
 /** 用户扩展目录下的一个扩展（由主进程扫描，供渲染进程加载/管理） */
 export interface UserExtensionEntry {
-  /** 目录名（= 扩展 id） */
+  /** 目录名（= 扩展 id）：系统 `<name>`、用户 `<name>.<author>` */
   id: string
   /** 绝对路径（渲染进程经 app:// 协议访问，不可直接读盘） */
   path: string
+  /** 来源：系统扩展随安装包分发、不可卸载；用户扩展可装卸 */
+  source?: 'system' | 'user'
+  /** 被同 id 的系统扩展遮蔽（只有用户扩展会为 true） */
+  shadowed?: boolean
+  /** 清单/命名校验不通过时的可读原因（有它就不加载，但管理器要能显示） */
+  error?: string
 }
 
 /** 调试扩展（--debug-extension 声明）：本地目录直接加载，不经过 .oix 安装 */
