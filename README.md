@@ -170,8 +170,8 @@ git push origin v1.0.0
 1. **读本文件**：了解项目概览与架构（上文）
 2. **读约定**：`AGENTS.md`（开发约定 + 强制提交流程）、`CONTEXT.md`（术语表）
 3. **运行**：`npm run dev` 启动应用，观察布局与内置扩展（导航栏"扩展"和"应用"入口）
-4. **改扩展**：先判定扩展类型（内置扩展 / 用户扩展），扩展 API 与 manifest 贡献点查 `docs/extension-api/`——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装**热生效**（禁用/卸载对已激活扩展需重启，见 `docs/adr/0014`）；**跑在宿主进程**（无 DOM/localStorage，清单 `apiVersion: 3`）。**调试扩展**：`obox --debug-extension <id>@<本地目录> --remote-debugging-port=9333` 在 VS Code 里断点调试（不安装）
-5. **改架构**：改动 `src/renderer/src/core/*`、`src/extension-host/*`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `docs/extension-api/` 与受影响的 `skills/obox-ext-*`（见 AGENTS.md 约定）和本文件
+4. **改扩展**：先判定扩展类型（内置扩展 / 用户扩展），扩展 API 与 manifest 贡献点查 `docs/extension-api/`（平台规则见 `docs/extension-api/oix-platform-rules.md`）——manifest 声明贡献点 → 入口绑定命令实现/注册 App 卡片 → `npm run typecheck && npm run lint` → 提交（**分支 + PR**：见 AGENTS.md 提交流程，master 只接受 PR 合并）。**用户扩展**：`extensions/<id>/` 独立项目，`npm run release` 产出 .oix，扩展管理器安装**热生效**（禁用/卸载对已激活扩展需重启，见 `docs/adr/0014`）；**跑在宿主进程**（无 DOM/localStorage，清单 `apiVersion: 3`）。**调试扩展**：`obox --debug-extension <id>@<本地目录> --remote-debugging-port=9333` 在 VS Code 里断点调试（不安装）
+5. **改架构**：改动 `src/renderer/src/core/*`、`src/extension-host/*`、`src/main/*`、IPC、贡献点 schema 后，**必须同步更新** `docs/extension-api/`（平台规则见 `docs/extension-api/oix-platform-rules.md`） 与受影响的 `skills/obox-ext-*`（见 AGENTS.md 约定）和本文件
 
 ## 文档导航
 

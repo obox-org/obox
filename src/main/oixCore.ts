@@ -14,6 +14,12 @@ import { promises as fs } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 import type { ExtensionMeta, InstallOixErrorCode, InstallOixResult } from '../shared/types'
 import { findRuntimeVersionConflict, readRuntimeMarker } from './runtimeInstallGuard'
+import {
+  isPlatformCompatible,
+  KNOWN_PLATFORMS,
+  parsePlatforms,
+  platformMismatchMessage
+} from './oixPlatform'
 import { isPythonCoreError, toPythonArch, validatePythonDeclaration } from './pythonCore'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
@@ -267,6 +273,20 @@ export async function installFromPackage(
         )
       }
     }
+  }
+
+  // 平台规则（用户确认的规则表）：清单 `platforms` 缺省 = universal；
+  // 与宿主平台不匹配时**安装期**就拒掉，别让用户装上跑不起来。
+  const platforms = parsePlatforms(manifest.platforms)
+  if (platforms === null) {
+    throw new OixInstallError(
+      'invalid-manifest',
+      `platforms 必须是 ${KNOWN_PLATFORMS.join(' / ')} 的子集`
+    )
+  }
+  const hostPlatform = { os: process.platform, arch: process.arch }
+  if (!isPlatformCompatible(platforms, hostPlatform)) {
+    throw new OixInstallError('platform-mismatch', platformMismatchMessage(platforms, hostPlatform))
   }
 
   const limits = {

@@ -102,7 +102,7 @@ writeFileSync(
       author: 'obox',
       apiVersion: 4,
       main: './index.js',
-      activationEvents: ['onStartup']
+      activationEvents: ['onStartupFinished']
     },
     null,
     2
