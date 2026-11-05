@@ -41,7 +41,7 @@ async function loadBuiltinManifest(id: string): Promise<ExtensionManifest | null
  *
  * 用名单而不是删目录：迁移期两边都要能跑（回退时把 id 从这里去掉即可恢复内置视图）。
  */
-const MIGRATED_TO_SYSTEM_EXTENSIONS = new Set(['app', 'ext-manager'])
+const MIGRATED_TO_SYSTEM_EXTENSIONS = new Set(['app', 'ext-manager', 'settings'])
 
 export async function collectBuiltinExtensions(): Promise<ExtensionEntry[]> {
   const result: ExtensionEntry[] = []

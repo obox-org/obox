@@ -118,6 +118,17 @@ async function refresh() {
   }
 }
 
+document.getElementById('install').addEventListener('click', async () => {
+  try {
+    const outcome = await call('extensions.install')
+    // 用户在文件选择器里取消时返回 null：不是错误，什么都不做
+    if (outcome && outcome.ok === false) statusEl.textContent = `安装失败：${outcome.error}`
+    await refresh()
+  } catch (error) {
+    statusEl.textContent = `安装失败：${error.message}`
+  }
+})
+
 document.getElementById('restart').addEventListener('click', () => {
   void call('extensions.restartHost')
 })

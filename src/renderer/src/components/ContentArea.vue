@@ -3,7 +3,7 @@ import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
-import { runHostQuery } from '../core/hostQuery'
+import { runHostQuery, toSerializable } from '../core/hostQuery'
 import { hostQueryDeps } from '../core/hostQueryDeps'
 import { themeStore } from '../core/theme'
 
@@ -32,7 +32,7 @@ async function onPageMessage(event: MessageEvent): Promise<void> {
   }
   try {
     const result = await runHostQuery(data.op, data.args, hostQueryDeps())
-    reply({ type: 'obox:page-reply', id: data.id, ok: true, result })
+    reply({ type: 'obox:page-reply', id: data.id, ok: true, result: toSerializable(result) })
   } catch (error) {
     reply({
       type: 'obox:page-reply',

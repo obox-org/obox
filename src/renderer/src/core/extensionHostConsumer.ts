@@ -129,7 +129,7 @@ import {
 import { outputStore } from './outputStore'
 import { registry, type RegisteredStatusBarItem } from './registry'
 import { STORAGE_KEY, parsePersistedState, stateStore } from './state'
-import { runHostQuery } from './hostQuery'
+import { runHostQuery, toSerializable } from './hostQuery'
 import { hostQueryDeps } from './hostQueryDeps'
 
 import { themeStore } from './theme'
@@ -957,7 +957,7 @@ export function createExtensionHostConsumer(
     if (typeof record.op !== 'string' || record.op === '') {
       throw new Error('ui.hostQuery 需要非空字符串 op')
     }
-    return runHostQuery(record.op, record.args, hostQueryDeps())
+    return toSerializable(await runHostQuery(record.op, record.args, hostQueryDeps()))
   })
 
   /* --------------------------------- 输出通道 --------------------------------- */

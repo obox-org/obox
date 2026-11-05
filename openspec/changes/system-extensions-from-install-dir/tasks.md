@@ -35,11 +35,11 @@
 
 ## 6. 三个系统扩展迁移
 
-- [ ] 6.1 `ext-manager`：迁到 `extensions/ext-manager/`，改为独立页面，用公共 API 实现列表/装/卸/启停；验证：真机可安装、禁用、卸载用户扩展，系统扩展无卸载按钮
-- [ ] 6.2 `settings`：迁到 `extensions/settings/`，用公共 API 读写宿主设置/主题/快捷键；验证：改代理与主题即时生效
-- [ ] 6.3 `app`：迁到 `extensions/app/`，用 `api.apps.list` 渲染首页；验证：首页卡片与命令面板可用
-- [ ] 6.4 外壳兜底：`App.vue` 缺失系统 `app` 扩展时显示错误页；验证：单测（源码门禁）+ 手工删除 `.build/extensions/app` 后启动
-- [ ] 6.5 源码门禁：三个系统扩展不得 import 渲染进程内部单例；验证：新增测试扫描 import 并失败
+- [x] 6.1 `ext-manager`：迁到 `extensions/ext-manager/`，改为独立页面，用公共 API 实现列表/装/卸/启停；验证：真机可安装、禁用、卸载用户扩展，系统扩展无卸载按钮
+- [x] 6.2 `settings`：迁到 `extensions/settings/`，用公共 API 读写宿主设置/主题/快捷键；验证：改代理与主题即时生效
+- [x] 6.3 `app`：迁到 `extensions/app/`，用 `api.apps.list` 渲染首页；验证：首页卡片与命令面板可用
+- [x] 6.4 外壳兜底：`App.vue` 缺失系统 `app` 扩展时显示错误页；验证：单测（源码门禁）+ 手工删除 `.build/extensions/app` 后启动
+- [x] 6.5 源码门禁：三个系统扩展不得 import 渲染进程内部单例；验证：新增测试扫描 import 并失败
 
 ## 7. 集成与发版
 

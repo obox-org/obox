@@ -18,6 +18,7 @@ export interface HostQueryDeps {
   restartHost(): void
   apps(): unknown[] | Promise<unknown[]>
   openApp(id: string): void | Promise<void>
+  installExtension(): Promise<unknown>
   commands(): unknown[] | Promise<unknown[]>
   menus(): unknown[] | Promise<unknown[]>
   themeList(): unknown[]
@@ -71,6 +72,8 @@ export async function runHostQuery(
     case 'extensions.uninstall':
       await deps.uninstall(requireString(args, 'id'))
       return null
+    case 'extensions.install':
+      return await deps.installExtension()
     case 'extensions.restartHost':
       deps.restartHost()
       return null
@@ -120,6 +123,7 @@ export const HOST_QUERY_OPS = [
   'extensions.list',
   'extensions.setEnabled',
   'extensions.uninstall',
+  'extensions.install',
   'extensions.restartHost',
   'apps.list',
   'apps.open',
@@ -135,3 +139,19 @@ export const HOST_QUERY_OPS = [
   'keybindings.reset',
   'pages.open'
 ] as const
+/**
+ * 把查询结果清洗成**可跨文档/跨进程传输**的纯数据。
+ *
+ * 为什么必须做：主题/快捷键/卡片表来自 Vue 的 `reactive`，直接 `postMessage` 会抛
+ * "could not be cloned"（真机踩到：设置页初始化直接失败）。JSON 往返会同时去掉 Proxy、
+ * 函数与不可枚举列——扩展页面本来也只能用纯数据。
+ * 循环引用等极端情况回退为 null（宁可少一个字段，也不能让整条调用失败）。
+ */
+export function toSerializable(value: unknown): unknown {
+  if (value === undefined) return undefined
+  try {
+    return JSON.parse(JSON.stringify(value)) as unknown
+  } catch {
+    return null
+  }
+}

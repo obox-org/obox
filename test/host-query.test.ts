@@ -20,6 +20,7 @@ function deps(overrides: Partial<HostQueryDeps> = {}): HostQueryDeps {
     restartHost: () => undefined,
     apps: () => [{ id: 'rdp', title: '远程桌面' }],
     openApp: () => undefined,
+    installExtension: async () => ({ ok: true }),
     commands: () => [{ id: 'app.showCommands', label: '命令面板' }],
     menus: () => [{ id: 'card.rdp', items: [] }],
     themeList: () => [{ id: 'theme-dark', label: '深色' }],
@@ -131,5 +132,15 @@ describe('apps.open', () => {
 
   it('缺 id → 可读错误', async () => {
     await expect(runHostQuery('apps.open', {}, deps())).rejects.toThrow(/id/)
+  })
+})
+describe('extensions.install', () => {
+  it('返回安装结果（由文件选择器决定）', async () => {
+    const result = await runHostQuery(
+      'extensions.install',
+      {},
+      deps({ installExtension: async () => ({ ok: true, id: 'pet.chenzhi' }) })
+    )
+    expect(result).toEqual({ ok: true, id: 'pet.chenzhi' })
   })
 })

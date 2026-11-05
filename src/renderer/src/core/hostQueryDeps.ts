@@ -42,6 +42,8 @@ export function hostQueryDeps(): HostQueryDeps {
     restartHost: () => {
       void window.api.relaunchApp()
     },
+    // 安装：走系统文件选择器（与旧管理器同一个 IPC），返回安装结果
+    installExtension: () => window.api.installUserExtensionViaDialog(),
     apps: () => [...appStore.items],
     // 打开卡片：与 AppView 的 openApp 同一条路（缺字段给安全默认值，避免主进程校验失败）
     openApp: async (id) => {

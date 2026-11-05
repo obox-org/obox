@@ -15,6 +15,8 @@ import { pickStartupNavId } from './core/startupView'
 import oboxIcon from './assets/icons/obox.svg?raw'
 
 const activeNavId = ref<string | null>(null)
+/** 系统扩展缺失（没有任何导航项）时给可读错误，而不是空白窗口 */
+const missingSystemExtensions = ref(false)
 const paletteOpen = ref(false)
 
 /** 扩展（系统扩展）请求打开某个宿主页面：pageId 就是导航项 id（如 settings / app） */
@@ -56,6 +58,8 @@ onMounted(() => {
   void host.ready.then(() => {
     // 启动视图固定为"应用"扩展（不恢复上次选择）——策略与回退链见 core/startupView.ts
     activeNavId.value = pickStartupNavId(registry.navItems)
+    // 系统 app/settings/ext-manager 都没加载上时，壳子只有标题栏 + 空白；这里明确提示
+    missingSystemExtensions.value = registry.navItems.length === 0
   })
   window.addEventListener('keydown', onGlobalKeydown)
   // 托盘"设置"→ 主进程要求切页（切页状态在本组件，主进程无法直接改；ADR-0019 决策 8）
@@ -74,6 +78,10 @@ onUnmounted(() => {
 <template>
   <div class="app-shell">
     <TitleBar :icon="oboxIcon" />
+    <div v-if="missingSystemExtensions" class="boot-error">
+      缺少系统扩展：安装目录下的 <code>extensions\\</code> 里没有可用的 app 扩展。 请重新安装
+      obox，或检查安装目录是否完整。
+    </div>
     <div class="app-body">
       <NavBar :active-nav-id="activeNavId" @select="selectNav" />
       <ContentArea :active-nav-id="activeNavId" />
@@ -98,5 +106,12 @@ onUnmounted(() => {
   flex: 1;
   display: flex;
   min-height: 0;
+}
+.boot-error {
+  padding: 10px 14px;
+  background: rgba(224, 82, 82, 0.12);
+  border-bottom: 1px solid #e05252;
+  color: #f0a0a0;
+  font-size: 12px;
 }
 </style>
