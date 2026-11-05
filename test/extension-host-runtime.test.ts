@@ -549,7 +549,7 @@ test('apiVersion 超限的扩展被标记不可加载（不 import、不崩）',
   const future = await createFixture(dataDir, {
     id: 'future',
     source: sourceActivate('future'),
-    apiVersion: 4
+    apiVersion: 5
   })
   const normal = await createFixture(dataDir, { id: 'normal', source: sourceActivate('normal') })
 
@@ -561,7 +561,7 @@ test('apiVersion 超限的扩展被标记不可加载（不 import、不崩）',
   const futureStatus = harness.runtime.statusOf('future')
   assert.equal(futureStatus?.state, 'rejected')
   assert.equal(futureStatus?.failure?.kind, 'not-loadable')
-  assert.match(futureStatus?.failure?.message ?? '', /v4/)
+  assert.match(futureStatus?.failure?.message ?? '', /v5/)
   assert.equal(state.activations.includes('future'), false, '不可加载的扩展不得被激活')
 
   // 其它扩展不受影响

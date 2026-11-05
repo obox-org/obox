@@ -144,7 +144,7 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
   if (typeof m.version !== 'string' || !SEMVER_RE.test(m.version)) {
     messages.push({ severity: 'error', message: 'version 必填且必须是 semver（如 1.0.0）' })
   }
-  // apiVersion 门槛：宿主值**单源**读根 `package.json` 的 `apiVersion`（ADR-0026 决策 8 起为 **3**，
+  // apiVersion 门槛：宿主值**单源**读根 `package.json` 的 `apiVersion`（ADR-0026 决策 8 起为 **3**，2.0.4 起为 **4**，
   // 运行时环境变了：无 DOM/localStorage、能力来自宿主进程）。规则本身不变——清单声明 **高于**宿主值
   // 才拒绝加载（`2 <= 3` 合法：pet 这类老扩展照常加载）；文案里的"当前 obox 为 vN"也由该字段给出，
   // 不硬编码版本号，升级时不需要再回来改这一句。

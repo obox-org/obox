@@ -99,7 +99,7 @@ export const RENDERER_DELIVERY_MAX_ATTEMPTS = 240
 export const EH_DATA_DIR_ENV = 'EH_DATA_DIR'
 
 /** ADR-0026 决策 8：obox 2.0 的扩展 API 版本 */
-export const DEFAULT_HOST_API_VERSION = 3
+export const DEFAULT_HOST_API_VERSION = 4
 
 /** 合成退出码：握手超时（真实退出码在 Windows/POSIX 上都是非负，负数专用于启动器合成的原因） */
 export const EXIT_CODE_HANDSHAKE_TIMEOUT = -1
