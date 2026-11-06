@@ -453,3 +453,22 @@ electron-builder → app-builder-lib → filelist  → minimatch@…
 | 依赖安全   | `npm run security:audit`（`--omit=dev`）= **0**；Dependabot 开放告警 **0**（`minimatch` 仅 dev 链，见 §16）                                                                                                                          |
 | 验收       | typecheck 0 / lint 0 error / `npm test` 1373 passed + 5 skipped；打包版真机验证 3 系统扩展 + 用户扩展装卸                                                                                                                            |
 | 兼容性     | **不迁移**旧目录：`pet_chenzhi` 等需重装为 `pet.chenzhi`；外部 HTTP 指令名 `pet_chenzhi:state` → `pet.chenzhi:state`                                                                                                                 |
+
+## 18. v2.2.0 发版数据（2026-11-06）
+
+**主题**：`api.net` 补齐全套 HTTP 方法与流式下载——新增 `get` / `post` / `put` / `delete` / `request`
+五个便捷方法（`fetch` 的薄包装）与 `download`（流式落盘到**扩展自己的 data 目录**，相对路径 +
+`onExist: rename|overwrite|skip`，返回相对 `path` 与 `bytes`；自动使用设置-网络的代理与「忽略 SSL」）。
+属**纯加法**，`apiVersion` 仍为 `4`。
+
+| 项         | 值                                                                                                                                                                                                                                                              |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 版本       | `2.2.0`（minor；纯加法，无破坏性变更）                                                                                                                                                                                                                          |
+| apiVersion | `4`（**未变**：新增方法为纯加法，老宿主上按 `typeof api.net.download === 'function'` 特性检测降级，与 `api.ipc.listen` 同一条约定）                                                                                                                             |
+| tag        | `v2.2.0`                                                                                                                                                                                                                                                        |
+| 构建产物   | `obox-2.2.0-x64-setup.exe` 134,141,515 B · `obox-2.2.0-arm64-setup.exe` 128,872,131 B · `obox-2.2.0-setup.exe` 262,175,822 B（无架构后缀，`latest.yml` 的 `path` 指向它）· 三个 `.blockmap`（141,673 / 135,481 / 274,416 B）· `latest.yml` 649 B（共 7 个资产） |
+| 发布地址   | https://github.com/obox-org/obox/releases/tag/v2.2.0（`latest` = v2.2.0）                                                                                                                                                                                       |
+| 依赖安全   | `npm run security:audit`（`--omit=dev`）= **0**；Dependabot 开放告警 **0**（`minimatch` 仅 dev 链，见 §16）                                                                                                                                                     |
+| 验收       | typecheck 0 / lint 0 error / `npm test` 1396 passed + 5 skipped；release 工作流（tag 直推）同样跑完 typecheck + lint + test + audit 后构建                                                                                                                      |
+| 配套扩展   | `obox-updater@1.2.0`（独立仓库，2026-11-06 发布）：新增「下载离线安装包」命令，用 `api.net.get` 读 `latest.yml`、`api.net.download` 落盘到扩展 data 目录的 `installers/`；老宿主上明确提示「需要 obox 2.2.0 及以上」                                            |
+| 兼容性     | 老宿主（≤ 2.1.0）没有新方法：调用得到 `TypeError`，请先特性检测或用 `fetch` 兜底；`download` 的实现依赖宿主 → main 的内部 RPC（`host.netDownload`，与 `net:download` IPC 共用 `downloadToExtensionDataDir`）                                                    |

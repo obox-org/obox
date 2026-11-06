@@ -46,7 +46,7 @@ src/
 │   ├── sqliteCore.ts # 数据库核心逻辑（路径校验/自动建表/表集合/列类型元数据；不依赖 electron，可单测）
 │   ├── timer.ts     # 扩展全局定时器（主进程精确计时，秒粒度，按扩展隔离）
 │   ├── notification.ts # 扩展系统提醒（操作系统通知 + 点击事件）
-│   ├── net.ts       # 扩展网络请求（api.net.fetch，主进程 + 代理，绕渲染 CSP 禁外网）
+│   ├── net.ts       # 扩展网络（api.net.fetch/get/post/put/delete/request/download：主进程 + 代理，绕渲染 CSP 禁外网；download 流式落盘到扩展 data 目录）
 │   ├── ai.ts        # 「设置 → AI」的**测试连接**（宿主内部 IPC：在 netSession() 上发 GET {baseUrl}/models ⇒ 继承宿主代理与忽略 SSL；结果中文、不回传密钥；不属扩展 API 面，ADR-0025）
 │   ├── fs.ts        # 扩展文件系统（api.fs，限定扩展 data 目录，相对路径 + watch）
 │   ├── ext.ts       # 扩展杂项能力（对话框/外链/剪贴板/任务栏进度）
