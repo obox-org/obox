@@ -826,9 +826,9 @@ fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
    `<安装目录>/extensions/<name>`（不是 `<userData>/extensions`），`author` 必须是 `obox`。
    按机器安装到 `Program Files` 时该目录需要管理员权限 ⇒ 用「仅为我安装」重装 obox，
    或以管理员身份运行 obox 后再装（其余扩展仍是普通用户扩展，不受影响）；
-2. **升级后消失**：NSIS 升级会清空安装目录，2.3 起的安装器**会先备份、装完再把带 `runtime.json`
-   的子目录搬回**；从 ≤ 2.2.x 升到 2.3.0 的第一次升级还没有这段脚本 ⇒ 那次需要重装一次运行时
-   （之后长期有效）；
+2. **升级后消失**：NSIS 升级会清空安装目录，2.3 起的安装器**会先备份（.onInit，早于旧卸载器）、
+   装完再把带 `runtime.json` 的子目录搬回**——备份/恢复都在新安装器里，所以**从任何旧版本升级都覆盖**
+   （含 2.2.0 → 2.3.0 的第一次）。如果仍消失，检查 `%TEMP%\obox-runtime-preserve` 是否被清理工具动过；
 3. **`runtime-version-conflict`**：同一个 Python 版本只允许一个内置运行时。先在扩展管理器里卸载
    旧的那个（含 2.2.x 装在用户目录的 `python3.11_runtime.obox`）再装；重装同名运行时会被当作
    迁移自动清掉旧副本；

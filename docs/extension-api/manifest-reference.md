@@ -112,9 +112,9 @@ node scripts/build-python-runtime.mjs --version 3.11.9 --tag 3.11
   按机器安装到 `Program Files` 时系统扩展目录需要管理员权限，否则报 `need-admin`（提示改用当前用户安装或管理员运行）；
 - 本机解释器另有一段列表（`py -0p` 优先、`where python` 回退），与内置按**路径/来源**区分、不去重；
 - 默认解释器存在设置键 `devRuntime.python.default`：`builtin:<扩展id>` 或 `local:<绝对路径>`。
-- **升级不丢**：NSIS 安装脚本在升级前把旧 `extensions/` 备份到 `%TEMP%`，安装结束后只把带
-  `runtime.json` 的子目录搬回（系统扩展本身用新安装包里的那份）。从 ≤ 2.2.x 升到 2.3.0 的**第一次**
-  升级还没有这段脚本，那次需要重装一次运行时。
+- **升级不丢**：NSIS 安装脚本在升级前（`.onInit`，早于旧卸载器）把旧 `extensions/` 备份到 `%TEMP%`，
+  安装结束后只把带 `runtime.json` 的子目录搬回（系统扩展本身用新安装包里的那份）。
+  备份/恢复都在**新**安装器里，因此**从任何旧版本升级都覆盖**（含 2.2.0 → 2.3.0 的第一次）。
 - **开发期注意**：`getSystemExtensionsDir()` 在 dev 下是仓库 `.extensions/`，而 `npm run build:extensions`
   会**整个重建**它 ⇒ 开发时装进去的运行时会在下一次构建时消失，重新装一次即可。
 
