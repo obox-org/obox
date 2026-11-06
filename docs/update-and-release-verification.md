@@ -472,3 +472,22 @@ electron-builder → app-builder-lib → filelist  → minimatch@…
 | 验收       | typecheck 0 / lint 0 error / `npm test` 1396 passed + 5 skipped；release 工作流（tag 直推）同样跑完 typecheck + lint + test + audit 后构建                                                                                                                      |
 | 配套扩展   | `obox-updater@1.2.0`（独立仓库，2026-11-06 发布）：新增「下载离线安装包」命令，用 `api.net.get` 读 `latest.yml`、`api.net.download` 落盘到扩展 data 目录的 `installers/`；老宿主上明确提示「需要 obox 2.2.0 及以上」                                            |
 | 兼容性     | 老宿主（≤ 2.1.0）没有新方法：调用得到 `TypeError`，请先特性检测或用 `fetch` 兜底；`download` 的实现依赖宿主 → main 的内部 RPC（`host.netDownload`，与 `net:download` IPC 共用 `downloadToExtensionDataDir`）                                                    |
+
+## 19. v2.3.0 发版数据（2026-11-06）
+
+**主题**：运行时包（如 `python3.11_runtime`）**改装进系统扩展目录** `<安装目录>/extensions/<name>`
+（仍是用户手动安装的包，不随 obox 分发）；NSIS 升级**保留**带 `runtime.json` 的扩展目录。
+`apiVersion` 仍为 `4`。
+
+| 项         | 值                                                                                                                                                                                                                                                                                                 |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 版本       | `2.3.0`（minor；安装落点变更 + 安装器行为变更）                                                                                                                                                                                                                                                    |
+| apiVersion | `4`（未变）                                                                                                                                                                                                                                                                                        |
+| tag        | `v2.3.0`                                                                                                                                                                                                                                                                                           |
+| 构建产物   | `obox-2.3.0-x64-setup.exe` 134,147,494 B · `obox-2.3.0-arm64-setup.exe` 128,878,071 B · `obox-2.3.0-setup.exe` 262,187,467 B（无架构后缀，`latest.yml` 的 `path` 指向它）· 三个 `.blockmap`（141,581 / 135,440 / 274,256 B）· `latest.yml` 649 B（共 7 个资产）                                    |
+| 发布地址   | https://github.com/obox-org/obox/releases/tag/v2.3.0（`latest` = v2.3.0）                                                                                                                                                                                                                          |
+| 依赖安全   | `npm run security:audit`（`--omit=dev`）= **0**；Dependabot 开放告警 **0**（`minimatch` 仅 dev 链，见 §16）                                                                                                                                                                                        |
+| 验收       | typecheck 0 / lint 0 error / `npm test` 1419 passed + 5 skipped（共 1424）；release 工作流（tag 直推）同样跑完 typecheck + lint + test + audit 后构建                                                                                                                                              |
+| 安装器验证 | 本地用同一份 `build/installer.nsh` 编成 NSIS 夹具做了伪升级：运行时目录（`runtime.json` + `python/python.exe`）保留、`app` 系统扩展被新版本覆盖（`NEW-VERSION`）、全新安装不恢复任何东西；`electron-builder --win nsis --x64` 本地完整构建通过；故意写坏宏后构建失败（证明该包含文件确实参与编译） |
+| 兼容性     | 运行时 id 从 `python3.11_runtime.obox` 变为 `python3.11_runtime`；2.2.x 装在用户根的旧副本在重装同名运行时后**自动迁走**（删除旧目录）。扩展数据目录不变（仍是 `<userData>/extensions/<id>/data`）                                                                                                 |
+| 配套扩展   | `python3.11_runtime`（独立仓库）：仅 README 补充落点/升级保留说明，产物与版本号未变（v3.11.9 资产仍有效）                                                                                                                                                                                          |
