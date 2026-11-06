@@ -82,6 +82,14 @@ export interface UserExtensionEntry {
   shadowed?: boolean
   /** 清单/命名校验不通过时的可读原因（有它就不加载，但管理器要能显示） */
   error?: string
+  /**
+   * 运行时包（扩展根目录带 `runtime.json`）。
+   *
+   * 它可能出现在**系统根**（用户在 2.3+ 手动安装，落点与系统扩展一致，见
+   * `docs/extension-api/manifest-reference.md`）或用户根（2.2.x 及更早）：前者虽然 `source` 是
+   * `system`，但它**不是随安装包分发**的，所以扩展管理器仍要允许卸载/覆盖升级。
+   */
+  runtime?: boolean
 }
 
 /** 调试扩展（--debug-extension 声明）：本地目录直接加载，不经过 .oix 安装 */
@@ -94,7 +102,7 @@ export interface DebugExtensionEntry {
 
 /** .oix 扩展包安装结果 */
 export interface InstallOixResult {
-  /** 安装目录名（= <name>_<清洗后 author>，即扩展 id） */
+  /** 安装目录名（用户扩展 `<name>.<清洗后 author>`；运行时包装到系统扩展目录时是 `name`，即扩展 id） */
   id: string
   /** manifest.name */
   name: string
@@ -108,6 +116,10 @@ export interface InstallOixResult {
   replaced: boolean
   /** 被替换掉的旧版本（仅覆盖安装且能读到旧清单时提供；install 钩子的 ctx.previousVersion） */
   previousVersion?: string
+  /** 实际落盘的扩展目录（绝对路径；install 钩子与"装到了哪个根"都以它为准） */
+  dir: string
+  /** 落到了哪个根：运行时包 = `system`（安装目录/extensions），其余 = `user` */
+  source: 'system' | 'user'
 }
 
 /**
@@ -140,6 +152,7 @@ export interface ExtensionMeta extends ExtensionHookState {
  * - path-invalid：传入的安装路径非法或不存在
  * - write-failed：暂存/替换/写盘失败（旧版本已回滚）
  * - arch-mismatch：扩展自带的是另一架构的 Python 运行时（如 arm64 包在 x64 设备上安装，见 ADR-0018）
+ * - need-admin：运行时包要装进系统扩展目录，但该目录不可写（按机器安装到 Program Files 且当前无管理员权限）
  */
 export type InstallOixErrorCode =
   | 'invalid-package'
@@ -151,6 +164,8 @@ export type InstallOixErrorCode =
   | 'path-invalid'
   | 'write-failed'
   | 'arch-mismatch'
+  // 系统扩展目录不可写（运行时包的目标根在安装目录下）
+  | 'need-admin'
   // 同一个 Python 版本只允许一个内置运行时包（change「开发运行时」）
   | 'runtime-version-conflict'
   // 平台不匹配（清单 platforms 与宿主平台不符，规则见 docs/extension-api/oix-platform-rules.md）

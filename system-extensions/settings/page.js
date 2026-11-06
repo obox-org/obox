@@ -382,7 +382,7 @@ const renderers = {
     frag.append(row('安装内置版本', install))
     frag.append(
       note(
-        '内置版本以用户扩展方式安装（包内根目录需有 runtime.json：{"language":"python","version":"3.12.4"} 并附带 python/python.exe）。'
+        '内置版本装进**系统扩展目录**（<安装目录>/extensions，id 不带作者后缀）：包内根目录需有 runtime.json：{"language":"python","version":"3.12.4"} 并附带 python/python.exe。旧版本装在用户扩展目录里的运行时仍会被识别（可在扩展管理器卸载它）。'
       )
     )
 
@@ -392,7 +392,7 @@ const renderers = {
       const name = el(
         'span',
         'key-name',
-        tag === '内置' ? `${version}（内置）` : `${version || '未知版本'}`
+        tag === '本机' ? `${version || '未知版本'}` : `${version}（${tag}）`
       )
       name.append(document.createTextNode(`  ·  ${detail}`))
       li.append(name)
@@ -415,7 +415,7 @@ const renderers = {
         `builtin:${item.extensionId}`,
         item.version,
         item.hasExecutable ? item.dir : `${item.dir}（缺 python/python.exe）`,
-        '内置'
+        item.source === 'user' ? '内置·用户目录（旧位置）' : '内置'
       )
     }
     for (const item of data.local || []) {

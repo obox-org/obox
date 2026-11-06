@@ -77,6 +77,8 @@ export interface ExtensionEntry {
   pendingInstall?: { version: string; at: number; previousVersion?: string }
   /** 上次 install 钩子跑过的版本（用于判断本次是否属于升级） */
   previousInstallVersion?: string
+  /** 运行时包（目录根有 `runtime.json`）：落系统根但由用户手动安装，可卸载/覆盖升级 */
+  runtime?: boolean
 }
 
 /** 宿主启动配置 */
@@ -1232,7 +1234,8 @@ class ExtensionHost {
       const enabled = !stateStore.isDisabled(entry.id)
       const info = makeExtensionInfo(entry.id, entry.manifest, entry.source, enabled, {
         installedTimestamp: entry.installedTimestamp,
-        pendingInstall: entry.pendingInstall
+        pendingInstall: entry.pendingInstall,
+        runtime: entry.runtime
       })
       all.push(info)
       if (enabled && info.isValid) this.loaders.set(entry.id, entry.load)
@@ -1396,9 +1399,10 @@ class ExtensionHost {
     }
 
     const enabled = !stateStore.isDisabled(id)
-    const info = makeExtensionInfo(id, entry.manifest, 'user', enabled, {
+    const info = makeExtensionInfo(id, entry.manifest, entry.source ?? 'user', enabled, {
       installedTimestamp: entry.installedTimestamp,
-      pendingInstall: entry.pendingInstall
+      pendingInstall: entry.pendingInstall,
+      runtime: entry.runtime
     })
     this.extensions.set(id, info)
 

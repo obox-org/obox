@@ -11,6 +11,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'path'
 import type { InstallOixOutcome } from '../shared/types'
 import { getUserExtensionsDir } from './capabilities'
+import { getSystemExtensionsDir } from './paths'
 import { addKnownExtension } from './extGuard'
 import { registerHookIpc, runExtensionHook } from './hookRunner'
 import {
@@ -44,12 +45,14 @@ function toOutcome(err: unknown): InstallOixOutcome {
  * 失败不阻塞安装结果：钩子失败由渲染进程记入既有 `activationError` 通道。
  */
 async function triggerInstallHook(input: {
+  /** 实际落盘的扩展目录（运行时包装在系统扩展根，不能按用户根硬拼） */
+  dir: string
   id: string
   version: string
   replaced: boolean
   previousVersion?: string
 }): Promise<void> {
-  const dir = join(getUserExtensionsDir(), input.id)
+  const dir = input.dir
   try {
     // "同一版本只跑一次"的判定（与渲染进程共用 src/shared/hookState.ts 的同一套规则）：
     // 同版本重装时该版本已跑过 → 跳过；但要把 pendingInstall 清掉，否则下次启动扫描期又会补跑一次
@@ -87,12 +90,18 @@ export async function installOixFromPath(filePath: string): Promise<InstallOixOu
     const result = await installFromPackage(filePath, {
       targetRoot: root,
       // 暂存目录与安装根同一卷（userData/extensions/.tmp），rename 才是原子的
-      tmpRoot: join(root, '.tmp')
+      tmpRoot: join(root, '.tmp'),
+      // 运行时包（包根带 runtime.json）装到**系统扩展目录**（用户裁定）：
+      // 它仍是用户手动安装的包，只是落点与系统扩展一致；暂存目录由核心按目标根自算。
+      runtimeTargetRoot: getSystemExtensionsDir(),
+      // 同版本唯一性要跨根检查：用户根里可能有 2.2.x 装的旧副本（成功后由核心迁走）
+      runtimeOtherRoots: [root]
     })
     // 登记进"已知扩展"集合（成员校验的真值来源之一）
     addKnownExtension(result.id)
     // 安装完成后立刻跑 install 钩子（渲染进程执行；见上面 triggerInstallHook 的降级语义）
     await triggerInstallHook({
+      dir: result.dir,
       id: result.id,
       version: result.version,
       replaced: result.replaced,

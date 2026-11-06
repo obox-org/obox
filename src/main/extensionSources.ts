@@ -14,7 +14,7 @@
  * 为什么把 IO 注入：本模块不 import electron，`node --test`/`vitest` 可直接用假目录树断言规则，
  * 避免"扫描逻辑只能靠真机验证"。
  */
-import { readdir, readFile } from 'node:fs/promises'
+import { access, readdir, readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 /** 系统扩展的作者标识（目录名不含作者，id 就等于目录名） */
@@ -33,6 +33,8 @@ export interface ScannedExtension {
   shadowed?: boolean
   /** 清单校验不过时的可读原因；有它就不会被加载 */
   error?: string
+  /** 运行时包（目录根有 `runtime.json`）：落系统根时仍属"用户手动安装"，可卸载/覆盖升级 */
+  runtime?: boolean
 }
 
 export interface ScanExtensionSourcesOptions {
@@ -42,6 +44,8 @@ export interface ScanExtensionSourcesOptions {
   listDirectories?: (root: string) => Promise<string[]>
   /** 读清单（默认读 `<dir>/manifest.json`；测试注入） */
   readManifest?: (dir: string) => Promise<{ name?: unknown; author?: unknown } | null>
+  /** 判定是否运行时包（默认看 `<dir>/runtime.json` 是否存在；测试注入） */
+  hasRuntimeMarker?: (dir: string) => Promise<boolean>
   /** 告警出口（默认 console.warn；测试注入收集） */
   warn?: (message: string) => void
 }
@@ -65,6 +69,21 @@ async function defaultReadManifest(
   }
 }
 
+/**
+ * 默认运行时判定：目录根有 `runtime.json` 就是运行时包。
+ *
+ * 用 `access` 而不是读内容：坏 marker 也该被当成"运行时"（否则它会被系统扩展规则挡住卸载，
+ * 反而删不掉）；内容解析交给 `parseRuntimeMarker`（扫描运行时列表时做）。
+ */
+async function defaultHasRuntimeMarker(dir: string): Promise<boolean> {
+  try {
+    await access(join(dir, 'runtime.json'))
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 旧命名（下划线连接 name/author，且没有点号）——不识别，只告警 */
 export function isLegacyExtensionDirName(name: string): boolean {
   return !name.includes('.') && /^[a-z0-9][a-z0-9._-]*_[a-z0-9._-]+$/.test(name)
@@ -84,6 +103,7 @@ export async function scanExtensionSources(
 ): Promise<ScannedExtension[]> {
   const list = options.listDirectories ?? defaultListDirectories
   const readManifest = options.readManifest ?? defaultReadManifest
+  const hasRuntimeMarker = options.hasRuntimeMarker ?? defaultHasRuntimeMarker
   const warn = options.warn ?? ((message: string): void => console.warn(message))
 
   const system: ScannedExtension[] = []
@@ -116,12 +136,16 @@ export async function scanExtensionSources(
       }
       const manifestName = typeof manifest.name === 'string' ? manifest.name.trim() : ''
       const manifestAuthor = typeof manifest.author === 'string' ? manifest.author.trim() : ''
+      // 运行时包（目录根有 runtime.json）：落系统根时"属于用户手动安装"，卸载要放行
+      const runtime = await hasRuntimeMarker(dir)
+      const runtimeFlag = runtime ? { runtime: true } : {}
 
       if (!ID_PATTERN.test(name)) {
         ;(source === 'system' ? system : user).push({
           id: name,
           source,
           dir,
+          ...runtimeFlag,
           error: `目录名非法（只允许 [a-z0-9._-]，且以字母/数字开头）：${name}`
         })
         continue
@@ -133,6 +157,7 @@ export async function scanExtensionSources(
             id: name,
             source,
             dir,
+            ...runtimeFlag,
             error: `系统扩展的 author 必须是 ${SYSTEM_EXTENSION_AUTHOR}（实际：${manifestAuthor || '(缺失)'}）`
           })
           continue
@@ -142,12 +167,13 @@ export async function scanExtensionSources(
             id: name,
             source,
             dir,
+            ...runtimeFlag,
             error: `系统扩展目录名必须等于清单 name（目录 ${name}、清单 ${manifestName || '(缺失)'}）`
           })
           continue
         }
         systemIds.add(name)
-        system.push({ id: name, source, dir })
+        system.push({ id: name, source, dir, ...runtimeFlag })
         continue
       }
 
@@ -157,11 +183,12 @@ export async function scanExtensionSources(
           id: name,
           source,
           dir,
+          ...runtimeFlag,
           error: `用户扩展目录名必须是 <name>.<author>（目录 ${name}、清单推出 ${expectedId || '(缺失)'}）`
         })
         continue
       }
-      user.push({ id: name, source, dir })
+      user.push({ id: name, source, dir, ...runtimeFlag })
     }
   }
 
@@ -211,13 +238,15 @@ export function toUserExtensionEntry(entry: ScannedExtension): {
   source: ExtensionSourceKind
   shadowed?: boolean
   error?: string
+  runtime?: boolean
 } {
   return {
     id: entry.id,
     path: entry.dir,
     source: entry.source,
     ...(entry.shadowed ? { shadowed: true } : {}),
-    ...(entry.error ? { error: entry.error } : {})
+    ...(entry.error ? { error: entry.error } : {}),
+    ...(entry.runtime ? { runtime: true } : {})
   }
 }
 /**
@@ -241,12 +270,14 @@ export function resolveExtensionRoot(
 /**
  * 系统扩展不可卸载 / 不可禁用（change 任务 3.2）：底层统一在这里判定，
  * UI 只是不渲染按钮，不作为唯一防线。
+ *
+ * **运行时包例外**：它落在系统根，但**不随安装包分发**（用户手动装的），所以照常可卸载/禁用。
  */
 export function systemExtensionError(
   entries: ScannedExtension[],
   id: string,
   action: '卸载' | '禁用'
 ): string | null {
-  const hit = entries.find((e) => e.id === id && e.source === 'system')
+  const hit = entries.find((e) => e.id === id && e.source === 'system' && !e.runtime)
   return hit ? `系统扩展不可${action}（${id} 随安装包分发）` : null
 }

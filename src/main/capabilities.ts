@@ -11,9 +11,15 @@ import {
   requireKnownExtension
 } from './extGuard'
 import { runExtensionHook } from './hookRunner'
+import { readRuntimeMarker } from './runtimeInstallGuard'
 
 /** 路径约定实现在 ./paths（独立模块，避免与 hookRunner 形成循环依赖）；此处转出以兼容既有引用 */
-import { getBuiltinExtensionsDir, getExtensionRoots, getUserExtensionsDir } from './paths'
+import {
+  getBuiltinExtensionsDir,
+  getExtensionRoots,
+  getSystemExtensionsDir,
+  getUserExtensionsDir
+} from './paths'
 import { scanDevRuntimes } from './devRuntime'
 import {
   scanExtensionSources,
@@ -88,12 +94,21 @@ export function registerCapabilityIpc(): void {
     // 防路径穿越：id 一律经守卫规范化（只允许 [a-z0-9._-]，拒绝分隔符与 ..），
     // 再校验目标确实是 userData/extensions 的直接子目录
     const safeId = normalizeExtensionId(id)
-    // 系统扩展随安装包分发，不允许卸载（change 任务 3.2：底层拒绝，UI 只是不渲染按钮）
-    const systemGuard = systemExtensionError(await scanAllExtensions(), safeId, '卸载')
-    if (systemGuard) throw new Error(systemGuard)
-    const target = join(root, safeId)
+    const entries = await scanAllExtensions()
+    const entry = entries.find((e) => e.id === safeId && !e.error)
+    // 运行时包（包根带 runtime.json）是**用户手动装进系统扩展根**的（用户裁定），
+    // 它必须可卸载：否则 100MB 运行时既不能升级也不能移除。其余系统扩展仍按原规则拒绝。
+    const runtimeInSystemRoot =
+      entry?.source === 'system' ? (await readRuntimeMarker(entry.dir)) !== null : false
+    if (!runtimeInSystemRoot) {
+      // 系统扩展随安装包分发，不允许卸载（change 任务 3.2：底层拒绝，UI 只是不渲染按钮）
+      const systemGuard = systemExtensionError(entries, safeId, '卸载')
+      if (systemGuard) throw new Error(systemGuard)
+    }
+    const targetRoot = runtimeInSystemRoot ? getSystemExtensionsDir() : root
+    const target = join(targetRoot, safeId)
     const parent = join(target, '..')
-    if (basename(target) !== safeId || parent !== root) {
+    if (basename(target) !== safeId || parent !== targetRoot) {
       throw new Error(`unsafe path: ${target}`)
     }
     // 先跑卸载钩子（尽力而为）：**入口导出的 uninstall 优先**，旧固定文件 `.uninstall.cjs` 回退。
@@ -135,7 +150,10 @@ export function registerCapabilityIpc(): void {
     } catch {
       return false
     }
-    const hook = join(getUserExtensionsDir(), safeId, '.uninstall.cjs')
+    // 运行时可装在系统扩展根：钩子路径按**实际落点**解析，不按用户根硬拼
+    const entries = await scanAllExtensions()
+    const entry = entries.find((e) => e.id === safeId && !e.error)
+    const hook = join(entry?.dir ?? join(getUserExtensionsDir(), safeId), '.uninstall.cjs')
     try {
       await fs.access(hook)
       await runHook(hook)

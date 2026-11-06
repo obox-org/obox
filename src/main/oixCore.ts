@@ -21,6 +21,8 @@ import {
   platformMismatchMessage
 } from './oixPlatform'
 import { isPythonCoreError, toPythonArch, validatePythonDeclaration } from './pythonCore'
+import { parseRuntimeMarker, RUNTIME_MARKER_FILE } from './pythonDiscovery'
+import { SYSTEM_EXTENSION_AUTHOR } from './extensionSources'
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i
 const SAFE_DIR_RE = /^[a-z0-9._-]+$/i
@@ -46,6 +48,16 @@ export interface OixInstallOptions {
   targetRoot: string
   /** 暂存目录根（必须与 targetRoot 同一卷，保证 rename 原子） */
   tmpRoot: string
+  /**
+   * 运行时包的**专用**安装根（系统扩展目录，见 change「运行时安装到系统扩展目录」）。
+   *
+   * 为什么运行时特殊：它是用户手动安装的包（不随 obox 分发），但要落在**系统扩展根**里——
+   * ① 全用户/多版本共享同一份 100MB 解释器；② 扫描器按系统扩展规则判它（id 无作者后缀）。
+   * 省略时（单测/嵌入场景）运行时仍装到 {@link targetRoot}，与旧行为一致。
+   */
+  runtimeTargetRoot?: string
+  /** 额外的"同版本唯一性"检查根（用户扩展根：迁移前旧位置的同一运行时要在成功后清掉） */
+  runtimeOtherRoots?: string[]
   maxEntries?: number
   maxTotalBytes?: number
 }
@@ -82,6 +94,39 @@ function readRootManifest(zip: AdmZip): Record<string, unknown> | null {
   } catch {
     return null
   }
+}
+
+/**
+ * 从 zip **根**读运行时 marker（`runtime.json`），不解压即可判定"这是运行时包"。
+ *
+ * 为什么必须在解压前判定：目标根不同 ⇒ 暂存目录也必须与目标根同卷（rename 原子），
+ * 所以"装到用户根还是系统根"这条决策不能等到解压之后再做。
+ */
+function readRootRuntimeMarker(zip: AdmZip): { language: string; version: string } | null {
+  const entry = zip.getEntries().find((e) => e.entryName === RUNTIME_MARKER_FILE)
+  if (!entry) return null
+  const buf = zip.readFile(entry)
+  if (!buf) return null
+  try {
+    return parseRuntimeMarker(JSON.parse(buf.toString('utf8')))
+  } catch {
+    return null
+  }
+}
+
+/** 写盘类错误 → 稳定错误码（系统扩展目录不可写时给用户可执行的指引，而不是裸 errno） */
+export function mapWriteError(err: unknown, isSystemTarget: boolean): OixInstallError {
+  if (err instanceof OixInstallError) return err
+  const code = (err as { code?: unknown } | null)?.code
+  const message = err instanceof Error ? err.message : String(err)
+  if (isSystemTarget && (code === 'EACCES' || code === 'EPERM' || code === 'EROFS')) {
+    return new OixInstallError(
+      'need-admin',
+      '系统扩展目录不可写：请把 obox 安装在当前用户下（安装时选「仅为我安装」），' +
+        `或以管理员身份运行 obox 后再安装运行时（${message}）`
+    )
+  }
+  return new OixInstallError('write-failed', message)
 }
 
 /**
@@ -251,7 +296,20 @@ export async function installFromPackage(
   }
   const author = typeof manifest.author === 'string' ? manifest.author : undefined
   const displayName = typeof manifest.displayName === 'string' ? manifest.displayName : undefined
-  const id = deriveDirName(name, author)
+
+  // 运行时包（包根有 runtime.json）：**装到系统扩展根**（用户裁定，change「运行时安装到系统扩展目录」）。
+  // 它仍是"用户手动安装"的包（不随 obox 分发），只是落点与系统扩展一致：
+  // ① 全用户共享同一份解释器；② 扫描器按系统扩展规则判它，id = name（不带作者后缀）。
+  // 判定必须在解压前完成：目标根决定暂存目录（rename 原子要求同卷）。
+  const runtime = readRootRuntimeMarker(zip)
+  const goesToSystemRoot = runtime !== null && opts.runtimeTargetRoot !== undefined
+  if (goesToSystemRoot && author !== SYSTEM_EXTENSION_AUTHOR) {
+    throw new OixInstallError(
+      'invalid-manifest',
+      `运行时扩展装到系统扩展目录时 author 必须是 ${SYSTEM_EXTENSION_AUTHOR}（实际：${author ?? '(缺失)'}）`
+    )
+  }
+  const id = goesToSystemRoot ? name : deriveDirName(name, author)
   if (!SAFE_DIR_RE.test(id)) {
     throw new OixInstallError('invalid-manifest', `派生的安装目录名非法: ${id}`)
   }
@@ -295,10 +353,17 @@ export async function installFromPackage(
   }
 
   const run = async (): Promise<InstallOixResult> => {
-    const target = resolve(opts.targetRoot, id) // SAFE_DIR_RE 已保证无分隔符，必在 targetRoot 之下
-    const stage = join(opts.tmpRoot, `${id}.staging-${process.pid}-${Date.now()}`)
-    const backup = join(opts.tmpRoot, `${id}.backup-${process.pid}-${Date.now()}`)
-    await fs.mkdir(opts.tmpRoot, { recursive: true })
+    // 系统扩展根（安装目录下）与用户根可能不在同一卷：暂存目录必须跟着目标根走
+    const targetRoot = goesToSystemRoot ? (opts.runtimeTargetRoot as string) : opts.targetRoot
+    const tmpRoot = goesToSystemRoot ? join(targetRoot, '.tmp') : opts.tmpRoot
+    const target = resolve(targetRoot, id) // SAFE_DIR_RE 已保证无分隔符，必在 targetRoot 之下
+    const stage = join(tmpRoot, `${id}.staging-${process.pid}-${Date.now()}`)
+    const backup = join(tmpRoot, `${id}.backup-${process.pid}-${Date.now()}`)
+    try {
+      await fs.mkdir(tmpRoot, { recursive: true })
+    } catch (err) {
+      throw mapWriteError(err, goesToSystemRoot)
+    }
     await fs.rm(stage, { recursive: true, force: true })
 
     // 覆盖安装：**替换前**把旧版本号与旧的钩子执行记录读出来（替换后旧目录就没了）。
@@ -308,6 +373,9 @@ export async function installFromPackage(
     const previousVersion = replaced ? await readManifestVersion(target) : undefined
     const previousMeta = replaced ? await readExtensionMeta(target) : {}
 
+    // 从旧位置（用户扩展根）迁移过来的同一运行时：成功后再删，失败则保留旧副本
+    let migrateFrom: string | null = null
+
     try {
       await fs.mkdir(stage, { recursive: true })
       await extractToStage(zip, stage, limits)
@@ -315,12 +383,21 @@ export async function installFromPackage(
       // 放在 rename 之前：冲突时 stage 会被清掉，磁盘上不留半成品。
       const runtimeMarker = await readRuntimeMarker(stage)
       if (runtimeMarker) {
-        const conflict = await findRuntimeVersionConflict(
-          opts.targetRoot,
-          runtimeMarker.version,
-          id
-        )
-        if (conflict) {
+        const roots = [targetRoot, ...(opts.runtimeOtherRoots ?? [])]
+        for (const root of roots) {
+          const conflict = await findRuntimeVersionConflict(
+            root,
+            runtimeMarker.version,
+            root === targetRoot ? id : undefined
+          )
+          if (!conflict) continue
+          // 旧位置里**同名运行时**的旧目录（`python3.11_runtime.obox`）不算冲突，算迁移：
+          // 用户在 2.2.x 装过用户扩展版，升到系统根后旧副本必须清掉，否则同版本会有两份。
+          const legacyIds = [name, deriveDirName(name, author)]
+          if (root !== targetRoot && legacyIds.includes(conflict)) {
+            migrateFrom = join(root, conflict)
+            continue
+          }
           throw new OixInstallError(
             'runtime-version-conflict',
             `已存在 Python ${runtimeMarker.version} 的内置运行时（${conflict}）；同一版本只允许安装一个`
@@ -340,9 +417,7 @@ export async function installFromPackage(
       await fs.writeFile(join(stage, '.obox-meta.json'), JSON.stringify(meta), 'utf8')
     } catch (err) {
       await fs.rm(stage, { recursive: true, force: true })
-      throw err instanceof OixInstallError
-        ? err
-        : new OixInstallError('write-failed', err instanceof Error ? err.message : String(err))
+      throw err instanceof OixInstallError ? err : mapWriteError(err, goesToSystemRoot)
     }
 
     // 原子替换：旧目录先改名备份，替换失败则改回（旧版本不丢）
@@ -354,10 +429,13 @@ export async function installFromPackage(
         await fs.rename(backup, target).catch(() => {})
       }
       await fs.rm(stage, { recursive: true, force: true })
-      throw new OixInstallError(
-        'write-failed',
-        `写入安装目录失败：${err instanceof Error ? err.message : String(err)}`
-      )
+      const mapped = mapWriteError(err, goesToSystemRoot)
+      throw mapped.code === 'need-admin'
+        ? mapped
+        : new OixInstallError(
+            'write-failed',
+            `写入安装目录失败：${err instanceof Error ? err.message : String(err)}`
+          )
     }
     // **保留扩展运行时数据**：旧目录已整体挪到 backup，新目录只有包内内容。
     // 在删 backup 之前把旧 data/ 搬回来，否则升级即丢库（api.sqlite）与文件（api.fs）。
@@ -377,7 +455,29 @@ export async function installFromPackage(
     }
     await fs.rm(backup, { recursive: true, force: true }).catch(() => {})
 
-    return { id, name, displayName, version, author, replaced, previousVersion }
+    // 旧位置的同一运行时（用户扩展根）清掉：否则同版本会同时存在两份，扫描/默认值会打架
+    if (migrateFrom) {
+      try {
+        await fs.rm(migrateFrom, { recursive: true, force: true })
+        console.log(`[oix] 运行时已从用户扩展目录迁移到系统扩展目录：${migrateFrom} → ${target}`)
+      } catch (err) {
+        console.warn(
+          `[oix] 清理旧位置的运行时失败（新版本已安装）：${err instanceof Error ? err.message : String(err)}`
+        )
+      }
+    }
+
+    return {
+      id,
+      name,
+      displayName,
+      version,
+      author,
+      replaced,
+      previousVersion,
+      dir: target,
+      source: goesToSystemRoot ? 'system' : 'user'
+    }
   }
 
   // 串行化：把本次安装接到该 id 的队列尾部；队列项自身不抛错，避免影响后续安装

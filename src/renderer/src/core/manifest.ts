@@ -299,6 +299,7 @@ export function makeExtensionInfo(
   extra?: {
     installedTimestamp?: number
     pendingInstall?: { version: string; at: number; previousVersion?: string }
+    runtime?: boolean
   }
 ): ExtensionInfo {
   const validations = validateManifest(manifest)
@@ -311,7 +312,8 @@ export function makeExtensionInfo(
     enabled,
     isActive: false,
     installedTimestamp: extra?.installedTimestamp,
-    pendingInstall: extra?.pendingInstall
+    pendingInstall: extra?.pendingInstall,
+    ...(extra?.runtime ? { runtime: true } : {})
   }
 }
 

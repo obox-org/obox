@@ -47,6 +47,13 @@ export interface ExtensionInfo {
   pendingInstall?: { version: string; at: number; previousVersion?: string }
   /** 安装时间戳（用户扩展） */
   installedTimestamp?: number
+  /**
+   * 运行时包（扩展根目录带 `runtime.json`）。
+   *
+   * 可能落在**系统根**（obox 2.3 起，用户手动安装的运行时包装到 `<安装目录>/extensions`）：
+   * 此时 `source === 'system'`，但它**不随安装包分发**，管理器仍要允许卸载/覆盖升级。
+   */
+  runtime?: boolean
 }
 
 /** 扩展上下文（扩展 apply(ctx) 中可用的宿主能力） */

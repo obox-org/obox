@@ -3,8 +3,9 @@
  *
  * 两路来源（change 里「设置 → 开发运行时」分区）：
  * 1. **本机**：Windows 的 `py -0p` 启动器列表（最准，带默认标记），回退 `where python`；
- * 2. **内置**：安装在 `<userData>/extensions/<id>/` 里、根目录带 {@link RUNTIME_MARKER_FILE}
- *    标记文件的扩展——"内置"由**文件**判定，而不是靠作者名猜。
+ * 2. **内置**：扩展根目录里带 {@link RUNTIME_MARKER_FILE} 标记文件的扩展——"内置"由**文件**判定，
+ *    而不是靠作者名猜。两个根都扫：`<安装目录>/extensions`（运行时包的**正式落点**）与
+ *    `<userData>/extensions`（2.2.x 及更早的旧位置，仅兼容）。
  *
  * 之所以把解析抽成纯函数：`py -0p` 的输出格式、marker 的容错规则如果只能在真机上试，
  * 一改就没人敢动；这里用固定样例锁死行为。
@@ -25,7 +26,7 @@ export interface PythonCandidate {
 
 /** 内置运行时（来自扩展目录里的 marker） */
 export interface BuiltinRuntime {
-  /** 扩展 id（= 安装目录名，如 `python3.12.obox`） */
+  /** 扩展 id（= 安装目录名：系统根是 `python3.11_runtime`，用户根是 `python3.11_runtime.obox`） */
   extensionId: string
   /** 扩展根目录 */
   dir: string
@@ -35,6 +36,12 @@ export interface BuiltinRuntime {
   language: string
   /** 是否已具备可执行文件（缺 python/python.exe 视为损坏） */
   hasExecutable: boolean
+  /**
+   * 来自哪个扩展根：
+   * - `system` = `<安装目录>/extensions`（**运行时包的正式落点**，用户手动安装、落系统根）
+   * - `user` = `<userData>/extensions`（2.2.x 及更早装在这里；仅作兼容扫描）
+   */
+  source?: 'system' | 'user'
 }
 
 /** `py -0p` 一行：` -V:3.12 *        C:\Program Files\Python312\python.exe` */
@@ -126,4 +133,29 @@ export function compareVersions(a: string, b: string): number {
     if (diff !== 0) return diff
   }
   return 0
+}
+
+/**
+ * 合并两个根的内置运行时：**系统根优先**。
+ *
+ * 去重键：
+ * - 同一 `extensionId`（同 id 时系统那份胜出）；
+ * - 同一 `language:version`（约定"同一个 Python 版本只允许一个内置运行时"：2.2.x 装在用户根、
+ *   升级后系统根又有一份时，不该给用户列出两条一样的 3.11.9）。
+ *
+ * 抽成纯函数放这里（而不是 `devRuntime.ts`）：后者 import 了 electron 的 `app`，纯逻辑放一起才能单测。
+ */
+export function mergeBuiltinRuntimes(
+  system: BuiltinRuntime[],
+  user: BuiltinRuntime[]
+): BuiltinRuntime[] {
+  const byId = new Map<string, BuiltinRuntime>()
+  const byVersion = new Set<string>()
+  for (const item of [...system, ...user]) {
+    const key = `${item.language}:${item.version}`
+    if (byId.has(item.extensionId) || byVersion.has(key)) continue
+    byId.set(item.extensionId, item)
+    byVersion.add(key)
+  }
+  return [...byId.values()].sort((a, b) => compareVersions(b.version, a.version))
 }

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   compareVersions,
+  mergeBuiltinRuntimes,
   normalizeCandidates,
   parsePyLauncherList,
   parseRuntimeMarker,
   parseWhereOutput,
-  RUNTIME_MARKER_FILE
+  RUNTIME_MARKER_FILE,
+  type BuiltinRuntime
 } from '../src/main/pythonDiscovery'
 
 /**
@@ -93,5 +95,53 @@ describe('候选归并', () => {
     expect(compareVersions('3.12', '3.9')).toBeGreaterThan(0)
     expect(compareVersions('3.12.1', '3.12')).toBeGreaterThan(0)
     expect(compareVersions('3.12', '3.12')).toBe(0)
+  })
+})
+
+/**
+ * 两个扩展根的内置运行时合并（obox 2.3：运行时包装进系统扩展根；用户根只兼容 2.2.x 旧位置）。
+ */
+describe('内置运行时合并（系统根优先）', () => {
+  const runtime = (
+    extensionId: string,
+    version: string,
+    source: 'system' | 'user'
+  ): BuiltinRuntime => ({
+    extensionId,
+    dir: `${source === 'system' ? 'C:/app' : 'C:/user'}/extensions/${extensionId}`,
+    version,
+    language: 'python',
+    hasExecutable: true,
+    source
+  })
+
+  it('同一版本两个根都有 ⇒ 只留系统根那份', () => {
+    const merged = mergeBuiltinRuntimes(
+      [runtime('python3.11_runtime', '3.11.9', 'system')],
+      [runtime('python3.11_runtime.obox', '3.11.9', 'user')]
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ extensionId: 'python3.11_runtime', source: 'system' })
+  })
+
+  it('不同版本 ⇒ 都保留，按版本降序', () => {
+    const merged = mergeBuiltinRuntimes(
+      [runtime('python3.11_runtime', '3.11.9', 'system')],
+      [runtime('python3.12_runtime.obox', '3.12.4', 'user')]
+    )
+    expect(merged.map((r) => r.version)).toEqual(['3.12.4', '3.11.9'])
+  })
+
+  it('同 id 时系统那份胜出（不被后者的版本覆盖）', () => {
+    const merged = mergeBuiltinRuntimes(
+      [runtime('py', '3.11.9', 'system')],
+      [runtime('py', '3.13.0', 'user')]
+    )
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toMatchObject({ source: 'system', version: '3.11.9' })
+  })
+
+  it('空输入 ⇒ 空数组（扫描失败不抛）', () => {
+    expect(mergeBuiltinRuntimes([], [])).toEqual([])
   })
 })
