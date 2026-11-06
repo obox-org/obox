@@ -140,6 +140,7 @@ export async function collectUserExtensions(): Promise<ExtensionEntry[]> {
       installedTimestamp: meta.installedTimestamp,
       pendingInstall: meta.pendingInstall,
       previousInstallVersion: meta.install?.version,
+      ...(entry.runtime ? { runtime: true } : {}),
       load: () =>
         import(
           /* @vite-ignore */ `app://extensions/${encodeURIComponent(entry.id)}/${manifest.main}`
@@ -185,6 +186,7 @@ export async function buildUserExtensionEntry(id: string): Promise<ExtensionEntr
     installedTimestamp: meta.installedTimestamp,
     pendingInstall: meta.pendingInstall,
     previousInstallVersion: meta.install?.version,
+    ...(listed.runtime ? { runtime: true } : {}),
     load: () =>
       import(/* @vite-ignore */ `app://extensions/${encodeURIComponent(id)}/${manifest.main}`)
   }

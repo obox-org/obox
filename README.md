@@ -129,6 +129,7 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 - **跑在 Extension Host Process**（完整 Node、**无 DOM/localStorage**）：入口仍是 `export default (api) => {}`，由宿主经 `file://` 动态 `import()`；清单用 `apiVersion: 3` 声明所需 API 版本（宿主当前 = 3）+ `activationEvents`（缺省 `*`）
 - 独立项目，仅依赖扩展 API；以 **.oix**（zip）分发，扩展管理器安装（**热生效**）
+- **运行时包是特例**（如 `python3.11_runtime`）：同样是用户手动安装的 `.oix`，但落点是**系统扩展目录** `<安装目录>/extensions/<name>`（目录名不带作者后缀、`author` 必须 `obox`，可在管理器里卸载/覆盖升级）；NSIS 升级会备份并搬回带 `runtime.json` 的目录，见 [docs/extension-api/manifest-reference.md](docs/extension-api/manifest-reference.md) 的「运行时包」
 - **源码独立仓库托管**：每个扩展在 `github.com/obox-org/<扩展id>` 独立仓库维护（如 [obox-org/todo](https://github.com/obox-org/todo)），obox 仓库不持有扩展源码（`extensions/` 已 gitignore，本地保留副本供开发/打包）
 - `todo/`：待办扩展（作者 chenzhi）——App 卡片打开独立子窗口，内含 Vue 子应用（左侧边栏：我的一天/全部待办/日历/标签 CRUD + 内容栏：快速添加/勾选/行内编辑/优先级）；**待迁移**：其数据目前存在 localStorage（app:// 源），宿主进程里没有 localStorage，改造为 `apiVersion: 3` 时须改用扩展 API 存储
 

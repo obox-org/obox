@@ -42,13 +42,16 @@ function el(tag, className, text) {
   return node
 }
 
-function sourceLabel(source) {
+function sourceLabel(source, runtime) {
+  if (runtime) return '运行时'
   return source === 'system' ? '系统' : '用户'
 }
 
 function row(ext) {
   const li = document.createElement('li')
   li.className = 'ext-row'
+  // 运行时包（目录根有 runtime.json）：落在系统扩展目录，但**不随安装包分发** ⇒ 允许卸载/覆盖升级
+  const isRuntime = ext.runtime === true
 
   const meta = document.createElement('div')
   meta.className = 'ext-meta'
@@ -57,7 +60,7 @@ function row(ext) {
   title.textContent = ext.id
   const badge = document.createElement('span')
   badge.className = ext.source === 'system' ? 'badge system' : 'badge'
-  badge.textContent = sourceLabel(ext.source)
+  badge.textContent = sourceLabel(ext.source, isRuntime)
   title.appendChild(badge)
   meta.appendChild(title)
 
@@ -86,7 +89,12 @@ function row(ext) {
   addRow('作者', manifest.author)
   addRow('入口', manifest.main)
   addRow('描述', manifest.description || manifest.displayName)
-  addRow('来源', ext.source === 'system' ? '系统扩展（安装目录）' : '用户扩展（userData）')
+  const sourceText = isRuntime
+    ? '运行时包（安装目录·手动安装）'
+    : ext.source === 'system'
+      ? '系统扩展（安装目录）'
+      : '用户扩展（userData）'
+  addRow('来源', sourceText)
   if (ext.requiresRestart) addRow('状态', '需重启生效')
   for (const v of ext.validations || []) {
     if (v && v.severity === 'error') addRow('校验错误', v.message)
@@ -100,7 +108,8 @@ function row(ext) {
   li.appendChild(meta)
   li.appendChild(details)
 
-  if (ext.source !== 'system' && !ext.shadowed) {
+  // 系统扩展不渲染操作按钮（底层也拒绝）；运行时包例外——它由用户手动安装，必须可卸载/升级
+  if ((ext.source !== 'system' || isRuntime) && !ext.shadowed) {
     const actions = document.createElement('div')
     actions.className = 'ext-actions'
 

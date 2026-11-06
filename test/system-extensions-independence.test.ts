@@ -92,9 +92,9 @@ describe('文档同步（扩展来源/打包路径变了）', () => {
     expect(readme).toContain('apiVersion: 4')
   })
 
-  it('manifest-reference 有「扩展来源与目录命名」，troubleshooting 有 47 条', () => {
+  it('manifest-reference 有「扩展来源与目录命名」，troubleshooting 有 48 条', () => {
     expect(readRepo('docs/extension-api/manifest-reference.md')).toContain('扩展来源与目录命名')
-    expect(readRepo('docs/extension-api/troubleshooting.md')).toContain('## 47.')
+    expect(readRepo('docs/extension-api/troubleshooting.md')).toContain('## 48.')
   })
 })
 describe('应用页卡片交互', () => {

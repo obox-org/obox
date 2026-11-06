@@ -41,13 +41,16 @@ const SYSTEM = 'C:/app/extensions'
 const USER = 'C:/user/extensions'
 
 async function scan(
-  files: Record<string, { name?: string; author?: string } | null>
+  files: Record<string, { name?: string; author?: string } | null>,
+  /** 视为"运行时包"（目录根有 runtime.json）的目录 */
+  runtimeDirs: string[] = []
 ): Promise<{ entries: ScannedExtension[]; warnings: string[] }> {
   const warnings: string[] = []
   const entries = await scanExtensionSources({
     systemRoot: SYSTEM,
     userRoot: USER,
     ...tree(files),
+    hasRuntimeMarker: async (dir: string): Promise<boolean> => runtimeDirs.includes(norm(dir)),
     warn: (m: string) => warnings.push(m)
   })
   return { entries, warnings }
@@ -201,5 +204,55 @@ describe('根解析与系统扩展保护', () => {
     expect(systemExtensionError(entries, 'settings', '卸载')).toContain('系统扩展不可卸载')
     expect(systemExtensionError(entries, 'settings', '禁用')).toContain('系统扩展不可禁用')
     expect(systemExtensionError(entries, 'pet.chenzhi', '卸载')).toBeNull()
+  })
+
+  it('运行时包（系统根 + runtime.json）不受"系统扩展不可卸载"限制', () => {
+    const entries = [
+      {
+        id: 'python3.11_runtime',
+        source: 'system' as const,
+        dir: 'C:/app/extensions/python3.11_runtime',
+        runtime: true
+      }
+    ]
+    expect(systemExtensionError(entries, 'python3.11_runtime', '卸载')).toBeNull()
+    expect(systemExtensionError(entries, 'python3.11_runtime', '禁用')).toBeNull()
+  })
+})
+
+describe('运行时包标记（runtime.json）', () => {
+  it('系统根里的运行时包：runtime=true，且 IPC 载荷把它带出去（管理器据此允许卸载）', async () => {
+    const { entries } = await scan(
+      {
+        [`${SYSTEM}/python3.11_runtime`]: { name: 'python3.11_runtime', author: 'obox' },
+        [`${SYSTEM}/settings`]: { name: 'settings', author: 'obox' }
+      },
+      [`${SYSTEM}/python3.11_runtime`]
+    )
+    const runtime = entries.find((e) => e.id === 'python3.11_runtime')
+    expect(runtime?.runtime).toBe(true)
+    expect(runtime?.source).toBe('system')
+    expect(toUserExtensionEntry(runtime!)).toEqual({
+      id: 'python3.11_runtime',
+      path: runtime!.dir,
+      source: 'system',
+      runtime: true
+    })
+    // 普通系统扩展不受影响（不带 runtime 字段，避免清单外扩）
+    const settings = entries.find((e) => e.id === 'settings')
+    expect(settings?.runtime).toBeUndefined()
+    expect(toUserExtensionEntry(settings!)).toEqual({
+      id: 'settings',
+      path: settings!.dir,
+      source: 'system'
+    })
+  })
+
+  it('用户根里的运行时包（2.2.x 旧位置）同样带 runtime=true', async () => {
+    const { entries } = await scan(
+      { [`${USER}/python3.11_runtime.obox`]: { name: 'python3.11_runtime', author: 'obox' } },
+      [`${USER}/python3.11_runtime.obox`]
+    )
+    expect(entries[0]).toMatchObject({ source: 'user', runtime: true })
   })
 })

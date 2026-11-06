@@ -12,7 +12,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { crc32 } from 'node:zlib'
-import { installFromPackage, OixInstallError } from '../src/main/oixCore'
+import { installFromPackage, mapWriteError, OixInstallError } from '../src/main/oixCore'
 import { toPythonArch } from '../src/main/pythonCore'
 
 let workDir = ''
@@ -137,7 +137,10 @@ describe('oixCore · 正常安装', () => {
       displayName: undefined,
       version: '1.0.0',
       author: 'chenzhi',
-      replaced: false
+      replaced: false,
+      // 落点与来源（安装钩子按实际目录跑；运行时包装系统根时这两项会变）
+      dir: join(targetRoot, 'demo-ext.chenzhi'),
+      source: 'user'
     })
     const dir = join(targetRoot, 'demo-ext.chenzhi')
     expect(existsSync(join(dir, 'index.js'))).toBe(true)
@@ -457,5 +460,158 @@ describe('oixCore · Python 运行时声明（安装期校验，issue #51）', (
       expect(r.id, label).toBe(`${name}.chenzhi`)
       expect(existsSync(join(targetRoot, r.id, 'index.js')), label).toBe(true)
     }
+  })
+})
+
+/**
+ * 运行时包的落点（用户裁定，obox 2.3）：**装进系统扩展目录**，而不是用户扩展目录。
+ *
+ * 运行时包 = 包根带 `runtime.json`。它是"用户手动安装的包"（不随 obox 分发），但落点与系统扩展一致：
+ * id = manifest.name（不带作者后缀）、author 必须是 obox，且可卸载/覆盖升级。
+ */
+describe('oixCore · 运行时包装到系统扩展根', () => {
+  const RUNTIME_MARKER = JSON.stringify({ language: 'python', version: '3.11.9' })
+
+  /** 造一个运行时包（author 默认 obox；带 runtime.json + python/python.exe） */
+  async function makeRuntimeOix(
+    fileName: string,
+    overrides: { name?: string; author?: string; version?: string } = {}
+  ): Promise<string> {
+    const name = overrides.name ?? 'python3.11_runtime'
+    return makeOix(
+      fileName,
+      [
+        ['index.js', 'export default () => {}\n'],
+        ['runtime.json', RUNTIME_MARKER],
+        ['python/python.exe', 'MZ']
+      ],
+      {
+        name,
+        version: overrides.version ?? '3.11.9',
+        main: './index.js',
+        author: overrides.author ?? 'obox',
+        apiVersion: 4
+      }
+    )
+  }
+
+  /** 用户根 + 系统根（模拟 oix.ts 的接线） */
+  async function runtimeOpts(): Promise<{
+    targetRoot: string
+    tmpRoot: string
+    runtimeTargetRoot: string
+    runtimeOtherRoots: string[]
+  }> {
+    const systemRoot = join(workDir, 'install', 'extensions')
+    await fs.mkdir(systemRoot, { recursive: true })
+    return {
+      targetRoot,
+      tmpRoot,
+      runtimeTargetRoot: systemRoot,
+      runtimeOtherRoots: [targetRoot]
+    }
+  }
+
+  it('落系统扩展根：id = name（无作者后缀）、source=system、文件与 marker 都在', async () => {
+    const o = await runtimeOpts()
+    const file = await makeRuntimeOix('python-x64.oix')
+
+    const r = await installFromPackage(file, o)
+    expect(r).toMatchObject({
+      id: 'python3.11_runtime',
+      name: 'python3.11_runtime',
+      author: 'obox',
+      source: 'system',
+      replaced: false
+    })
+    expect(r.dir).toBe(join(o.runtimeTargetRoot, 'python3.11_runtime'))
+    expect(existsSync(join(r.dir, 'runtime.json'))).toBe(true)
+    expect(existsSync(join(r.dir, 'python', 'python.exe'))).toBe(true)
+    // 用户根里不该再出现它
+    expect(existsSync(join(targetRoot, 'python3.11_runtime.obox'))).toBe(false)
+  })
+
+  it('author 不是 obox → invalid-manifest（系统根要求 author 必须是 obox）', async () => {
+    const o = await runtimeOpts()
+    const file = await makeRuntimeOix('py-bad-author.oix', { author: 'chenzhi' })
+    await expect(installFromPackage(file, o)).rejects.toMatchObject({ code: 'invalid-manifest' })
+  })
+
+  it('覆盖升级：同目录替换、replaced=true，旧 data/ 保留', async () => {
+    const o = await runtimeOpts()
+    const first = await makeRuntimeOix('py-v1.oix')
+    await installFromPackage(first, o)
+    const dir = join(o.runtimeTargetRoot, 'python3.11_runtime')
+    await fs.mkdir(join(dir, 'data'), { recursive: true })
+    await fs.writeFile(join(dir, 'data', 'keep.txt'), 'keep', 'utf8')
+
+    const second = await makeRuntimeOix('py-v2.oix', { version: '3.11.10' })
+    const r = await installFromPackage(second, o)
+    expect(r.replaced).toBe(true)
+    expect(r.previousVersion).toBe('3.11.9')
+    expect(readFileSync(join(dir, 'data', 'keep.txt'), 'utf8')).toBe('keep')
+  })
+
+  it('旧位置（用户根）里的同名运行时 → 视为迁移：装完删掉旧副本，不报冲突', async () => {
+    const o = await runtimeOpts()
+    // 2.2.x 的用户扩展版：目录名带作者后缀
+    const legacyDir = join(targetRoot, 'python3.11_runtime.obox')
+    await fs.mkdir(join(legacyDir, 'python'), { recursive: true })
+    await fs.writeFile(
+      join(legacyDir, 'manifest.json'),
+      JSON.stringify({
+        name: 'python3.11_runtime',
+        version: '3.11.9',
+        main: './index.js',
+        author: 'obox'
+      }),
+      'utf8'
+    )
+    await fs.writeFile(join(legacyDir, 'index.js'), 'x', 'utf8')
+    await fs.writeFile(join(legacyDir, 'runtime.json'), RUNTIME_MARKER, 'utf8')
+    await fs.writeFile(join(legacyDir, 'python', 'python.exe'), 'MZ', 'utf8')
+
+    const file = await makeRuntimeOix('py-migrate.oix')
+    const r = await installFromPackage(file, o)
+    expect(r.source).toBe('system')
+    expect(existsSync(legacyDir)).toBe(false)
+    expect(existsSync(join(o.runtimeTargetRoot, 'python3.11_runtime'))).toBe(true)
+  })
+
+  it('别的同版本运行时（不同名）→ runtime-version-conflict，不写半成品', async () => {
+    const o = await runtimeOpts()
+    const otherDir = join(targetRoot, 'python3.12_runtime.obox')
+    await fs.mkdir(otherDir, { recursive: true })
+    await fs.writeFile(
+      join(otherDir, 'manifest.json'),
+      JSON.stringify({ name: 'python3.12_runtime', version: '3.11.9', main: './index.js' }),
+      'utf8'
+    )
+    await fs.writeFile(join(otherDir, 'runtime.json'), RUNTIME_MARKER, 'utf8')
+
+    const file = await makeRuntimeOix('py-conflict.oix')
+    await expect(installFromPackage(file, o)).rejects.toMatchObject({
+      code: 'runtime-version-conflict'
+    })
+    expect(existsSync(join(o.runtimeTargetRoot, 'python3.11_runtime'))).toBe(false)
+  })
+
+  it('不传 runtimeTargetRoot 时行为不变（运行时仍装到 targetRoot，兼容单测/嵌入场景）', async () => {
+    const file = await makeRuntimeOix('py-legacy-behaviour.oix')
+    const r = await installFromPackage(file, { targetRoot, tmpRoot })
+    expect(r.source).toBe('user')
+    expect(r.id).toBe('python3.11_runtime.obox')
+  })
+
+  it('系统根不可写（EACCES/EPERM）→ need-admin 并给出可执行指引', () => {
+    const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    const mapped = mapWriteError(eacces, true)
+    expect(mapped.code).toBe('need-admin')
+    expect(mapped.message).toMatch(/管理员|当前用户/)
+    // 用户根同样错误仍是 write-failed（不需要管理员）
+    expect(mapWriteError(eacces, false).code).toBe('write-failed')
+    // 系统根的其他错误也不该冒充 need-admin
+    const enospc = Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' })
+    expect(mapWriteError(enospc, true).code).toBe('write-failed')
   })
 })

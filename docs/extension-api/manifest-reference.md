@@ -93,19 +93,30 @@ node scripts/build-python-runtime.mjs --version 3.11.9 --tag 3.11
 写 manifest/runtime.json → 用 adm-zip 打包（条目用 `/`，与安装器解析一致）。
 `--libs "numpy pandas matplotlib"` 可改预装库。
 
-「设置 → 开发运行时」里的**内置运行时**就是安装在扩展目录、根目录带 `runtime.json` 的扩展包：
+「设置 → 开发运行时」里的**内置运行时**就是根目录带 `runtime.json` 的扩展包：
 
 ```json
 { "language": "python", "version": "3.12.4" }
 ```
 
-- 目录布局：`<userData>/extensions/<id>/runtime.json` + `<id>/python/python.exe`（+ 预装库）；
+- **落点（obox 2.3 起）**：运行时包**装进系统扩展目录**——
+  `<安装目录>/extensions/python3.11_runtime/runtime.json` + `python/python.exe`（+ 预装库），
+  目录名 = 清单 `name`（**不带作者后缀**），`author` 必须是 `obox`。
+  它仍属**用户手动安装**（不随 obox 分发），所以扩展管理器里允许卸载/覆盖升级；
+  2.2.x 及更早装在用户根的老包（`<userData>/extensions/python3.11_runtime.obox`）仍会被扫描到，
+  重装一次即自动迁移到系统根（成功后旧副本被删除）；
 - **靠文件判定**：有 marker 且 `language === 'python'`、`version` 非空 ⇒ 列表标「内置」；
   缺 `python/python.exe` 会标出「缺 python/python.exe」（损坏可见，而不是静默消失）；
-- 安装方式：设置页「安装运行时…」手动选 `.oix`（走普通用户扩展安装链路），**同版本号禁止重复安装**
-  （安装侧校验，见任务卡）；
+- 扫描两个根：**系统根优先**，同版本只列一条（系统根那份胜出）；
+- 安装方式：设置页「安装运行时…」手动选 `.oix`，**同版本号禁止重复安装**（`runtime-version-conflict`）；
+  按机器安装到 `Program Files` 时系统扩展目录需要管理员权限，否则报 `need-admin`（提示改用当前用户安装或管理员运行）；
 - 本机解释器另有一段列表（`py -0p` 优先、`where python` 回退），与内置按**路径/来源**区分、不去重；
 - 默认解释器存在设置键 `devRuntime.python.default`：`builtin:<扩展id>` 或 `local:<绝对路径>`。
+- **升级不丢**：NSIS 安装脚本在升级前把旧 `extensions/` 备份到 `%TEMP%`，安装结束后只把带
+  `runtime.json` 的子目录搬回（系统扩展本身用新安装包里的那份）。从 ≤ 2.2.x 升到 2.3.0 的**第一次**
+  升级还没有这段脚本，那次需要重装一次运行时。
+- **开发期注意**：`getSystemExtensionsDir()` 在 dev 下是仓库 `.extensions/`，而 `npm run build:extensions`
+  会**整个重建**它 ⇒ 开发时装进去的运行时会在下一次构建时消失，重新装一次即可。
 
 ### 平台（platforms）
 
@@ -118,12 +129,16 @@ node scripts/build-python-runtime.mjs --version 3.11.9 --tag 3.11
 | ------------ | ------------------------------------------------------- | ----------------- | ----------- | --------- |
 | **系统扩展** | `<安装目录>/extensions/<name>/`（随安装包）             | `<name>`          | 必须 `obox` | 都不可    |
 | **用户扩展** | `<userData>/extensions/<name>.<author>/`（`.oix` 安装） | `<name>.<author>` | 任意        | 可        |
+| **运行时包** | `<安装目录>/extensions/<name>/`（**用户手动安装**）     | `<name>`          | 必须 `obox` | 可        |
 
-- **id = 目录名**：系统 `settings`、用户 `pet.chenzhi`；
+- **id = 目录名**：系统 `settings`、用户 `pet.chenzhi`、运行时 `python3.11_runtime`；
 - 扫描顺序：**系统根优先**；同 id 时系统胜出，用户那份在管理器中标注「已遮蔽」且不加载；
 - 旧的下划线命名（`pet_chenzhi`）**不再识别**（升级时请重装为用户扩展）；
 - 数据目录统一在 `<userData>/extensions/<id>/data`——系统扩展代码在安装目录（只读），数据不回写；
-- 安装器按 `<name>.<author>` 建目录（author 做小写 + 去非法字符清洗），与扫描器同一规则。
+- 安装器按 `<name>.<author>` 建目录（author 做小写 + 去非法字符清洗），与扫描器同一规则；
+  运行时包例外：落系统根、目录名 = `<name>`（见上方「运行时包」）；
+- 运行时包虽然 `source === 'system'`，但**不随安装包分发**：管理器的卸载/禁用与覆盖升级照常可用
+  （`UserExtensionEntry.runtime` 标记，UI 因此渲染操作按钮）。
 
 ### 系统扩展的页面入口：`contributes.navItems[].page`
 

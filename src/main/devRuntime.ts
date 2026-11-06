@@ -2,7 +2,9 @@
  * 「开发运行时」的扫描（electron 侧接线；纯解析在 `pythonDiscovery.ts`）。
  *
  * 两路来源：
- * 1. **内置**：`<userData>/extensions/<id>/runtime.json`（marker 文件判定，见 `parseRuntimeMarker`）；
+ * 1. **内置**：扩展根目录里的 `runtime.json`（marker 文件判定，见 `parseRuntimeMarker`）——
+ *    **系统根优先**（`<安装目录>/extensions`，运行时包的正式落点），再扫用户根
+ *    （`<userData>/extensions`，2.2.x 及更早装在这里，仅兼容）；
  * 2. **本机**：Windows `py -0p` 启动器（带默认标记），回退 `where python`；没有版本的再补 `-V`。
  *
  * 失败策略：任何一路失败都返回空数组而不是抛错——设置页只是列个表，扫不到不该让整个页面崩。
@@ -18,10 +20,12 @@ import {
   parseRuntimeMarker,
   parseWhereOutput,
   RUNTIME_MARKER_FILE,
+  compareVersions,
+  mergeBuiltinRuntimes,
   type BuiltinRuntime,
   type PythonCandidate
 } from './pythonDiscovery'
-import { getUserExtensionsDir } from './paths'
+import { getSystemExtensionsDir, getUserExtensionsDir } from './paths'
 
 const execFileAsync = promisify(execFile)
 
@@ -32,7 +36,10 @@ export interface DevRuntimeScanResult {
 }
 
 /** 内置运行时：遍历扩展目录，读 marker；缺 `python/python.exe` 标 hasExecutable=false */
-export async function collectBuiltinRuntimes(extensionsDir: string): Promise<BuiltinRuntime[]> {
+export async function collectBuiltinRuntimes(
+  extensionsDir: string,
+  source: 'system' | 'user' = 'user'
+): Promise<BuiltinRuntime[]> {
   let names: string[]
   try {
     names = await readdir(extensionsDir)
@@ -56,10 +63,11 @@ export async function collectBuiltinRuntimes(extensionsDir: string): Promise<Bui
       dir,
       version: marker.version,
       language: marker.language,
-      hasExecutable: existsSync(join(dir, 'python', 'python.exe'))
+      hasExecutable: existsSync(join(dir, 'python', 'python.exe')),
+      source
     })
   }
-  return result.sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }))
+  return result.sort((a, b) => compareVersions(b.version, a.version))
 }
 
 /** 跑一条命令返回 stdout；失败返回 null（不抛） */
@@ -89,11 +97,12 @@ export async function collectLocalPythons(): Promise<PythonCandidate[]> {
   return normalizeCandidates(candidates)
 }
 
-/** 一次扫描两路来源 */
+/** 一次扫描两路来源（内置运行时：系统根优先，用户根只作旧位置兼容） */
 export async function scanDevRuntimes(): Promise<DevRuntimeScanResult> {
-  const [builtin, local] = await Promise.all([
-    collectBuiltinRuntimes(getUserExtensionsDir()),
+  const [systemBuiltin, userBuiltin, local] = await Promise.all([
+    collectBuiltinRuntimes(getSystemExtensionsDir(), 'system'),
+    collectBuiltinRuntimes(getUserExtensionsDir(), 'user'),
     collectLocalPythons()
   ])
-  return { builtin, local }
+  return { builtin: mergeBuiltinRuntimes(systemBuiltin, userBuiltin), local }
 }

@@ -813,3 +813,24 @@ fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
 3. **系统扩展目录缺失**：安装目录下必须有 `extensions/{app,settings,ext-manager}`。缺失时外壳顶部会显示
    「缺少系统扩展」提示——重装 obox 安装包；开发期则是 `npm run build:extensions` 没跑（产物在项目 `.extensions/`）；
 4. 管理器里显示「已遮蔽」：同 id 的系统扩展已生效，用户目录那份被忽略（预期行为）。
+
+## 48. 装不上 Python 运行时：`need-admin` / 升级后运行时没了
+
+**症状**：设置 →「开发运行时」→「安装运行时…」选 `.oix` 后报
+「系统扩展目录不可写：请把 obox 安装在当前用户下…」（错误码 `need-admin`）；
+或升级 obox 之后「内置运行时」列表里的 Python 不见了。
+
+**原因与处理**：
+
+1. **运行时包的特殊落点**（2.3 起）：包根带 `runtime.json` 的包**装进系统扩展目录**
+   `<安装目录>/extensions/<name>`（不是 `<userData>/extensions`），`author` 必须是 `obox`。
+   按机器安装到 `Program Files` 时该目录需要管理员权限 ⇒ 用「仅为我安装」重装 obox，
+   或以管理员身份运行 obox 后再装（其余扩展仍是普通用户扩展，不受影响）；
+2. **升级后消失**：NSIS 升级会清空安装目录，2.3 起的安装器**会先备份、装完再把带 `runtime.json`
+   的子目录搬回**；从 ≤ 2.2.x 升到 2.3.0 的第一次升级还没有这段脚本 ⇒ 那次需要重装一次运行时
+   （之后长期有效）；
+3. **`runtime-version-conflict`**：同一个 Python 版本只允许一个内置运行时。先在扩展管理器里卸载
+   旧的那个（含 2.2.x 装在用户目录的 `python3.11_runtime.obox`）再装；重装同名运行时会被当作
+   迁移自动清掉旧副本；
+4. 装完仍不出现：确认包内有 `python/python.exe`（缺失会标「缺 python/python.exe」），
+   并重启应用让宿主重新扫描。
