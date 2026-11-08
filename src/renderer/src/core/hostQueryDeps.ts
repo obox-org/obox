@@ -75,6 +75,7 @@ export function hostQueryDeps(): HostQueryDeps {
         id: string
         source: string
         enabled: boolean
+        manifest?: Record<string, unknown>
       }>
       return {
         app: { version: appInfo.version },
@@ -108,6 +109,12 @@ export function hostQueryDeps(): HostQueryDeps {
           id: e.id,
           source: e.source,
           enabled: e.enabled,
+          // 设置页左树「扩展」节点的子项显示名：`%key%` 已按本扩展词条解析，缺失时回退 name → id。
+          // 为什么在宿主侧解析：页面只看得到自己扩展的词条，读不到别的扩展的语言包（同 4.3 的理由）。
+          displayName:
+            resolveExtensionLabel(e.manifest?.displayName, e.id) ||
+            resolveExtensionLabel(e.manifest?.name, e.id) ||
+            e.id,
           notificationDisabled: stateStore.isNotificationDisabled(e.id)
         })),
         update: {

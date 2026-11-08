@@ -52,6 +52,80 @@ body {
   color: var(--accent);
 }
 
+/* 「扩展」可折叠节点：父行 + 独立箭头（箭头只切换展开，不触发父行的列表态） */
+.tree-node.has-children {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tree-arrow {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.tree-arrow:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.tree-children {
+  margin: 0 0 2px 14px;
+  border-left: 1px solid var(--border);
+}
+
+.tree-node.child {
+  padding: 5px 10px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「扩展」列表态：每行一个扩展（名 + 设置项数） */
+.ext-groups {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ext-group {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ext-count {
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm, 12px);
+}
+
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-link);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.ext-back {
+  display: inline-block;
+  margin-top: 4px;
+}
+
 /* 右侧表单 */
 .panel {
   flex: 1;
