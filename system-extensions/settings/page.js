@@ -73,7 +73,10 @@ const treeEl = document.getElementById('tree')
 const panelEl = document.getElementById('panel')
 let snapshot = null
 let active = 'appearance'
-let activeExtPage = null
+/** 左树「扩展」下选中的扩展 id（null = 列表态） */
+let activeExt = null
+/** 「扩展」节点的展开状态：默认折叠，只在本次会话内记忆（不落盘） */
+let extTreeOpen = false
 
 /** 分区 id（顺序即左侧树顺序）；标签在渲染时按 `settings.section.<id>` 取当前语言 */
 const SECTION_IDS = [
@@ -88,6 +91,34 @@ const SECTION_IDS = [
   'notification',
   'extension'
 ]
+
+/**
+ * 「扩展」节点下要显示的扩展：只列**用户扩展**（`source !== 'system'`）且**确实注册了设置页**的。
+ *
+ * 为什么要过滤：系统扩展（应用/设置/扩展）随包分发、无可配置项，列进去只会让左树多两个空节点；
+ * 没有设置页的扩展同理（用户明确要求"没有则不显示那个扩展"）。
+ */
+function settingsGroups() {
+  const userExtensions = (snapshot?.extensions ?? []).filter((ext) => ext.source !== 'system')
+  const byId = new Map(userExtensions.map((ext) => [ext.id, ext]))
+  const groups = []
+  for (const page of snapshot?.extensionPages ?? []) {
+    const info = byId.get(page.extensionId)
+    // 没有对应扩展条目（已卸载但页面还在）或系统扩展 → 不显示
+    if (!info) continue
+    let group = groups.find((g) => g.extensionId === page.extensionId)
+    if (!group) {
+      group = {
+        extensionId: page.extensionId,
+        label: info.displayName || page.extensionId,
+        pages: []
+      }
+      groups.push(group)
+    }
+    group.pages.push(page)
+  }
+  return groups
+}
 
 /* ------------------------------- DOM 小工具 ------------------------------- */
 
@@ -577,20 +608,55 @@ const renderers = {
 
   extension() {
     const frag = document.createDocumentFragment()
-    frag.append(heading(t('settings.section.extension')))
-    if (snapshot.extensionPages.length === 0) {
+    const groups = settingsGroups()
+    const selected = groups.find((group) => group.extensionId === activeExt) ?? null
+    frag.append(heading(selected ? selected.label : t('settings.section.extension')))
+
+    if (groups.length === 0) {
       frag.append(note(t('settings.extension.empty')))
       return frag
     }
-    for (const page of snapshot.extensionPages) {
+
+    // 列表态：每个有设置页的用户扩展一行（显示名 + 设置项数），点进该扩展的配置
+    if (!selected) {
+      frag.append(note(t('settings.extension.listHint')))
+      const list = el('ul', 'plain ext-groups')
+      for (const group of groups) {
+        const li = el('li', 'key-row ext-group')
+        const open = el('button', 'link-btn', group.label)
+        open.type = 'button'
+        open.addEventListener('click', () => {
+          activeExt = group.extensionId
+          // 从列表进配置时顺手展开左树，子项才能显示出"当前选中"
+          extTreeOpen = true
+          render()
+        })
+        const fieldCount = group.pages.reduce((sum, page) => sum + (page.fields?.length ?? 0), 0)
+        li.append(
+          open,
+          el('span', 'ext-count', t('settings.extension.count', { count: fieldCount }))
+        )
+        list.appendChild(li)
+      }
+      frag.append(list)
+      return frag
+    }
+
+    // 选中态：该扩展的全部设置页（多页时按页标题分块）
+    for (const page of selected.pages) {
       const box = el('div', 'ext-page')
-      const title = el('h3', 'ext-title', page.title || page.id)
-      box.appendChild(title)
+      if (selected.pages.length > 1) {
+        box.appendChild(el('h3', 'ext-title', page.title || page.id))
+      }
       for (const field of page.fields || []) {
         box.append(row(field.label || field.key, fieldControl(field)))
       }
       frag.append(box)
     }
+    const back = el('button', 'link-btn ext-back', t('settings.extension.back'))
+    back.type = 'button'
+    back.addEventListener('click', openExtensionsList)
+    frag.append(back)
     return frag
   }
 }
@@ -606,8 +672,10 @@ function fieldControl(field) {
   const value = setting(field.key, field.default)
   const commit = (next) => void setSetting(field.key, next)
   switch (field.type) {
-    case 'checkbox':
-      return checkbox(Boolean(value), (checked) => commit(checked))
+    // 契约里的类型名是 `boolean`（`SettingFieldType`），不是 `checkbox`——写错会让布尔设置项
+    // 掉进 default 分支变成可编辑文本框（真机缺陷：勾选框显示成 "true"/"false" 文本框）
+    case 'boolean':
+      return checkbox(value === true || value === 'true', (checked) => commit(checked))
     case 'select':
       return select(
         (field.options || []).map((option) => ({ value: option.value, label: option.label })),
@@ -697,19 +765,71 @@ function noteMessage(text) {
 
 /* --------------------------------- 树与渲染 -------------------------------- */
 
+/**
+ * 左树：平铺分区，但「扩展」是可折叠节点（子项 = 有设置页的用户扩展）。
+ *
+ * 两种点击语义要分开（父行可点开列表态 + 独立展开箭头，二者互不干扰）：
+ * - 点**箭头**：只切换展开/收起（`stopPropagation`，否则会连带进列表态）；
+ * - 点**父行**：进「扩展」分区的列表态（清 `activeExt`），与旧内置设置页一致；
+ * - 点**子项**：选中该扩展，右侧显示它的全部设置页。
+ *
+ * 默认折叠（不落盘）：只在本次会话内记忆，避免左树在装了多个带设置扩展时变长。
+ */
 function renderTree() {
-  treeEl.replaceChildren(
-    ...SECTION_IDS.map((id) => {
-      const node = el('div', 'tree-node', t(`settings.section.${id}`))
-      if (id === active) node.classList.add('active')
-      node.addEventListener('click', () => {
-        active = id
-        activeExtPage = null
+  const groups = snapshot ? settingsGroups() : []
+  const nodes = []
+  for (const id of SECTION_IDS) {
+    const isExtension = id === 'extension'
+    const node = el('div', 'tree-node', t(`settings.section.${id}`))
+    if (id === active && !(isExtension && activeExt)) node.classList.add('active')
+    node.addEventListener('click', () => {
+      active = id
+      // 点父行 = 列表态（子项选中要清掉，否则右侧仍停在上次打开的扩展上）
+      if (isExtension) activeExt = null
+      render()
+    })
+    if (isExtension && groups.length > 0) {
+      node.classList.add('has-children')
+      const arrow = el('button', 'tree-arrow', extTreeOpen ? '▾' : '▸')
+      arrow.type = 'button'
+      arrow.setAttribute('aria-expanded', String(extTreeOpen))
+      arrow.setAttribute(
+        'aria-label',
+        t(extTreeOpen ? 'settings.extension.collapse' : 'settings.extension.expand')
+      )
+      arrow.addEventListener('click', (event) => {
+        event.stopPropagation()
+        extTreeOpen = !extTreeOpen
         render()
       })
-      return node
-    })
-  )
+      node.prepend(arrow)
+    }
+    nodes.push(node)
+
+    if (isExtension && extTreeOpen) {
+      const children = el('div', 'tree-children')
+      for (const group of groups) {
+        const child = el('div', 'tree-node child', group.label)
+        if (activeExt === group.extensionId) child.classList.add('active')
+        child.addEventListener('click', (event) => {
+          event.stopPropagation()
+          active = 'extension'
+          activeExt = group.extensionId
+          render()
+        })
+        children.appendChild(child)
+      }
+      nodes.push(children)
+    }
+  }
+  treeEl.replaceChildren(...nodes)
+}
+
+/** 回列表态（供右侧列表行点击后回到列表） */
+function openExtensionsList() {
+  active = 'extension'
+  activeExt = null
+  render()
 }
 
 function render() {
@@ -756,6 +876,8 @@ window.addEventListener('hashchange', () => {
   const next = (location.hash || '#appearance').slice(1) || 'appearance'
   if (!renderers[next]) return
   active = next
+  // 换分区一律回列表态（与点父行一致：否则右侧仍停在上次打开的扩展上）
+  activeExt = null
   render()
 })
 
