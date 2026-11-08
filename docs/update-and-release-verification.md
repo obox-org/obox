@@ -511,3 +511,25 @@ electron-builder → app-builder-lib → filelist  → minimatch@…
 | 安装器验证 | 本地 `electron-builder --win --dir --x64` 冒烟：`resources/page-runtime/page.js` 存在（`app://obox/page.js` 的打包落位）；正式安装包由 release 工作流用同一 `electron-builder.yml` 构建                                                                                                             |
 | 兼容性     | 旧 `obox-theme` 协议**保留一个 minor**（先发旧、后发新）：pet overlay 实测仍收到并跟随；新页面在旧宿主（≤2.3.x）走运行时默认值并只 warn 一次（单测覆盖）；`%key%` 缺 key 显示原文并告警；`titleKey` 仍可用但标遗留                                                                                  |
 | 配套扩展   | 无（三个系统扩展随包更新；用户扩展零改动即可继续工作，需主题/语言的页面按 `docs/extension-api/themes-settings.md` 一行接入 `app://obox/page.js`）                                                                                                                                                   |
+
+## 21. v2.4.1 发版数据（2026-11-08）
+
+**主题**：修复 2.4.0 的真机缺陷——设置页切主题/语言后**下拉框回跳**（界面已变深，下拉仍显示浅色）。
+纯缺陷修复，无新增 API、无协议变化。
+
+**根因**：设置页收到 `obox:context` 时**无条件整页重渲染**，而重渲染用的 `snapshot` 仍是进页面时拉的旧值
+（`snapshot.theme.current` = 浅色）⇒ 下拉框被旧快照重建。
+
+| 项         | 值                                                                                                                                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 版本       | `2.4.1`（patch）                                                                                                                                                                                                    |
+| apiVersion | `4`（未变）                                                                                                                                                                                                         |
+| tag        | `v2.4.1`                                                                                                                                                                                                            |
+| 构建产物   | `obox-2.4.1-x64-setup.exe` 134,182,206 B · `obox-2.4.1-arm64-setup.exe` 128,912,892 B · `obox-2.4.1-setup.exe` 262,256,981 B · 三个 `.blockmap`（141,231 / 135,232 / 273,939 B）· `latest.yml` 649 B（共 7 个资产） |
+| 发布地址   | https://github.com/obox-org/obox/releases/tag/v2.4.1（`latest` = v2.4.1）                                                                                                                                           |
+| 修复内容   | ① 上下文回调区分"主题变 / 语言变"：主题只走 CSS 变量不重渲染，语言才 `reload()`；② 收到上下文先用 `ctx.themeId`/`ctx.locale` 修正快照；③ 两个下拉框 change 先写快照再发请求                                         |
+| 依赖安全   | `npm run security:audit` = **0**；Dependabot 开放告警 **0**；release 工作流含同一审计步骤并成功                                                                                                                     |
+| 验收       | typecheck 0 / lint 0 error / `npm test` 1522 passed + 5 skipped；release 工作流依次跑完版本校验、typecheck、lint、test、audit、build 后发布                                                                         |
+| 真机验收   | CDP 驱动真实窗口，模拟用户改下拉框并派发 `change`：下拉保持所选主题 / `--bg` 已切换 / 切回不回跳 / 语言下拉保持 `en` 且标题变 `Settings` —— **5/5 通过**（`tmp/cdp-verify-select.mjs`，验证脚本不入库）             |
+| 回归防护   | `test/settings-page-context.test.ts`：禁止"上下文变化就 render()"、断言先改快照再发请求                                                                                                                             |
+| 兼容性     | 无变化（同 2.4.0；旧 `obox-theme` 协议仍在保留期内）                                                                                                                                                                |
