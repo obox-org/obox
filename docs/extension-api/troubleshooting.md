@@ -853,3 +853,29 @@ fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
 4. **老宿主（≤ 2.3.x）**：没有 `obox:context`，页面运行时会用内置默认 token/语言并 warn 一次；
    这是降级预期，不是错误。
 5. **`titleKey` 不生效**：它只查**宿主**语言包，扩展自己的词条不会被命中；改用 `%key%`。
+
+## 50. 点开 App 卡片是一片白色空白窗口
+
+**症状**：应用里点某张卡片，弹出子窗口，内容区**纯白、什么都没有**，控制台可能只有一条
+`[AppWindow]` 警告（也可能一条都没有）。扩展作者以为页面写坏了，用户以为应用坏了。
+
+**原因**：卡片 `url` 不是 `app://`。典型来源是入口里写了
+`new URL('./ui/index.html', import.meta.url).href`——运行在**宿主进程**（2.0 起默认）时
+`import.meta.url` 是 `file://…`，于是卡片地址变成 `file://…`；而外壳 CSP 是
+`default-src 'self' app:`（`frame-src` 回落到它），**`file://` 的 iframe 会被整块拦掉**。
+旧版本宿主还会把 iframe 底色写死白色，所以"被拦掉"看起来就是"白屏"。
+
+**处理**：
+
+1. **宿主会自动兜底**：路径形如 `…/extensions/<安装目录名>/…` 的 `file://` 会被归一化成
+   `app://extensions/<目录名>/…` 并打一条警告
+   （`[AppWindow] 卡片地址已归一化：file:///… → app://extensions/…`）。
+   若你的卡片能打开但控制台有这条警告，说明**扩展该更新了**（重装或改源码后用 `appPageUrl()`）。
+2. **无法判定的地址会显示诊断块**（不是白屏）：块里给出应用名、原始地址（可选中复制）、
+   原因与修法。按提示改掉 `url` 即可：
+   - 用 `appPageUrl(import.meta.url, { name, author, page })`（参考 `extensions/rdp/lib/appUrl.mjs`）；
+   - 或显式拼 `app://extensions/<安装目录名>/<相对路径>`（目录名是 `<name>_<清洗后 author>`，
+     **不要**硬编码 `manifest.name`）。
+3. **调试扩展**走 `app://debug/<--debug-extension 的 id>/…`，不是 `app://extensions/`。
+4. **确认方法**：子窗口按 `Ctrl+Shift+I` 看 `<iframe>` 的 `src`；或看主进程终端里的
+   `[child-renderer:warning] [AppWindow] …`（子窗口日志会转发）。
