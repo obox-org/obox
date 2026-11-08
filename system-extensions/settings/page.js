@@ -15,10 +15,22 @@ import { startPageContext } from 'app://obox/page.js'
 const pending = new Map()
 let seq = 0
 
+/** 上一次上下文里的语言：用来区分"只是主题变了"和"语言变了" */
+let lastLocale = null
 const pageContext = startPageContext({
-  onChange: () => {
+  onChange: (ctx) => {
+    const localeChanged = ctx.locale !== lastLocale
+    lastLocale = ctx.locale
+    // 上下文是主题/语言的真相：先修正快照，避免重渲染时下拉框回跳到旧值
+    if (snapshot) {
+      snapshot.locale.current = ctx.locale
+      if (ctx.themeId) snapshot.theme.current = ctx.themeId
+    }
     applyStaticText()
-    render()
+    // 主题变化只动了 CSS 变量（运行时已写 :root），**不能整页重渲染**——那会让正在操作的下拉框
+    // 用旧快照重建（真机缺陷：切深色后下拉框又显示浅色）。语言变化才需要重拉快照：
+    // 主题名、扩展设置字段标签都是宿主按当前语言预解析的，必须重新取一次才跟着变。
+    if (localeChanged && snapshot) void reload()
   }
 })
 /** 当前语言取词（缺 key 回退 key；参数用 `{name}` 插值） */
@@ -153,7 +165,11 @@ const renderers = {
         select(
           snapshot.theme.list.map((item) => ({ value: item.id, label: item.label || item.id })),
           snapshot.theme.current,
-          (id) => void call('theme.set', { themeId: id })
+          (id) => {
+            // 先记到快照再发请求：请求成功前若有重渲染（如同时切了语言），下拉框也不会回跳
+            if (snapshot) snapshot.theme.current = id
+            void call('theme.set', { themeId: id })
+          }
         )
       )
     )
@@ -215,7 +231,10 @@ const renderers = {
         select(
           snapshot.locale.list.map((item) => ({ value: item.code, label: item.label })),
           snapshot.locale.current,
-          (code) => void call('i18n.setLocale', { code })
+          (code) => {
+            if (snapshot) snapshot.locale.current = code
+            void call('i18n.setLocale', { code })
+          }
         )
       )
     )
