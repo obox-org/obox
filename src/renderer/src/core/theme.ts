@@ -61,23 +61,36 @@ class ThemeStore {
     return resolveColorScheme(theme?.colorScheme, theme?.id ?? '')
   }
 
-  /** 选择主题：套用 CSS 变量 + 持久化 */
+  /**
+   * 选择主题：套用 CSS 变量 + 持久化。
+   *
+   * **顺序不能反**（change `unified-page-context` 的实测缺陷）：`stateStore.setSetting` 会**同步**
+   * 通知订阅者（`ContentArea` 借此向扩展页面推 `obox:context`、`AppWindow` 借此重推 token），
+   * 而订阅者读的是 `getComputedStyle(:root)` 的**生效值**。若先写设置后写 DOM，推送里带的就是
+   * **上一个主题**的 token——表现正是"切了浅色、扩展页面还是深色"。
+   */
   setTheme(id: string): void {
     const theme = this.themes.find((t) => t.id === id)
     if (!theme) return
+    // 1) 先把 token 写进 :root（订阅者随后读到的就是新值）
+    // 2) 再持久化并通知（`apply` 已按新 id 推过一次浮层，这里不再重复）
+    this.apply(theme, id)
     stateStore.setSetting(THEME_SETTING_KEY, id)
-    this.apply(theme)
   }
 
   /**
    * 把主题 token 套到 `:root`；并清掉上一主题写入的、本次不再声明的键（issue #81）。
    *
    * 之前只 `setProperty`、从不 `removeProperty`：从"全量主题"切到"部分 token 主题"时，
-   * 未声明的键会保留**上一个主题**的行内值，而不是回落到 `main.css` 的默认值——
+   * 未声明的键会保留**上一个主题的行内值**，而不是回落到 `main.css` 的默认值——
    * App 子窗口的 token 快照（`collectThemeTokens` 读 `getComputedStyle` 生效值）与
    * 主题声明值因此会不一致地"继承"旧主题。
+   *
+   * @param themeId 本次生效的主题 id；`setTheme` 在持久化**之前**调用本方法，
+   *                此时 `currentId` 还是旧值，所以必须由调用方显式传入，否则推给浮层的
+   *                `themeId` 会与 `tokens` 不一致（原生控件深浅会跟着旧 id 猜错）。
    */
-  apply(theme: RegisteredTheme): void {
+  apply(theme: RegisteredTheme, themeId: string = this.currentId): void {
     const root = document.documentElement
     const nextKeys = new Set<string>()
     for (const [key, value] of Object.entries(theme.tokens)) {
@@ -88,7 +101,7 @@ class ThemeStore {
       if (!nextKeys.has(key)) root.style.removeProperty(key)
     }
     this.appliedTokenKeys = nextKeys
-    this.pushTokensToHost()
+    this.pushTokensToHost(themeId)
   }
 
   /** 应用当前持久化主题（启动时调用） */
@@ -108,13 +121,13 @@ class ThemeStore {
    * 其余要回落到默认值——浮层页要的是"最终生效值"这一份完整快照。
    * 失败一律吞掉：主题下发不了不能影响主界面。
    */
-  private pushTokensToHost(): void {
+  private pushTokensToHost(themeId: string = this.current?.id ?? ''): void {
     try {
       const tokens = collectThemeTokens(
         (name) => getComputedStyle(document.documentElement).getPropertyValue(name),
         HOST_THEME_TOKEN_NAMES
       )
-      window.api?.themePushTokens?.({ themeId: this.current?.id ?? '', tokens })
+      window.api?.themePushTokens?.({ themeId, tokens })
     } catch {
       // 忽略：极端情况下（如 DOM 尚未就绪）下次主题变更会再推一次
     }
