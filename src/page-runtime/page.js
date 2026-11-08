@@ -70,6 +70,9 @@ const TOKEN_NAME_RE = /^--[a-z0-9-]+$/
 /** 请求重试时刻（毫秒）：宿主可能先推、页面后监听 */
 const DEFAULT_REQUEST_DELAYS_MS = [0, 300, 1000]
 
+/** 组件库样式表地址（change `component-css-library`；与本文具同一 `app://obox` 命名空间） */
+const UI_CSS_URL = 'app://obox/ui.css'
+
 /** 页面上下文快照（传给 `onChange`） */
 function freezeContext(raw) {
   const tokens = raw && typeof raw.tokens === 'object' && raw.tokens ? raw.tokens : {}
@@ -122,6 +125,7 @@ export function isContextMessageShape(data) {
  *   document?: Document,
  *   onChange?: (ctx: ReturnType<typeof freezeContext>) => void,
  *   requestDelaysMs?: number[],
+ *   disableUiCss?: boolean, // 不注入组件库样式表（app://obox/ui.css）；默认注入（幂等）
  *   warn?: (message: string) => void,
  *   now?: () => number,
  *   setTimeout?: typeof setTimeout,
@@ -151,6 +155,26 @@ export function startPageContext(options = {}) {
   let lastSerialized = ''
   const timers = []
   let warnedKeys = new Set()
+
+  /**
+   * 注入组件库样式表（change `component-css-library`）。
+   *
+   * 为什么用 `<link>` 而不是把 CSS 读进来塞 `<style>`：`<link>` 走浏览器缓存、可与首帧并行加载，
+   * 也不需要 `fetch('app://…')`（页面若自带 CSP，`connect-src` 未必放行）。
+   * 幂等：以 `data-obox-ui` 标记判重，重复调用不会插第二个（页面也可能自己手写过 `<link>`）。
+   */
+  function ensureUiCss() {
+    if (options.disableUiCss === true) return
+    const head = doc?.head
+    if (!head || typeof doc.createElement !== 'function') return
+    if (doc.querySelector('link[data-obox-ui]')) return
+    const link = doc.createElement('link')
+    link.rel = 'stylesheet'
+    link.href = UI_CSS_URL
+    link.setAttribute('data-obox-ui', '')
+    head.appendChild(link)
+  }
+  ensureUiCss()
 
   /** 写 token：先清掉上次写过的、本次不再出现的键（与宿主同一条"只写不清会残留旧主题"的教训） */
   function applyTokens(tokens) {
