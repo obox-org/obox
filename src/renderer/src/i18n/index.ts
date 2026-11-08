@@ -103,21 +103,46 @@ function pushLocaleToMain(code: LocaleCode): void {
 // 首帧即同步一次：用户看到托盘语言与应用语言一致，不必等第一次切换
 pushLocaleToMain(initial.code)
 
-/** 当前语言代码（响应式） */
+/**
+ * 当前语言代码（响应式）。
+ *
+ * **优先读设置项**：App 子窗口/overlay 通过 `storage` 事件合并主窗口写入的设置（`applyExternal`），
+ * 它们自己的 vue-i18n 实例可能还没切（各窗口各一份模块实例）。页面上下文/宿主快照都问这个函数，
+ * 以设置为准才能让"主窗口切语言 → 子窗口页面的 `obox:context`"立刻带上新语言。
+ * 设置项还没写过（全新安装）时回退 vue-i18n 的当前值。
+ */
 export function currentLocale(): LocaleCode {
+  const saved = stateStore.getSetting(LOCALE_SETTING_KEY)
+  if (isSupportedLocale(saved)) return saved
   return i18n.global.locale.value as LocaleCode
 }
 
 /**
- * 切换语言：写设置（持久化 + 通知订阅者，key = `locale`）→ 切 vue-i18n。
+ * 跨窗口语言同步（子窗口视角）：主窗口写设置 → `storage` 事件 → `stateStore.applyExternal`
+ * 同步通知订阅者。这里同步本窗口的 vue-i18n，否则子窗口外壳自己的 `t()` 仍是旧语言
+ * （真机缺陷：App 卡片窗口标题/壳子文案不跟着切）。
+ */
+stateStore.onSettingsChanged((key) => {
+  if (key !== LOCALE_SETTING_KEY) return
+  const saved = stateStore.getSetting(LOCALE_SETTING_KEY)
+  if (!isSupportedLocale(saved)) return
+  if (saved === i18n.global.locale.value) return
+  i18n.global.locale.value = saved
+  pushLocaleToMain(saved)
+})
+
+/**
+ * 切换语言：先切 vue-i18n，再写设置（持久化 + 通知订阅者，key = `locale`）。
  *
- * 为什么先写设置：设置是唯一真相；订阅者（壳子 chrome、扩展宿主 snapshot、页面上下文）都由
- * `stateStore` 的变更通知驱动，先写后切可以保证它们看到的是新值。
+ * **顺序不能反**（change `unified-page-context` 真机缺陷，与主题同型）：`stateStore.setSetting`
+ * 会**同步**通知订阅者——`ContentArea` 在这时读 `currentLocale()` 组装 `obox:context` 推给页面、
+ * 扩展宿主也在这时取快照。若先写设置后切 vue-i18n，推出去的是**上一个**语言（切英文后页面仍是
+ * 中文、切回中文才变英文）。所以先让 `currentLocale()` 变成新值，再通知。
  */
 export function setLocale(code: LocaleCode): void {
   if (!isSupportedLocale(code)) return
-  stateStore.setSetting(LOCALE_SETTING_KEY, code)
   i18n.global.locale.value = code
+  stateStore.setSetting(LOCALE_SETTING_KEY, code)
   removeLegacyLocale()
   pushLocaleToMain(code)
 }
