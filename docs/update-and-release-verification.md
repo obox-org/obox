@@ -491,3 +491,23 @@ electron-builder → app-builder-lib → filelist  → minimatch@…
 | 安装器验证 | 本地用同一份 `build/installer.nsh` 编成 NSIS 夹具做了伪升级：运行时目录（`runtime.json` + `python/python.exe`）保留、`app` 系统扩展被新版本覆盖（`NEW-VERSION`）、全新安装不恢复任何东西；`electron-builder --win nsis --x64` 本地完整构建通过；故意写坏宏后构建失败（证明该包含文件确实参与编译） |
 | 兼容性     | 运行时 id 从 `python3.11_runtime.obox` 变为 `python3.11_runtime`；2.2.x 装在用户根的旧副本在重装同名运行时后**自动迁走**（删除旧目录）。扩展数据目录不变（仍是 `<userData>/extensions/<id>/data`）                                                                                                 |
 | 配套扩展   | `python3.11_runtime`（独立仓库）：仅 README 补充落点/升级保留说明，产物与版本号未变（v3.11.9 资产仍有效）                                                                                                                                                                                          |
+
+## 20. v2.4.0 发版数据（2026-11-08）
+
+**主题**：扩展页面统一上下文（`obox:context` v1）——主题（25 个生效 token + `colorScheme`）与语言
+（`locale` + 本扩展 `contributes.i18n` 词条）一条消息下发；`%key%` 标签按扩展命名空间本地化；
+语言移入设置项并与主进程（托盘/关窗/关于）同步。`apiVersion` 仍为 `4`。
+
+| 项         | 值                                                                                                                                                                                                                                                                                                  |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 版本       | `2.4.0`（minor；新增协议 + 行为修复）                                                                                                                                                                                                                                                               |
+| apiVersion | `4`（未变；协议为宿主 ↔ 页面新增，不影响清单）                                                                                                                                                                                                                                                      |
+| tag        | `v2.4.0`                                                                                                                                                                                                                                                                                            |
+| 构建产物   | `obox-2.4.0-x64-setup.exe` 134,181,228 B · `obox-2.4.0-arm64-setup.exe` 128,911,866 B · `obox-2.4.0-setup.exe` 262,254,963 B（无架构后缀，`latest.yml` 的 `path` 指向它）· 三个 `.blockmap`（141,753 / 135,598 / 274,525 B）· `latest.yml` 649 B（共 7 个资产）                                     |
+| 发布地址   | https://github.com/obox-org/obox/releases/tag/v2.4.0（`latest` = v2.4.0）                                                                                                                                                                                                                           |
+| 依赖安全   | `npm run security:audit` = **0**；Dependabot 开放告警 **0**；release 工作流含同一审计步骤并成功                                                                                                                                                                                                     |
+| 验收       | typecheck 0 / lint 0 error / `npm test` 1519 passed + 5 skipped；release 工作流（tag 直推）依次跑完版本校验、typecheck、lint、test、audit、build 后发布                                                                                                                                             |
+| 真机验收   | 用 CDP 驱动 `npm run dev` 的真实窗口断言：三系统页（应用/设置/扩展）主题 × 语言两轮来回 13/13 + 15/15；App `url` 卡片窗口（临时调试扩展）主题/旧协议/上下文/locale 8/8；overlay 窗口 token（主进程链路）+ 新旧协议 3/3；优雅退出后重启，`theme-light` + `en` 从设置恢复（`--bg` 浅色、标题 `Apps`） |
+| 安装器验证 | 本地 `electron-builder --win --dir --x64` 冒烟：`resources/page-runtime/page.js` 存在（`app://obox/page.js` 的打包落位）；正式安装包由 release 工作流用同一 `electron-builder.yml` 构建                                                                                                             |
+| 兼容性     | 旧 `obox-theme` 协议**保留一个 minor**（先发旧、后发新）：pet overlay 实测仍收到并跟随；新页面在旧宿主（≤2.3.x）走运行时默认值并只 warn 一次（单测覆盖）；`%key%` 缺 key 显示原文并告警；`titleKey` 仍可用但标遗留                                                                                  |
+| 配套扩展   | 无（三个系统扩展随包更新；用户扩展零改动即可继续工作，需主题/语言的页面按 `docs/extension-api/themes-settings.md` 一行接入 `app://obox/page.js`）                                                                                                                                                   |
