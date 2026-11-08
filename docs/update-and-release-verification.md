@@ -494,6 +494,10 @@ electron-builder → app-builder-lib → filelist  → minimatch@…
 
 ## 20. v2.4.0 发版数据（2026-11-08）
 
+> **已撤回（2026-11-08）**：v2.0.1 – v2.5.0 的 tag 与 GitHub Release 已按要求全部删除，发布线回退到
+> `v2.0.0`（`package.json` = `2.0.0`）。§20 / §21 / §22 保留为当时的构建与验收记录，**资产已不存在**，
+> 不要按其中链接下载或据此判断线上版本。后续发版须等用户明确确认。
+
 **主题**：扩展页面统一上下文（`obox:context` v1）——主题（25 个生效 token + `colorScheme`）与语言
 （`locale` + 本扩展 `contributes.i18n` 词条）一条消息下发；`%key%` 标签按扩展命名空间本地化；
 语言移入设置项并与主进程（托盘/关窗/关于）同步。`apiVersion` 仍为 `4`。
