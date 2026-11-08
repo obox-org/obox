@@ -1,77 +1,79 @@
 # 主题与设置参考
 
-> **本文件是 obox 主题与设置（主题 token、设置页字段、App 子窗口主题下发）的唯一真相，位置 `docs/extension-api/`**：仓库内其它文档一律引用本文件，不复制副本。
+> **本文件是 obox 主题与设置（主题 token、页面上下文协议、设置页字段）的唯一真相，位置 `docs/extension-api/`**：仓库内其它文档一律引用本文件，不复制副本。
 
-Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 token），设置由内置 `settings` 扩展管理。左侧树共八个分区：外观 / 通用 / 语言 / 快捷键 / 更新 / 网络 / 通知 / 扩展（`src/renderer/src/extensions/settings/SettingsView.vue:229-268`，`TreeKey` 定义见 `:21-29`）。
+Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 token），设置由内置 `settings` 系统扩展管理。左侧树分区以 `system-extensions/settings/page.js` 的 `SECTION_IDS` 为准（外观 / 常规 / 语言 / 快捷键 / 更新 / 网络 / 开发运行时 / AI / 通知 / 扩展）。
 
-## 主题系统
+## 主题与语言的统一下发（`obox:context`，obox 2.4 起）
 
-### 机制
+**一条消息同时给主题和语言**：扩展页面（系统 nav 页 / App `url` 卡片 / overlay iframe）收到同一种
+`obox:context`，不再需要分别监听主题与语言。
 
-- 主题 = 主题扩展 `contributes.themes` 声明的 CSS 变量 token 组（`src/api/contributions.ts:63-70`）
-- 宿主收集所有主题扩展的贡献（`src/renderer/src/core/host.ts:195`），设置"外观"节点下拉选择；选中后把 token `setProperty` 到 `document.documentElement`（`:root`）并持久化（`src/renderer/src/core/theme.ts:50-77`）。持久化值失效时缺省取 id 含 `dark` 的主题（`theme.ts:37-44`）
-- 宿主 UI 组件用 `var(--token, fallback)` 引用 token，主题切换即时生效
-- **每个渲染窗口各有一份 `:root`**：App 子窗口（`?obox-window=app`）启动时由 `host.start()` 收尾的 `applyCurrent()` 应用一次（`src/renderer/src/core/host.ts:1034`）；主窗口此后切主题时，新快照经 `storage` 事件合并进子窗口（`src/renderer/src/core/state.ts` 的 `applyExternal`）并重新应用、再下发给 iframe（见下条与 ADR-0022）
-- **App 子窗口的主题 token 投递（ADR-0022）分两条路**：
-  1. **`srcdoc`（`html`）卡片**：宿主把当前 token 拼成 `<style>:root{…}</style>` 注入**同一份文档**（`src/renderer/src/AppWindow.vue` 的 `iframeSrcdoc`）。CSS 自定义属性不跨文档继承，`srcdoc` 能生效正因为它与宿主同文档；切主题时 iframe **重渲染**（`:key="srcdoc:<themeId>"`）。
-  2. **`url` 卡片（新增）**：iframe 是 `app://extensions|debug/<id>/…`，与父文档**跨源** ⇒ `iframe.contentDocument` 恒为 `null`，宿主**注入不了** CSS/`<style>`，也继承不到变量。因此宿主在三个时机向 `iframe.contentWindow` **单向推送**消息（协议与载荷见下）：① iframe `load` 完成；② 主题变化；③ 收到子页面的 `obox-theme-request`。扩展侧把 `tokens` 逐条 `document.documentElement.style.setProperty(k, v)` 即跟随主题——**不再需要**用 `var(--token, fallback)` 的 fallback 当实际色值（兜底只用于"推送到达前/老宿主"的首帧）。
-  - **`url` 型卡片切主题不再重渲染**：iframe 的 `:key` 是 `url:<url>`，与主题无关（表单里正在填的内容不会被清空）；`srcdoc` 型仍是 `srcdoc:<themeId>`，切主题重建。判据实现为纯函数 `appFrameKey`（`src/renderer/src/core/appTheme.ts`）。
+| 方向        | 消息                                                                                 | 触发                                                    |
+| ----------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| 宿主 → 页面 | `{ type:'obox:context', version:1, themeId, colorScheme, tokens, locale, messages }` | iframe `load` / 主题变化 / 语言变化 / 收到页面请求      |
+| 页面 → 宿主 | `{ type:'obox:context-request' }`                                                    | 页面启动时（建议 0/300/1000 ms 各一次，收到上下文即停） |
 
-### App 子窗口（`url` 型）主题下发协议
+- `tokens` 是 **25 个 token 的生效值**（`main.css` 默认值 + 当前主题覆盖，键形如 `--bg`），与宿主主窗口所见一致；
+- `colorScheme` 是 `'dark' | 'light'`：主题可用 `contributes.themes[].colorScheme` 显式声明，未声明时宿主按主题 id 是否含 `light` 推断；
+- `locale` 是当前界面语言（`zh` / `en`）；`messages` 是**该页面所属扩展自己**的 `contributes.i18n` 词条（当前语言整包，缺 key 回退 zh）；
+- 消息里带 `version: 1`：宿主以后只增字段时页面按 `>=` 判断能否使用某字段。
 
-宿主 `postMessage` 的消息形状（实现在 `src/renderer/src/core/appTheme.ts` + `src/renderer/src/AppWindow.vue`）：
+### 页面运行时（推荐：一行接入）
 
-| 方向          | 消息                                                          | 触发                                                  |
-| ------------- | ------------------------------------------------------------- | ----------------------------------------------------- |
-| 宿主 → 子窗口 | `{ source:'obox-app', action:'obox-theme', themeId, tokens }` | iframe `load` / 主题变化 / 收到请求                   |
-| 子窗口 → 宿主 | `{ source:'obox-app', action:'obox-theme-request' }`          | 扩展启动后（建议 0/300/1000 ms 各一次，收到推送即停） |
+宿主提供 `app://obox/page.js`，页面引入后**不需要**自己监听消息、拼接 `--` 前缀或写重试：
 
-- `themeId`：当前主题 id（如 `theme-dark`；空串表示当前没有主题扩展）。**不要**把它当色值用；要决定原生控件深浅请按 `/light/i` 判 `'light'` / 否则 `'dark'` 设 `documentElement.style.colorScheme`
-- `tokens`：`Record<token 名, 生效值>`，键形如 `--bg`；**值**取自宿主 `:root` 上 `getComputedStyle` 的**生效值**（`collectThemeTokens`，25 个 token 白名单），因此与宿主主窗口所见一致。非法键名 / 非字符串 / 空串会被宿主在构造时丢弃，扩展侧建议**再过滤一次**（双保险）
-- 这条推送**不经** `api.app.onMessage` 桥（那条要经主进程 IPC、需要扩展注册 handler）——它是"宿主渲染进程 → iframe"的直连消息，**不需要**在扩展入口做任何事
-- 扩展页里**没有** `api` 对象，也**读不到** token 值（`api.theme.getCurrent()` 只给 id，见 `api-reference.md`）；上面这条推送是 `url` 型页面拿到 token 的**唯一**途径
-- **overlay 窗体（`?obox-window=overlay`）复用同一份外壳，但本协议对它是"不触达"的**：overlay 由 `api.overlay.create` 创建（见 `api-reference.md` 的 `### overlay`），加载的同样是 `AppWindow.vue`（`src/renderer/src/main.ts:21-23,40-44`），但它**不进 `appStore`**（不注册卡片）⇒ 外壳里 `registration` 恒为 `undefined`（`src/renderer/src/AppWindow.vue:102`），而 `pushThemeTokens()` 的第一行就是 `if (!registration.value?.url) return`（`:161-171`）——因此 iframe `load`、主题变化、`obox-theme-request` 三个时机的推送**都会提前返回**，overlay 页面**收不到** `obox-theme`（宿主侧刻意不加新分支，`:35-36` 的注释即此取舍）。扩展要"不接主题"什么都不用做（这正是宠物扩展的选择：窗体是 artwork 覆盖层、固定配色，宿主 25 个 token 在其页面内**零引用**，见 `extensions/pet/openspec/changes/pet-desktop-companion/design.md` D-6/D-12）；反过来，overlay 页面**确实需要** token 时只能自己经消息桥向扩展入口要（`api.app.onMessage`，见 `api-reference.md`），别指望本协议。
+```html
+<script type="module">
+  import { startPageContext } from 'app://obox/page.js'
 
-最小接收代码（复制到你的静态页入口，**在挂载 UI 之前**先同步写一份兜底，首帧就不会白闪）：
-
-```js
-const FALLBACK = { '--bg': '#1e1e1e', '--fg': '#cccccc' /* …按 themes-settings 的 token 表补齐… */ }
-
-function applyTokens(tokens, root = document.documentElement) {
-  for (const [k, v] of Object.entries(tokens)) {
-    if (/^--[a-z0-9-]+$/.test(k) && typeof v === 'string' && v) root.style.setProperty(k, v)
-  }
-}
-
-// ① 同步兜底（老宿主 / 推送未达时不空白）
-applyTokens(FALLBACK)
-document.documentElement.style.colorScheme = 'dark'
-
-// ② 收推送（只认 parent 发来的本协议消息）
-window.addEventListener('message', (e) => {
-  const d = e.data
-  if (!d || d.source !== 'obox-app' || d.action !== 'obox-theme') return
-  if (e.source !== window.parent) return
-  applyTokens(d.tokens)
-})
-
-// ③ 请求重发（宿主若先于监听就绪发过一次，这里补上）
-for (const ms of [0, 300, 1000]) {
-  setTimeout(
-    () => window.parent.postMessage({ source: 'obox-app', action: 'obox-theme-request' }, '*'),
-    ms
-  )
-}
+  startPageContext({
+    onChange(ctx) {
+      // ctx.tokens 已写进 :root、ctx.colorScheme 已设好；ctx.locale 是当前语言
+      document.body.textContent = ctx.t('hello', { name: 'Obox' })
+    }
+  })
+</script>
 ```
 
-> 收到推送后可以停掉后续重试（记一个 `received` 标志）。`scripts/create-user-extension.mjs` 生成的骨架已内置这段逻辑（`installAppThemeBridge()`）。
+运行时负责：
 
-### overlay（浮层）窗口的主题下发
+1. **首帧兜底**：启动时同步写入暗色默认 token，避免白闪/白屏；
+2. **跟随上下文**：收到 `obox:context` 后写 `:root`、设 `colorScheme`、更新词条；
+3. **竞态兜底**：0/300/1000 ms 主动请求重发，收到即停；老宿主不会回 → 最后只 warn 一次并保留默认值；
+4. **同值去重**：宿主连续推同一份状态时不重复写 DOM、不重复回调。
 
-App **子窗口/iframe** 走上面的 `obox-theme` postMessage；**overlay 浮层窗口**是独立文档、拿不到
-主窗口的 CSS 变量，因此宿主在 2.0.1 起改为**直接下发到该窗口的 `documentElement`**（详见
-`api-reference.md` 的 `overlay` 一节「主题 token」）。两条链路的差别只有"送到哪儿"，
-token 名与取值完全一致，所以同一个组件的 `var(--…)` 写法在两种容器里都能生效。
+> 不引入运行时的页面也可以自己监听 `obox:context`（协议见上表）；但**不要**再手拼 `--` 前缀
+> （历史上系统扩展页就是这么写成 `----bg`、导致主题从未生效的）。页面必须**忽略未知 `type`**。
+
+### 旧协议（兼容期）
+
+宿主在**一个 minor 版本**内继续发旧的 `obox-theme` 消息：
+
+- App `url` 卡片 / overlay：`{ source:'obox-app', action:'obox-theme', themeId, tokens }`（25 个生效值）；
+- 系统 nav 页：`{ type:'obox-theme', tokens }`。
+
+它们与新上下文**同时发送，旧消息在前、`obox:context` 在后**。新页面只需处理新协议；老页面零改动继续工作。
+旧协议将在后续版本删除（届时 `troubleshooting` 会记录退场版本）。
+
+### 发起时机与老宿主降级
+
+- 页面运行时在 1.5 s 内收不到上下文（旧宿主）时使用内置默认 token/语言并只 warn 一次，不报错、不白屏；
+- 页面代码里**不要**假设首帧就有词条：首帧可以先用兜底文本/骨架，`onChange` 到达后再替换。
+
+### `srcdoc`（`html`）卡片
+
+`srcdoc` 与宿主**同文档**，宿主把 token 拼成 `<style>:root{…}</style>` 注入，切主题时 iframe 重渲染
+（`:key="srcdoc:<themeId>"`），不走 `obox:context`。`srcdoc` 的文案由扩展代码生成，请在生成时用
+`api.i18n.t()`（语言变化时重新注册卡片即可）。
+
+### overlay（浮层）窗口
+
+overlay 的 iframe 与 App `url` 卡片**同一条上下文链路**（overlay 外壳从查询串取 `extId` 作为页面
+所属扩展，因此也能拿到该扩展的词条）。宿主另外会把 token 直接写到 overlay **窗口**的
+`documentElement`（`api-reference.md` 的 overlay 一节），供外壳自身的样式使用；扩展页里的
+`var(--…)` 以 iframe 收到的上下文为准。
+
 ### Token 全量参考
 
 | Token             | 默认值（Dark）                 | 说明                                          |

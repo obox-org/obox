@@ -34,6 +34,14 @@ extraFiles:
     to: extensions
     filter:
       - '**/*'
+extraResources:
+  # 页面运行时（`app://obox/page.js`，change `unified-page-context`）：扩展页面一行接入脚本。
+  # 放 resources/ 而不是 asar：`net.fetch(file://)` 直接读磁盘，asar 内路径不一定可读；
+  # 开发期不经过这里，`getPageRuntimeDir()` 直接指向仓库 `src/page-runtime`。
+  - from: src/page-runtime
+    to: page-runtime
+    filter:
+      - '**/*'
 asarUnpack:
   - resources/**
 win:

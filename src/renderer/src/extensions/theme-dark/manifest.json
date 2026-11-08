@@ -1,15 +1,28 @@
 {
   "name": "theme-dark",
   "version": "1.0.0",
-  "displayName": "Dark 主题",
+  "displayName": "%theme.displayName%",
   "author": "Obox",
-  "description": "深色主题（默认）",
+  "description": "%theme.description%",
   "main": "./index.ts",
   "contributes": {
+    "i18n": {
+      "zh": {
+        "theme.displayName": "Dark 主题",
+        "theme.description": "深色主题（默认）",
+        "theme.label": "深色"
+      },
+      "en": {
+        "theme.displayName": "Dark theme",
+        "theme.description": "Dark theme (default)",
+        "theme.label": "Dark"
+      }
+    },
     "themes": [
       {
         "id": "theme-dark.dark",
-        "label": "深色",
+        "label": "%theme.label%",
+        "colorScheme": "dark",
         "tokens": {
           "--bg": "#1e1e1e",
           "--bg-panel": "#252526",

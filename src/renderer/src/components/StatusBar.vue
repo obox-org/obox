@@ -1,7 +1,8 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
+import { resolveExtensionLabel } from '../core/extensionLabels'
 
 const { t } = useI18n()
 
@@ -12,10 +13,17 @@ const props = defineProps<{
 const leftItems = computed(() => registry.getVisibleStatusBarItems('left'))
 const rightItems = computed(() => registry.getVisibleStatusBarItems('right'))
 
+/** 鐘舵€佹爮 tooltip锛歮anifest `name`锛堟敮鎸?`%key%`锛夋垨鎵╁睍杩愯鏃跺啓鍏ョ殑 tooltip */
+function itemLabel(item: { name: string; tooltip?: string; extensionId: string }): string {
+  const raw = item.tooltip ?? item.name
+  return resolveExtensionLabel(raw, item.extensionId)
+}
+
 const activeTitle = computed(() => {
   const item = registry.navItems.find((i) => i.id === props.activeNavId)
   if (!item) return ''
-  return item.titleKey ? t(item.titleKey) : item.title
+  if (item.titleKey) return t(item.titleKey)
+  return resolveExtensionLabel(item.title, item.extensionId)
 })
 
 async function onItemClick(command?: string): Promise<void> {
@@ -29,26 +37,25 @@ async function onItemClick(command?: string): Promise<void> {
   <footer class="statusbar">
     <div class="statusbar-left">
       <span class="status-item">{{ activeTitle }}</span>
-      <!-- 文本由扩展提供（同进程受信代码，见 ADR-0015），需要 v-html 渲染扩展给出的富文本；
-           元素跨多行，故用块级豁免（下一行式豁免只覆盖 `<span` 那一行） -->
+      <!-- 鏂囨湰鐢辨墿灞曟彁渚涳紙鍚岃繘绋嬪彈淇′唬鐮侊紝瑙?ADR-0015锛夛紝闇€瑕?v-html 娓叉煋鎵╁睍缁欏嚭鐨勫瘜鏂囨湰锛?           鍏冪礌璺ㄥ琛岋紝鏁呯敤鍧楃骇璞佸厤锛堜笅涓€琛屽紡璞佸厤鍙鐩?`<span` 閭ｄ竴琛岋級 -->
       <!-- eslint-disable vue/no-v-html -->
       <span
         v-for="item in leftItems"
         :key="item.id"
         class="status-item clickable"
-        :title="item.tooltip ?? item.name"
+        :title="itemLabel(item)"
         @click="onItemClick(item.command)"
         v-html="item.text"
       />
       <!-- eslint-enable vue/no-v-html -->
     </div>
     <div class="statusbar-right">
-      <!-- eslint-disable vue/no-v-html -- 同上（右侧状态项，元素跨多行） -->
+      <!-- eslint-disable vue/no-v-html -- 鍚屼笂锛堝彸渚х姸鎬侀」锛屽厓绱犺法澶氳锛?-->
       <span
         v-for="item in rightItems"
         :key="item.id"
         class="status-item clickable"
-        :title="item.tooltip ?? item.name"
+        :title="itemLabel(item)"
         @click="onItemClick(item.command)"
         v-html="item.text"
       />

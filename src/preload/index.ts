@@ -107,6 +107,8 @@ const api: MainApi = {
   // 宿主内部：渲染进程启动 / 代理设置变化时把代理推给主进程，由其同时应用到
   // 扩展联网（obox-net）与更新（electron-updater）两个 session（卡 20；主进程侧 registerProxyIpc）
   applyProxy: (proxy) => ipcRenderer.invoke('proxy:apply', proxy),
+  // 宿主内部：把当前应用语言推给主进程（托盘/关窗/关于跟随设置，change unified-page-context）
+  applyLocale: (locale) => ipcRenderer.invoke('locale:apply', locale),
   // 宿主内部：「设置 → AI」的测试连接（主进程用 netSession() 发请求 ⇒ 继承宿主代理与忽略 SSL）
   aiTestConnection: (req) => ipcRenderer.invoke('ai:test-connection', req),
   // 扩展能力：文件系统（限定扩展 data 目录）

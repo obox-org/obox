@@ -136,3 +136,33 @@ describe('themeStore.apply · 旧 token 清理（issue #81）', () => {
     expect(dom.inline).toEqual(new Map([['--bg', '#222']]))
   })
 })
+
+/**
+ * `colorScheme` 快照（change `unified-page-context` 任务 1.3）：
+ * 主题显式声明的值优先；未声明时按 id 是否含 `light` 推断。页面与主窗口都靠它决定原生控件深浅。
+ */
+describe('themeStore.currentColorScheme', () => {
+  it('声明优先：id 不含 light 也能是浅色', async () => {
+    const store = await freshStore()
+    store.register('theme-test', {
+      ...theme('solarized', { '--bg': '#fdf6e3' }),
+      colorScheme: 'light'
+    })
+    store.setTheme('solarized')
+    expect(store.currentColorScheme).toBe('light')
+  })
+
+  it('未声明：id 含 light 推断为 light', async () => {
+    const store = await freshStore()
+    store.register('theme-test', theme('theme-light.light', { '--bg': '#fff' }))
+    store.setTheme('theme-light.light')
+    expect(store.currentColorScheme).toBe('light')
+  })
+
+  it('未声明且 id 不含 light：回退 dark', async () => {
+    const store = await freshStore()
+    store.register('theme-test', theme('theme-dark.dark', { '--bg': '#000' }))
+    store.setTheme('theme-dark.dark')
+    expect(store.currentColorScheme).toBe('dark')
+  })
+})

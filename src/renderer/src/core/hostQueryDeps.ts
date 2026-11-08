@@ -18,6 +18,20 @@ import { extensionSettingsStore } from './extensionSettings'
 import { stateStore } from './state'
 import { updaterStore } from './updaterStore'
 import { themeStore } from './theme'
+import { resolveExtensionLabel, resolveFieldLabels, resolveManifestLabels } from './extensionLabels'
+
+/**
+ * 对外（扩展页面 / 宿主扩展）提供扩展条目时，先把 manifest 里的 `%key%` 标签解析成文本
+ * （change `unified-page-context` 任务 4.3）。
+ *
+ * 为什么必须在这里解析：只有壳子手上有**所有扩展**的语言包；页面（扩展管理器、设置页）拿到的
+ * 必须是成品文本，否则它要么显示 `%key%`、要么得自己去读别人的词条（跨扩展读数据）。
+ */
+function withResolvedLabels<T extends { id: string; manifest?: Record<string, unknown> }>(
+  ext: T
+): T {
+  return resolveManifestLabels(ext)
+}
 
 /** 懒取渲染侧 host：避免把 App.vue 静态拉进只跑 node 的测试模块图 */
 async function lazyHost(): Promise<{
@@ -35,7 +49,13 @@ async function lazyHost(): Promise<{
 
 export function hostQueryDeps(): HostQueryDeps {
   return {
-    listExtensions: async () => (await lazyHost()).getExtensions(),
+    listExtensions: async () => {
+      const list = (await lazyHost()).getExtensions() as Array<{
+        id: string
+        manifest?: Record<string, unknown>
+      }>
+      return list.map(withResolvedLabels)
+    },
     setEnabled: async (id, enabled) => {
       ;(await lazyHost()).setEnabled(id, enabled)
     },
@@ -59,7 +79,10 @@ export function hostQueryDeps(): HostQueryDeps {
       return {
         app: { version: appInfo.version },
         theme: {
-          list: themeStore.themes.map((t) => ({ id: t.id, label: t.label })),
+          list: themeStore.themes.map((t) => ({
+            id: t.id,
+            label: resolveExtensionLabel(t.label, t.extensionId)
+          })),
           current: themeStore.currentId
         },
         locale: {
@@ -94,9 +117,9 @@ export function hostQueryDeps(): HostQueryDeps {
         devRuntime: await window.api.devRuntimeScan(),
         extensionPages: extensionSettingsStore.pages.map((p) => ({
           id: p.id,
-          title: p.title,
+          title: resolveExtensionLabel(p.title, p.extensionId),
           extensionId: p.extensionId,
-          fields: p.fields
+          fields: p.fields.map((field) => resolveFieldLabels(field, p.extensionId))
         }))
       }
     },
@@ -145,9 +168,17 @@ export function hostQueryDeps(): HostQueryDeps {
         iconUrl: item.iconUrl
       })
     },
-    commands: () => [...registry.commands],
+    commands: () =>
+      registry.commands.map((c) => ({
+        ...c,
+        title: resolveExtensionLabel(c.title, c.extensionId)
+      })),
     menus: () => [...registry.getMenusFor('')],
-    themeList: () => [...themeStore.themes],
+    themeList: () =>
+      themeStore.themes.map((t) => ({
+        ...t,
+        label: resolveExtensionLabel(t.label, t.extensionId)
+      })),
     themeCurrent: () => themeStore.currentId,
     setTheme: (themeId) => themeStore.setTheme(themeId),
     keybindingsList: () => keybindingStore.list(),

@@ -47,6 +47,8 @@ describe('系统扩展 ext-manager', () => {
     )
     expect(shell).toContain("data.type !== 'obox:page-call'")
     expect(shell).toContain('runHostQuery(data.op, data.args, hostQueryDeps())')
-    expect(shell).toContain("type: 'obox-theme'")
+    // 主题/语言统一走页面上下文（旧 `{type:'obox-theme'}` 由 pageContext 里的兼容消息承担）
+    expect(shell).toContain('buildLegacySystemThemeMessage')
+    expect(shell).toContain('pushWithLegacy')
   })
 })

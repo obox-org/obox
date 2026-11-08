@@ -4,9 +4,22 @@
  * 与壳子的协议：`postMessage({ type: 'obox:page-call', id, op, args })` →
  * 壳子用 `runHostQuery(op, args)` 回答 `{ type: 'obox:page-reply', id, ok, result, error }`。
  * 页面不直接碰 Node/DOM 之外的宿主能力（与宿主里的扩展共享同一批 op）。
+ *
+ * 主题与语言：由 `app://obox/page.js` 统一驱动（change `unified-page-context`）——
+ * token 写进 `:root`、`colorScheme` 设好、`t()` 取当前语言；页面不再自建 `obox-theme` 监听。
  */
+import { startPageContext } from 'app://obox/page.js'
+
 const pending = new Map()
 let seq = 0
+
+const pageContext = startPageContext({
+  onChange: () => {
+    applyStaticText()
+    render()
+  }
+})
+const t = (key, params) => pageContext.t(key, params)
 
 window.addEventListener('message', (event) => {
   const data = event.data
@@ -15,7 +28,7 @@ window.addEventListener('message', (event) => {
   if (!entry) return
   pending.delete(data.id)
   if (data.ok) entry.resolve(data.result)
-  else entry.reject(new Error(data.error || '调用失败'))
+  else entry.reject(new Error(data.error || t('common.callFailed')))
 })
 
 function call(op, args = {}) {
@@ -26,13 +39,18 @@ function call(op, args = {}) {
     setTimeout(() => {
       if (!pending.has(id)) return
       pending.delete(id)
-      reject(new Error(`调用超时：${op}`))
+      reject(new Error(t('common.callTimeout', { op })))
     }, 15000)
   })
 }
 
 const statusEl = document.getElementById('status')
 const listEl = document.getElementById('list')
+const titleEl = document.getElementById('title')
+const installBtn = document.getElementById('install')
+const restartBtn = document.getElementById('restart')
+/** 最近一次列表（语言/主题变化时据此重渲染，不必重新拉取） */
+let exts = []
 
 /** 建元素小工具（本页独立，不依赖其它扩展） */
 function el(tag, className, text) {
@@ -43,8 +61,8 @@ function el(tag, className, text) {
 }
 
 function sourceLabel(source, runtime) {
-  if (runtime) return '运行时'
-  return source === 'system' ? '系统' : '用户'
+  if (runtime) return t('ext.badge.runtime')
+  return source === 'system' ? t('ext.badge.system') : t('ext.badge.user')
 }
 
 function row(ext) {
@@ -67,14 +85,14 @@ function row(ext) {
   const state = document.createElement('div')
   state.className = 'ext-state'
   state.textContent = ext.shadowed
-    ? '已被系统扩展遮蔽'
+    ? t('ext.state.shadowed')
     : ext.enabled === false
-      ? '已禁用'
+      ? t('ext.state.disabled')
       : ext.error
-        ? `清单错误：${ext.error}`
+        ? t('ext.state.invalid', { message: ext.error })
         : ext.isActive
-          ? '已启用 · 运行中'
-          : '已启用'
+          ? t('ext.state.active')
+          : t('ext.state.enabled')
   meta.appendChild(state)
 
   // 详情（点击行展开）：版本/作者/入口/描述/校验错误——排障时最常看这几项
@@ -85,26 +103,26 @@ function row(ext) {
     if (value === undefined || value === null || value === '') return
     details.append(el('dt', '', label), el('dd', '', String(value)))
   }
-  addRow('版本', manifest.version)
-  addRow('作者', manifest.author)
-  addRow('入口', manifest.main)
-  addRow('描述', manifest.description || manifest.displayName)
+  addRow(t('ext.detail.version'), manifest.version)
+  addRow(t('ext.detail.author'), manifest.author)
+  addRow(t('ext.detail.entry'), manifest.main)
+  addRow(t('ext.detail.description'), manifest.description || manifest.displayName)
   const sourceText = isRuntime
-    ? '运行时包（安装目录·手动安装）'
+    ? t('ext.source.runtime')
     : ext.source === 'system'
-      ? '系统扩展（安装目录）'
-      : '用户扩展（userData）'
-  addRow('来源', sourceText)
-  if (ext.requiresRestart) addRow('状态', '需重启生效')
+      ? t('ext.source.system')
+      : t('ext.source.user')
+  addRow(t('ext.detail.source'), sourceText)
+  if (ext.requiresRestart) addRow(t('ext.detail.state'), t('ext.restartRequired'))
   for (const v of ext.validations || []) {
-    if (v && v.severity === 'error') addRow('校验错误', v.message)
+    if (v && v.severity === 'error') addRow(t('ext.detail.validationError'), v.message)
   }
 
-  const toggle = () => {
+  const toggleDetails = () => {
     const open = details.classList.toggle('open')
     li.classList.toggle('expanded', open)
   }
-  meta.addEventListener('click', toggle)
+  meta.addEventListener('click', toggleDetails)
   li.appendChild(meta)
   li.appendChild(details)
 
@@ -116,14 +134,14 @@ function row(ext) {
     const toggle = document.createElement('button')
     toggle.className = 'btn'
     toggle.type = 'button'
-    toggle.textContent = ext.enabled === false ? '启用' : '禁用'
+    toggle.textContent = ext.enabled === false ? t('ext.action.enable') : t('ext.action.disable')
     toggle.addEventListener('click', async () => {
       toggle.disabled = true
       try {
         await call('extensions.setEnabled', { id: ext.id, enabled: ext.enabled === false })
         await refresh()
       } catch (error) {
-        statusEl.textContent = `操作失败：${error.message}`
+        statusEl.textContent = t('ext.action.failed', { message: error.message })
       } finally {
         toggle.disabled = false
       }
@@ -133,14 +151,14 @@ function row(ext) {
     const remove = document.createElement('button')
     remove.className = 'btn danger'
     remove.type = 'button'
-    remove.textContent = '卸载'
+    remove.textContent = t('ext.action.uninstall')
     remove.addEventListener('click', async () => {
       remove.disabled = true
       try {
         await call('extensions.uninstall', { id: ext.id })
         await refresh()
       } catch (error) {
-        statusEl.textContent = `卸载失败：${error.message}`
+        statusEl.textContent = t('ext.uninstall.failed', { message: error.message })
       } finally {
         remove.disabled = false
       }
@@ -151,41 +169,51 @@ function row(ext) {
   return li
 }
 
+function render() {
+  statusEl.textContent =
+    exts.length === 0 ? t('ext.status.loading') : t('ext.status.count', { count: exts.length })
+  listEl.replaceChildren(...exts.map(row))
+}
+
+/**
+ * 静态文案（`index.html` 的 title / h1 / 按钮 / 首屏状态）：语言确定后覆盖兜底文本。
+ */
+function applyStaticText() {
+  const title = t('ext.title')
+  document.title = title
+  if (titleEl) titleEl.textContent = title
+  installBtn.textContent = t('ext.install')
+  restartBtn.textContent = t('ext.restart')
+  document.documentElement.lang = pageContext.getContext()?.locale === 'en' ? 'en' : 'zh-CN'
+  statusEl.dataset.i18nFallback = 'ready'
+}
+
 async function refresh() {
   try {
     const list = await call('extensions.list')
-    const exts = Array.isArray(list) ? list : []
-    statusEl.textContent = `共 ${exts.length} 个扩展（系统扩展不可卸载/禁用）`
-    listEl.replaceChildren(...exts.map(row))
+    exts = Array.isArray(list) ? list : []
+    render()
   } catch (error) {
-    statusEl.textContent = `读取失败：${error.message}`
+    statusEl.textContent = t('common.readFailed', { message: error.message })
   }
 }
 
-document.getElementById('install').addEventListener('click', async () => {
+installBtn.addEventListener('click', async () => {
   try {
     const outcome = await call('extensions.install')
     // 用户在文件选择器里取消时返回 null：不是错误，什么都不做
-    if (outcome && outcome.ok === false) statusEl.textContent = `安装失败：${outcome.error}`
+    if (outcome && outcome.ok === false) {
+      statusEl.textContent = t('ext.install.failed', { message: outcome.error })
+    }
     await refresh()
   } catch (error) {
-    statusEl.textContent = `安装失败：${error.message}`
+    statusEl.textContent = t('ext.install.failed', { message: error.message })
   }
 })
 
-document.getElementById('restart').addEventListener('click', () => {
+restartBtn.addEventListener('click', () => {
   void call('extensions.restartHost')
 })
 
+applyStaticText()
 void refresh()
-/**
- * 主题跟随：CSS 变量不跨文档，壳子在 iframe 加载后以 `obox-theme` 下发 token。
- * 这里把 token 写到根元素上（`--x` 形式），页面样式直接用 `var(--x)`。
- */
-window.addEventListener('message', (event) => {
-  const data = event.data
-  if (!data || data.type !== 'obox-theme' || !data.tokens) return
-  for (const [key, value] of Object.entries(data.tokens)) {
-    if (typeof value === 'string') document.documentElement.style.setProperty(`--${key}`, value)
-  }
-})

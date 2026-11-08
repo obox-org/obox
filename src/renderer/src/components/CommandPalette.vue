@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
+import { resolveExtensionLabel } from '../core/extensionLabels'
 
 const { t } = useI18n()
 
@@ -19,7 +20,10 @@ const selectedIndex = ref(0)
 
 const items = computed(() => {
   const q = query.value.trim().toLowerCase()
-  const all = registry.getPaletteCommands()
+  // `commands[].title` 支持 `%key%`（按该扩展的 contributes.i18n 解析）；搜索用解析后的文本
+  const all = registry
+    .getPaletteCommands()
+    .map((c) => ({ ...c, title: resolveExtensionLabel(c.title, c.extensionId) }))
   if (!q) return all
   return all.filter((c) => c.title.toLowerCase().includes(q) || c.command.toLowerCase().includes(q))
 })

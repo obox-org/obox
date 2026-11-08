@@ -6,6 +6,8 @@ import { reactive } from 'vue'
 import type { ThemeContribution } from './types'
 import { stateStore } from './state'
 import { HOST_THEME_TOKEN_NAMES, collectThemeTokens } from './appTheme'
+import { resolveColorScheme } from '../../../shared/pageContext'
+import type { PageColorScheme } from '../../../shared/pageContext'
 
 export interface RegisteredTheme extends ThemeContribution {
   extensionId: string
@@ -46,6 +48,17 @@ class ThemeStore {
 
   get current(): RegisteredTheme | undefined {
     return this.themes.find((t) => t.id === this.currentId)
+  }
+
+  /**
+   * 当前主题的原生控件深浅（`colorScheme`）。
+   *
+   * 优先用主题自己声明的 `colorScheme`，缺省才按 id 是否含 `light` 推断——id 是人取的
+   * （`solarized` 是浅色却不含 `light`），猜错会让页面里的原生下拉/滚动条白底黑字。
+   */
+  get currentColorScheme(): PageColorScheme {
+    const theme = this.current
+    return resolveColorScheme(theme?.colorScheme, theme?.id ?? '')
   }
 
   /** 选择主题：套用 CSS 变量 + 持久化 */

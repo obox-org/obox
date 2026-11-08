@@ -11,13 +11,13 @@
 
 obox 有两个扩展运行时。**内置扩展跑在渲染进程**（Renderer Runtime），用户扩展跑在 **Extension Host Process**（独立 Node 进程）：
 
-|              | **内置扩展**（本文，改 obox 仓库源码）                            | **用户扩展**（[guides-user.md](guides-user.md)，`.oix`）                    |
-| ------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| 跑在哪       | **渲染进程**（与 UI 同一个进程）                                  | **Extension Host Process**（独立 Node 进程）                                |
-| Node         | **没有**（能力全部经注入的 `api` 走主进程）                       | **完整 Node**（`node:fs` / `node:child_process` / `node:sqlite` 都可用）    |
-| DOM          | **有**（可以直接写 Vue 组件 / 摸 `document`、`localStorage`）      | **没有**（`document` / `window` / `localStorage` 都不存在）                  |
-| 界面         | Vue SFC + `navItems[].view` 具名导出组件（本文 §5）                | `app://` 静态页（App 卡片 / overlay）+ 树视图数据源                         |
-| 激活         | **立即激活**，不参与懒激活（见下）                                | 按 `activationEvents` 懒激活（缺省 `*` = 立即）                             |
+|        | **内置扩展**（本文，改 obox 仓库源码）                        | **用户扩展**（[guides-user.md](guides-user.md)，`.oix`）                 |
+| ------ | ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 跑在哪 | **渲染进程**（与 UI 同一个进程）                              | **Extension Host Process**（独立 Node 进程）                             |
+| Node   | **没有**（能力全部经注入的 `api` 走主进程）                   | **完整 Node**（`node:fs` / `node:child_process` / `node:sqlite` 都可用） |
+| DOM    | **有**（可以直接写 Vue 组件 / 摸 `document`、`localStorage`） | **没有**（`document` / `window` / `localStorage` 都不存在）              |
+| 界面   | Vue SFC + `navItems[].view` 具名导出组件（本文 §5）           | `app://` 静态页（App 卡片 / overlay）+ 树视图数据源                      |
+| 激活   | **立即激活**，不参与懒激活（见下）                            | 按 `activationEvents` 懒激活（缺省 `*` = 立即）                          |
 
 - **`api` 交付方式相同**：入口 `export default function (api) {...}`，`api` 由宿主构造后传入。内置扩展跑在**渲染侧运行时**（Renderer Runtime，与 UI 同进程），所以跨进程序列化约束（函数/类实例过不去）**只对用户扩展生效**。
 - **内置扩展不能懒激活**：`core/host.ts` 在阶段二把它**立即激活**，清单里写 `activationEvents` 对内置扩展**无效**（ADR-0026 决策 6：只有用户扩展参与懒激活）。所以内置扩展的 `plugin(api)` 里别做重活——那会直接拖慢首屏。要"延后"请自己在 `plugin` 里用 `api.timer` / 空闲回调，而不是指望清单字段。
@@ -83,7 +83,7 @@ node skills/obox-ext-init/scripts/create-extension.mjs my-hello --title "你好"
 
 命名与数组形状（`ipcChannels` / `keybindings` / `menus` / `views` 等）见 [manifest-reference.md](manifest-reference.md)。
 
-### 中英双语：`titleKey` + 宿主词条
+### 中英双语：`%key%`（推荐）或遗留的 `titleKey`
 
 `titleKey` 由**宿主** vue-i18n 解析，而且**只有导航项与树视图支持它**（`components/NavBar.vue:13-16`、`components/TreeView.vue:65`；`components/StatusBar.vue:15-19` 解析的是**当前导航项**的 key，不是状态栏项），所以词条要加进宿主语言包，而不是扩展自己的语言包：
 
@@ -92,9 +92,9 @@ node skills/obox-ext-init/scripts/create-extension.mjs my-hello --title "你好"
 | `src/renderer/src/i18n/locales/zh.ts` | `navbar.myHello` | `你好`  |
 | `src/renderer/src/i18n/locales/en.ts` | `navbar.myHello` | `Hello` |
 
-现有 `navbar.extensions` / `navbar.apps` / `navbar.settings` 就是这类词条（`i18n/locales/zh.ts:33-37`）。**`contributes.i18n` 与 `api.i18n.*` 是扩展自己的命名空间**（`core/extensionI18n.ts:29-34`，`core/host.ts:436`），只服务 `api.i18n.t()`，**不会被 `titleKey` 命中**；不写 `titleKey` 则回退 `title` 原文（英文界面会显示中文）。
+**推荐写法（2.4 起）**：`title` 等壳子渲染的字段写 `%key%`，词条放**本扩展**的 `contributes.i18n`（`displayName` / `description` / `navItems[].title` / `commands[].title` / `statusBarItems[].name` / 设置字段 `label` / 主题 `label` 都支持），宿主按扩展命名空间解析；缺 key 显示占位符原文并告警。`titleKey` 仍可用但属**遗留**——它只查宿主语言包（内置扩展改得了、用户扩展改不了）。
 
-**命令（`contributes.commands`）与状态栏项（`contributes.statusBarItems`）没有 `titleKey` 字段**（`api/contributions.ts:33-60`）——给它们加词条是静默无效的。要双语只能自己接 `api.i18n`，并在语言变更时重新刷新文本（命令面板标题直接取 `title` 原文，状态栏文本用 `setText` 覆盖）。
+**命令（`contributes.commands`）与状态栏项（`contributes.statusBarItems`）没有 `titleKey` 字段**（`api/contributions.ts:33-60`），但它们的 `title` / `name` 支持 `%key%`（2.4 起）。运行时动态改写的文本仍用 `api.statusBar.setText` 覆盖。
 
 ## 4. 入口 `index.ts`
 

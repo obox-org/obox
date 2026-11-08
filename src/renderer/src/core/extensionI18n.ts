@@ -48,3 +48,22 @@ export function translateExtension(
   }
   return text
 }
+
+/**
+ * 取某扩展在指定语言的**整包**词条（change `unified-page-context`）：页面上下文要一次下发
+ * 全部词条，让页面自己 `t(key)`，而不是每取一条就走一次消息。
+ *
+ * 回退语义与 {@link translateExtension} 一致：当前语言有词条就用它（缺 key 由页面回退 key），
+ * 否则整包回退 `zh`——避免中英混排；返回**拷贝**，调用方改不到注册表。
+ */
+export function getExtensionMessages(
+  extensionId: string,
+  locale?: 'zh' | 'en'
+): Record<string, string> {
+  const messages = stores.get(extensionId)
+  if (!messages) return {}
+  const code = locale ?? (i18n.global.locale.value as 'zh' | 'en')
+  const localized = messages[code]
+  if (localized && Object.keys(localized).length > 0) return { ...localized }
+  return { ...(messages.zh ?? {}) }
+}

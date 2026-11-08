@@ -253,22 +253,46 @@ node scripts/build-python-runtime.mjs --version 3.11.9 --tag 3.11
 | `label`  | ✅   | 显示名（设置下拉框展示）                 |
 | `tokens` | ✅   | CSS 变量组（`--xxx` → 值），套到 `:root` |
 
-宿主已内置 `theme-dark`（深色）与 `theme-light`（浅色）主题扩展。**完整 token 表与主题编写指南见 `themes-settings.md`**（含背景/文字/语义色/字体/字号/图标尺寸 token；SVG 用 `currentColor` 继承、尺寸用 `--nav-icon-size`/`--icon-size`）。子窗口 iframe（`srcdoc`）**自动注入**当前主题 token，扩展页面用 `var(--bg)` 等即可跟随主题；**App 卡片的 `url` 型静态页由宿主经 `obox-theme` 消息下发 token**（跨源 inject 不了，协议与最小接收代码见 `themes-settings.md`）。
+宿主已内置 `theme-dark`（深色）与 `theme-light`（浅色）主题扩展。**完整 token 表与主题编写指南见 `themes-settings.md`**（含背景/文字/语义色/字体/字号/图标尺寸 token；SVG 用 `currentColor` 继承、尺寸用 `--nav-icon-size`/`--icon-size`）。子窗口 iframe（`srcdoc`）**自动注入**当前主题 token；`url` 卡片、overlay 与系统 nav 页统一由 `obox:context` 下发主题与语言（协议见 `themes-settings.md`，页面一行接入 `app://obox/page.js`）。
 
 ### i18n（扩展语言包，manifest 声明）
 
 ```json
 {
+  "displayName": "%app.displayName%",
+  "description": "%app.description%",
   "contributes": {
     "i18n": {
-      "zh": { "hello": "你好" },
-      "en": { "hello": "Hello" }
-    }
+      "zh": { "app.displayName": "我的扩展", "app.description": "简介" },
+      "en": { "app.displayName": "My extension", "app.description": "Description" }
+    },
+    "navItems": [{ "id": "my.nav", "title": "%app.nav%", "icon": "…", "page": "index.html" }]
   }
 }
 ```
 
-与运行时 `api.i18n.registerMessages` 等价（`core/host.ts:203`）；`api.i18n.t(key)` 按当前语言取文案。
+`contributes.i18n` 是扩展**唯一的词条来源**，两类消费方共用同一份：
+
+| 消费方           | 怎么用                                                                                                      |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- |
+| 扩展自己的代码   | `api.i18n.t(key, params)`（宿主与渲染侧都可用）；`api.i18n.onLocaleChanged` 订阅切换                        |
+| 扩展的 HTML 页面 | 页面上下文 `obox:context` 的 `messages`（当前语言整包）+ 页面运行时的 `ctx.t(key)`；见 `themes-settings.md` |
+| 壳子渲染的标签   | 写成 `%key%`，宿主按**本扩展**的词条解析                                                                    |
+
+**支持 `%key%` 的字段**：`displayName`、`description`、`navItems[].title`、`commands[].title`、
+`statusBarItems[].name`、`settings.title`、设置字段的 `label` / `description`、主题 `label`。
+不含 `%` 的普通字符串原样显示；`%key%` 必须是**整串**（`xx %key% yy` 不解析，避免误伤含 `%` 的普通文本）。
+
+规则与边界：
+
+- **语言集合**以宿主为准（当前 `zh` / `en`）；词条里其它语言的键会被忽略，不报错；
+- **缺 key**：显示占位符原文（如 `%nav.home%`）并对每个扩展的每个 key **只告警一次**——可见、可排查，不静默吞掉；
+- 校验：`contributes.i18n` 形状错误（非对象 / 非字符串值）是 **error**，`zh`/`en` 键集合不一致是 **warning**
+  （`scripts/validate-manifest.mjs` 与宿主 `core/manifest.ts` 同一段，差分门禁会比较文案）；
+- 旧字段 `titleKey` **保留但已降级**：它只查**宿主**语言包（系统/用户扩展都改不了那份文件），
+  新扩展请用 `%key%`；既有内置扩展不受影响。
+
+与运行时 `api.i18n.registerMessages` 等价（用于运行时动态追加词条）。
 
 ### settings（扩展设置 schema，manifest 声明）
 

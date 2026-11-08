@@ -66,7 +66,9 @@ src/
 │   ├── python.ts    # 扩展自带 Python 运行时的薄壳（api.python.run：环境准备/启动/通道注册/进程树清理）
 │   ├── pythonCore.ts # Python 接入核心（声明校验/路径/环境白名单与注入/cmd 转义/通道名/进程树命令；可单测）
 │   ├── pythonRun.ts # 解释器脚本启动与收尾（shell 调用 + 进程树终止 + 输出上限；真实子进程测试）
-│   └── protocol.ts  # app:// 自定义协议（扩展清单与静态资源 + 回退时的用户扩展 ESM + app://debug）
+│   ├── appUrlCore.ts # app:// 请求的纯解析（extensions/builtin/debug/**obox** 四个命名空间 + 越界拒绝；可单测）
+│   ├── locale.ts    # 主进程界面语言（渲染侧设置优先，未推送时回退 app.getLocale；托盘/关窗/关于跟随）
+│   └── protocol.ts  # app:// 自定义协议（页面运行时 + 扩展静态资源 + 回退时的用户扩展 ESM + app://debug）
 ├── extension-host/  # **Extension Host Process**：用户扩展的执行环境（ADR-0026）
 │   ├── index.ts     # 进程入口：process.parentPort → HostPort、组装运行时、进程级兜底（uncaughtException 等）
 │   ├── runtime.ts   # 运行时编排：ready/init 握手、激活/停用、崩溃重启计数
@@ -77,7 +79,8 @@ src/
 │   ├── capabilities/ # 宿主侧能力：fs / 子进程 / sqlite / timer / net / ipc / python + 仍需回 main 的 UI 面
 │   └── safety.ts / status.ts / timers.ts / log.ts / errors.ts # 错误隔离、状态快照、全局定时器、日志、错误文案
 ├── preload/         # contextBridge 桥：window.api（能力）+ window.events（主进程事件）+ window.eh（扩展宿主通道）
-├── shared/          # 三端共享类型（IPC 契约；extensionHostProtocol.ts 是 main ↔ 宿主进程 ↔ 渲染进程的协议）
+├── shared/          # 三端共享类型（IPC 契约；extensionHostProtocol.ts 是 main ↔ 宿主进程 ↔ 渲染进程的协议；pageContext.ts 是宿主 → 扩展页面的主题/语言上下文）
+├── page-runtime/    # 扩展页面运行时（app://obox/page.js：写 token/colorScheme、t()、请求重试；纯浏览器 JS）
 └── renderer/        # Vue 渲染进程（UI + 内置扩展 + 渲染侧运行时）
     └── src/
         ├── main.ts        # 入口：启动渲染侧运行时并接上扩展宿主 → 按 URL 参数渲染主布局或 AppWindow
@@ -105,7 +108,9 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 | `theme.ts`                 | 主题系统：收集 themes 贡献、套用 CSS 变量到 :root、持久化当前主题                                                                                                                                              |
 | `keybindings.ts`           | 快捷键系统：内置快捷键注册表、修改、冲突检测、持久化、**捕获态守卫**（改键时全局快捷键让路，ADR-0006 修订）                                                                                                    |
 | `extensionSettings.ts`     | 扩展设置页注册表（api.settings.register / manifest 声明）                                                                                                                                                      |
-| `extensionI18n.ts`         | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间）                                                                                                                                                         |
+| `extensionI18n.ts`         | 扩展语言包注册表（api.i18n，与宿主语言包独立命名空间）；`getExtensionMessages` 供页面上下文/标签解析取整包                                                                                                     |
+| `extensionLabels.ts`       | `%key%` 标签解析（壳子渲染的扩展文本按扩展命名空间本地化；缺 key 显示占位符并每 key 告警一次）                                                                                                                 |
+| `pageContext.ts`           | 页面上下文组装与投递：主题（25 个生效 token + `colorScheme`）+ 语言（`locale` + 本扩展词条）→ `obox:context`；旧协议先、新上下文后                                                                             |
 | `uiStore.ts`               | 应用内交互状态（模态/表单/quickPick/进度/toast），主窗口与 App 子窗口共用，驱动 `PromptHost`/`ToastHost`                                                                                                       |
 | `outputStore.ts`           | 输出面板通道（api.output.createChannel），底部 `OutputPanel` 渲染                                                                                                                                              |
 | `treeStore.ts`             | 树视图数据源注册表（api.views.registerTreeProvider，按扩展 id 隔离）                                                                                                                                           |
@@ -114,8 +119,10 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 ### i18n（`renderer/src/i18n/`）
 
 - vue-i18n 11 实例 + 中英语言包（`locales/zh.ts` / `en.ts`）
-- 切换立即生效 + 持久化；语言下拉显示各语言本地化名称（中文 → "中文"、English → "English"）
-- 覆盖宿主布局框架 + 内置扩展全部文案；扩展经 `api.i18n` 使用自己的语言包
+- **语言唯一源是设置项 `locale`**（change `unified-page-context`）：旧 `obox:locale:v1` 升级时迁移一次；
+  切换后壳子 chrome、扩展宿主（`onLocaleChanged`）、扩展页面（`obox:context`）与主进程（托盘/对话框）同步
+- 扩展文本三层来源：**manifest 标签**写 `%key%`（按本扩展 `contributes.i18n` 解析）、**扩展代码**用 `api.i18n`、
+  **扩展 HTML 页面**用页面运行时的 `ctx.t()`（词条同样来自 `contributes.i18n`）
 
 ### 内置扩展（`renderer/src/extensions/`）
 

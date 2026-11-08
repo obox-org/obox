@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
 import { stateStore } from '../core/state'
+import { resolveExtensionLabel } from '../core/extensionLabels'
 
 const { t } = useI18n()
 
@@ -10,9 +11,15 @@ defineProps<{
   activeNavId: string | null
 }>()
 
-/** 导航项显示名：titleKey 存在时本地化，否则用 manifest title 原文 */
-function navTitle(item: { title: string; titleKey?: string }): string {
-  return item.titleKey ? t(item.titleKey) : item.title
+/**
+ * 导航项显示名：
+ * 1. `titleKey`（遗留，查**宿主**语言包）→ 本地化；
+ * 2. 否则按 `%key%` 查**该扩展**的 `contributes.i18n`（change `unified-page-context`）；
+ * 3. 普通字符串原样返回。
+ */
+function navTitle(item: { title: string; titleKey?: string; extensionId?: string }): string {
+  if (item.titleKey) return t(item.titleKey)
+  return resolveExtensionLabel(item.title, item.extensionId ?? '')
 }
 
 const emit = defineEmits<{

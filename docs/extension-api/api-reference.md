@@ -812,13 +812,13 @@ const e = await api.net.request('https://api.example.com/items/1', {
 })
 ```
 
-| 调用                             | 等价于                                                   |
-| -------------------------------- | -------------------------------------------------------- |
-| `api.net.get(url, opts?)`        | `api.net.fetch(url, { ...opts, method: 'GET' })`          |
-| `api.net.post(url, body?, opts?)`| `api.net.fetch(url, { ...opts, method: 'POST', body })`   |
-| `api.net.put(url, body?, opts?)` | `api.net.fetch(url, { ...opts, method: 'PUT', body })`    |
-| `api.net.delete(url, opts?)`     | `api.net.fetch(url, { ...opts, method: 'DELETE' })`       |
-| `api.net.request(url, opts)`     | `api.net.fetch(url, opts)`（`opts.method` **必填**，缺了回 `{ ok: false, error: '…必须给 opts.method…' }`） |
+| 调用                              | 等价于                                                                                                      |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `api.net.get(url, opts?)`         | `api.net.fetch(url, { ...opts, method: 'GET' })`                                                            |
+| `api.net.post(url, body?, opts?)` | `api.net.fetch(url, { ...opts, method: 'POST', body })`                                                     |
+| `api.net.put(url, body?, opts?)`  | `api.net.fetch(url, { ...opts, method: 'PUT', body })`                                                      |
+| `api.net.delete(url, opts?)`      | `api.net.fetch(url, { ...opts, method: 'DELETE' })`                                                         |
+| `api.net.request(url, opts)`      | `api.net.fetch(url, opts)`（`opts.method` **必填**，缺了回 `{ ok: false, error: '…必须给 opts.method…' }`） |
 
 > ⚠️ **这是纯加法**：`apiVersion` 仍是 **4**，老宿主上这些方法**不存在**（调用得到 `TypeError`）。要兼容老宿主请先特性检测（`typeof api.net.download === 'function'`）或用 `fetch` 兜底——与 `api.ipc.listen` 同一条约定。
 
@@ -835,14 +835,14 @@ if (r.ok && !r.skipped) {
 // onExist: 'skip' 且文件已存在 ⇒ { ok: true, skipped: true }（r.path 为 undefined，没有下载）
 ```
 
-| 规则     | 说明                                                                                                                                   |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| 落点     | **只写扩展自己的 data 目录**（`<userData>/extensions/<id>/data`）；`relPath` 是相对路径，绝对路径与 `..` 一律 `{ ok: false }`           |
-| 返回值   | `{ ok, path?, bytes?, skipped?, error? }`；`path` 是**相对路径**（与传给它的 `relPath` 同一坐标系，`rename` 时是改名后的相对路径）        |
-| `onExist`| `rename`（缺省，`a.zip` → `a(1).zip`）/ `overwrite` / `skip`；判定的是**磁盘上是否已存在**，与本次下载无关                                   |
-| 流式     | 写盘是**流式**的（不整包进内存），因此大安装包/大模型文件也可以；没有 8MB 上限，但整体有 **15 分钟**兜底超时                              |
-| 代理     | 与 `net.fetch` **同一条链路**：走设置-网络里的代理与「忽略 SSL」（主进程 Chromium session），不需要你手动处理                               |
-| 平台限制 | 实现要走主进程（代理与 data 目录权威都在 main），因此**宿主未接线时**回 `{ ok: false, error: '…需要主进程 IPC…' }`；正常安装的 obox 均有       |
+| 规则      | 说明                                                                                                                                     |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 落点      | **只写扩展自己的 data 目录**（`<userData>/extensions/<id>/data`）；`relPath` 是相对路径，绝对路径与 `..` 一律 `{ ok: false }`            |
+| 返回值    | `{ ok, path?, bytes?, skipped?, error? }`；`path` 是**相对路径**（与传给它的 `relPath` 同一坐标系，`rename` 时是改名后的相对路径）       |
+| `onExist` | `rename`（缺省，`a.zip` → `a(1).zip`）/ `overwrite` / `skip`；判定的是**磁盘上是否已存在**，与本次下载无关                               |
+| 流式      | 写盘是**流式**的（不整包进内存），因此大安装包/大模型文件也可以；没有 8MB 上限，但整体有 **15 分钟**兜底超时                             |
+| 代理      | 与 `net.fetch` **同一条链路**：走设置-网络里的代理与「忽略 SSL」（主进程 Chromium session），不需要你手动处理                            |
+| 平台限制  | 实现要走主进程（代理与 data 目录权威都在 main），因此**宿主未接线时**回 `{ ok: false, error: '…需要主进程 IPC…' }`；正常安装的 obox 均有 |
 
 ### dialog / shell / clipboard（对话框 / 外链 / 剪贴板）
 
@@ -910,7 +910,10 @@ const off = api.theme.onChanged((id) => {
 off.dispose()
 ```
 
-`api.theme` **只提供主题 id**，**不提供 token 值**（这是有意的边界，见 ADR-0022）。App 子窗口里的页面**没有** `api` 对象，取 token 请用上面 `app.register` 小节的**主题下发协议**（`obox-theme` 推送，详见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)）。
+`api.theme` **只提供主题 id**，**不提供 token 值**（这是有意的边界，见 ADR-0022）。主题贡献点可以声明
+`colorScheme: 'dark' | 'light'`（缺省按 id 推断）；扩展页面里的 `ctx.colorScheme` 已由页面运行时写好，
+扩展代码自行判断原生控件深浅时应以它为准。App 子窗口里的页面**没有** `api` 对象，取 token 与语言
+请用**页面上下文协议**（`obox:context`，详见 [themes-settings.md](themes-settings.md)）。
 
 ### fs（文件系统，限定扩展数据目录）
 

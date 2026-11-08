@@ -1158,9 +1158,12 @@ describe('R69：宿主 fork 时注入 OBOX_* env', () => {
     assert.match(source, /OBOX_APP_NAME:\s*app\.getName\(\)/)
     assert.match(source, /OBOX_APP_VERSION:\s*app\.getVersion\(\)/)
     assert.match(source, /OBOX_LOCALE:\s*hostLocaleEnv\(\)/)
-    // 语言归一用主进程既有的 pickLocale（不另造一套 zh/en 判定），读不到就回 zh
-    assert.match(source, /pickLocale\(app\.getLocale\(\)\)/)
-    assert.match(source, /return 'zh'/)
+    // 语言归一：统一走 `locale.ts` 的 getMainLocale()（内部仍用既有 pickLocale；
+    // change `unified-page-context` 后首选渲染侧设置，读不到才回退 app.getLocale()）
+    assert.match(source, /return getMainLocale\(\)/)
+    const localeSource = stripComments(readFileSync(path.join(ROOT, 'src/main/locale.ts'), 'utf8'))
+    assert.match(localeSource, /pickLocale\(app\.getLocale\(\)\)/)
+    assert.match(localeSource, /return 'zh'/)
   })
 
   test('env 链路：main 把三个 env 交给 starter，starter 用 extraEnv 覆盖进 fork 的 env', () => {

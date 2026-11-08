@@ -71,12 +71,25 @@ describe('更新事件桥（下载进度）', () => {
     expect(page).toContain("ev.type === 'download-progress'")
   })
 })
-describe('主题跟随（CSS 变量不跨文档）', () => {
-  it('三个系统扩展页面都消费 obox-theme 下发的 token', () => {
+describe('主题与语言（页面运行时统一驱动）', () => {
+  it('三个系统扩展页面都引入 app://obox/page.js，且不再自建 obox-theme 监听', () => {
     for (const name of ['app', 'settings', 'ext-manager']) {
       const src = readFileSync(`${root}${name}/page.js`, 'utf8')
-      expect(src, `${name} 缺少 obox-theme 监听`).toContain("data.type !== 'obox-theme'")
-      expect(src).toContain('setProperty(`--${key}`')
+      expect(src, `${name} 未引入页面运行时`).toContain("from 'app://obox/page.js'")
+      expect(src, `${name} 仍手拼 -- 前缀（旧 bug）`).not.toContain('setProperty(`--${key}`')
+      expect(src, `${name} 仍自建旧主题监听`).not.toContain("data.type !== 'obox-theme'")
+    }
+  })
+
+  it('三个系统扩展页面代码里不再有中文字面量（注释除外，文案全部走 contributes.i18n）', () => {
+    for (const name of ['app', 'settings', 'ext-manager']) {
+      const raw = readFileSync(`${root}${name}/page.js`, 'utf8')
+      const code = raw
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '')
+        .replace(/\/\/.*$/gm, '')
+      const cjk = [...code.matchAll(/[\u4e00-\u9fff][^\n'"`]*/g)].map((m) => m[0])
+      expect(cjk, `${name} 仍含中文字面量：${cjk.slice(0, 3).join(' / ')}`).toEqual([])
     }
   })
 })
@@ -101,17 +114,17 @@ describe('应用页卡片交互', () => {
   it('卡片支持右键菜单：打开 / 在扩展管理中查看', () => {
     const page = readFileSync(`${root}app/page.js`, 'utf8')
     expect(page).toContain("addEventListener('contextmenu'")
-    expect(page).toContain("label: '打开'")
+    expect(page).toContain("t('app.menu.open')")
     expect(page).toContain("pages.open', { pageId: 'ext-manager'")
   })
 })
 describe('扩展管理器详情', () => {
   it('行内详情展示版本/作者/入口/来源与校验错误', () => {
     const page = readFileSync(`${root}ext-manager/page.js`, 'utf8')
-    expect(page).toContain("addRow('版本'")
-    expect(page).toContain("addRow('作者'")
-    expect(page).toContain("addRow('入口'")
-    expect(page).toContain("addRow('来源'")
+    expect(page).toContain("addRow(t('ext.detail.version')")
+    expect(page).toContain("addRow(t('ext.detail.author')")
+    expect(page).toContain("addRow(t('ext.detail.entry')")
+    expect(page).toContain("addRow(t('ext.detail.source')")
     expect(page).toContain('validations')
     expect(page).toContain('ext-details')
   })
@@ -128,7 +141,7 @@ describe('开发运行时（Python）', () => {
 
   it('设置页有「开发运行时」分区与安装入口', () => {
     const page = readFileSync(`${root}settings/page.js`, 'utf8')
-    expect(page).toContain("label: '开发运行时'")
+    expect(page).toContain('settings.section.devRuntime')
     expect(page).toContain("'extensions.installFromPath'")
     expect(page).toContain('devRuntime.python.default')
   })

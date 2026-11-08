@@ -492,6 +492,16 @@ export interface MainApi {
    */
   applyProxy(proxy?: ProxyConfig): Promise<void>
   /**
+   * 宿主内部（**不属扩展 API 面**）：把当前**应用语言**推给主进程（change `unified-page-context`）。
+   *
+   * 语言设置持久化在渲染进程，主进程读不到；托盘菜单、关窗提示、关于对话框此前各自用
+   * `app.getLocale()`（操作系统语言），于是"设置切英文、托盘还是中文"。
+   *
+   * 渲染进程在**启动时**与**语言变化时**调用；主进程缓存后重建托盘菜单。传非法值按当前值处理
+   * （"未知语言回退 zh"是渲染侧设置层的事，这里只同步已生效的值）。
+   */
+  applyLocale(locale: 'zh' | 'en'): Promise<'zh' | 'en'>
+  /**
    * 宿主内部（**不属扩展 API 面**，「设置 → AI」的「测试连接」按钮专用）：
    * 用当前 AI 配置发一次最小请求 `GET {baseUrl}/models`（带 `Authorization: Bearer <apiKey>`，
    * `apiKey` 为空则不带该头）验证配置可用。

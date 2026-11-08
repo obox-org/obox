@@ -6,9 +6,23 @@
  *
  * 数据来源：一次 `settings.snapshot`（主题、语言、关闭行为、全部宿主设置、快捷键、更新提供者、
  * 扩展设置页），写操作走 `settings.host.set` / `theme.set` / `keybindings.*` / 专用 op。
+ *
+ * 主题与语言：由 `app://obox/page.js` 统一驱动（change `unified-page-context`）——
+ * token/`colorScheme` 由运行时写进 `:root`，文案用 `t()`；语言变化时重渲染整页。
  */
+import { startPageContext } from 'app://obox/page.js'
+
 const pending = new Map()
 let seq = 0
+
+const pageContext = startPageContext({
+  onChange: () => {
+    applyStaticText()
+    render()
+  }
+})
+/** 当前语言取词（缺 key 回退 key；参数用 `{name}` 插值） */
+const t = (key, params) => pageContext.t(key, params)
 
 window.addEventListener('message', (event) => {
   const data = event.data
@@ -17,7 +31,7 @@ window.addEventListener('message', (event) => {
   if (!entry) return
   pending.delete(data.id)
   if (data.ok) entry.resolve(data.result)
-  else entry.reject(new Error(data.error || '调用失败'))
+  else entry.reject(new Error(data.error || t('common.callFailed')))
 })
 
 let lastUpdateEvent = null
@@ -38,7 +52,7 @@ function call(op, args = {}) {
     setTimeout(() => {
       if (!pending.has(id)) return
       pending.delete(id)
-      reject(new Error(`调用超时：${op}`))
+      reject(new Error(t('common.callTimeout', { op })))
     }, 15000)
   })
 }
@@ -49,17 +63,18 @@ let snapshot = null
 let active = 'appearance'
 let activeExtPage = null
 
-const SECTIONS = [
-  { id: 'appearance', label: '外观' },
-  { id: 'general', label: '常规' },
-  { id: 'language', label: '语言' },
-  { id: 'keyboard', label: '快捷键' },
-  { id: 'update', label: '更新' },
-  { id: 'network', label: '网络' },
-  { id: 'devRuntime', label: '开发运行时' },
-  { id: 'ai', label: 'AI' },
-  { id: 'notification', label: '通知' },
-  { id: 'extension', label: '扩展' }
+/** 分区 id（顺序即左侧树顺序）；标签在渲染时按 `settings.section.<id>` 取当前语言 */
+const SECTION_IDS = [
+  'appearance',
+  'general',
+  'language',
+  'keyboard',
+  'update',
+  'network',
+  'devRuntime',
+  'ai',
+  'notification',
+  'extension'
 ]
 
 /* ------------------------------- DOM 小工具 ------------------------------- */
@@ -131,12 +146,12 @@ function setting(key, fallback) {
 const renderers = {
   appearance() {
     const frag = document.createDocumentFragment()
-    frag.append(heading('外观'))
+    frag.append(heading(t('settings.section.appearance')))
     frag.append(
       row(
-        '主题',
+        t('settings.appearance.theme'),
         select(
-          snapshot.theme.list.map((t) => ({ value: t.id, label: t.label || t.id })),
+          snapshot.theme.list.map((item) => ({ value: item.id, label: item.label || item.id })),
           snapshot.theme.current,
           (id) => void call('theme.set', { themeId: id })
         )
@@ -147,15 +162,15 @@ const renderers = {
 
   general() {
     const frag = document.createDocumentFragment()
-    frag.append(heading('常规'))
+    frag.append(heading(t('settings.section.general')))
     frag.append(
       row(
-        '关闭窗口时',
+        t('settings.general.closeBehavior'),
         select(
           [
-            { value: 'ask', label: '每次询问' },
-            { value: 'hide', label: '最小化到托盘' },
-            { value: 'quit', label: '退出应用' }
+            { value: 'ask', label: t('settings.general.close.ask') },
+            { value: 'hide', label: t('settings.general.close.hide') },
+            { value: 'quit', label: t('settings.general.close.quit') }
           ],
           snapshot.closeBehavior,
           (behavior) => void call('window.setCloseBehavior', { behavior })
@@ -166,12 +181,17 @@ const renderers = {
     const current = host.setting === null ? 'default' : host.setting ? 'on' : 'off'
     frag.append(
       row(
-        '扩展宿主',
+        t('settings.general.extensionHost'),
         select(
           [
-            { value: 'default', label: `跟随默认（当前${host.enabled ? '启用' : '关闭'}）` },
-            { value: 'on', label: '强制启用' },
-            { value: 'off', label: '强制关闭' }
+            {
+              value: 'default',
+              label: t('settings.general.host.default', {
+                state: host.enabled ? t('common.enabled') : t('common.disabled')
+              })
+            },
+            { value: 'on', label: t('settings.general.host.on') },
+            { value: 'off', label: t('settings.general.host.off') }
           ],
           current,
           (value) =>
@@ -182,18 +202,18 @@ const renderers = {
         )
       )
     )
-    frag.append(note('扩展宿主在下次启动生效；关闭后用户扩展改为在渲染进程执行（兼容模式）。'))
+    frag.append(note(t('settings.general.hostNote')))
     return frag
   },
 
   language() {
     const frag = document.createDocumentFragment()
-    frag.append(heading('语言'))
+    frag.append(heading(t('settings.section.language')))
     frag.append(
       row(
-        '界面语言',
+        t('settings.language.ui'),
         select(
-          snapshot.locale.list.map((l) => ({ value: l.code, label: l.label })),
+          snapshot.locale.list.map((item) => ({ value: item.code, label: item.label })),
           snapshot.locale.current,
           (code) => void call('i18n.setLocale', { code })
         )
@@ -204,18 +224,18 @@ const renderers = {
 
   keyboard() {
     const frag = document.createDocumentFragment()
-    frag.append(heading('快捷键'))
-    frag.append(note('点击「修改」后直接按下组合键；「重置」恢复默认。'))
+    frag.append(heading(t('settings.section.keyboard')))
+    frag.append(note(t('settings.keyboard.note')))
     const list = el('ul', 'keys')
     for (const item of snapshot.keybindings) {
       const li = el('li', 'key-row')
       li.append(el('span', 'key-name', item.labelKey || item.command))
       li.append(el('span', 'key-combo', item.currentKey || item.defaultKey || '—'))
 
-      const edit = el('button', 'btn', '修改')
+      const edit = el('button', 'btn', t('settings.keyboard.edit'))
       edit.type = 'button'
       edit.addEventListener('click', () => {
-        edit.textContent = '请按键…'
+        edit.textContent = t('settings.keyboard.press')
         edit.disabled = true
         const onKey = async (event) => {
           event.preventDefault()
@@ -237,7 +257,7 @@ const renderers = {
         window.addEventListener('keydown', onKey, true)
       })
 
-      const reset = el('button', 'btn', '重置')
+      const reset = el('button', 'btn', t('settings.keyboard.reset'))
       reset.type = 'button'
       reset.addEventListener('click', async () => {
         await call('keybindings.reset', { command: item.command })
@@ -253,15 +273,20 @@ const renderers = {
 
   update() {
     const frag = document.createDocumentFragment()
-    frag.append(heading('更新'))
-    frag.append(row('当前版本', el('span', 'value', snapshot.app.version)))
-    frag.append(row('更新提供者', el('span', 'value', snapshot.update.activeId || '未选择')))
+    frag.append(heading(t('settings.section.update')))
+    frag.append(row(t('settings.update.currentVersion'), el('span', 'value', snapshot.app.version)))
+    frag.append(
+      row(
+        t('settings.update.provider'),
+        el('span', 'value', snapshot.update.activeId || t('settings.update.noProvider'))
+      )
+    )
     const providers = el('ul', 'plain')
-    for (const p of snapshot.update.providers) {
-      providers.appendChild(el('li', '', p.extensionId))
+    for (const provider of snapshot.update.providers) {
+      providers.appendChild(el('li', '', provider.extensionId))
     }
     if (snapshot.update.providers.length === 0) {
-      providers.appendChild(el('li', 'note', '暂无扩展声明更新提供者'))
+      providers.appendChild(el('li', 'note', t('settings.update.noProviderDeclared')))
     }
     frag.append(providers)
     const status = el('p', 'note', '')
@@ -271,13 +296,17 @@ const renderers = {
       btn.type = 'button'
       btn.addEventListener('click', async () => {
         btn.disabled = true
-        status.textContent = `${label}…`
+        status.textContent = t('settings.update.running', { label })
         try {
           const result = await run()
           status.textContent =
-            result && result.ok === false ? `失败：${result.error || '未知错误'}` : `${label}：完成`
+            result && result.ok === false
+              ? t('settings.update.failedShort', {
+                  error: result.error || t('common.unknownError')
+                })
+              : t('settings.update.done', { label })
         } catch (error) {
-          status.textContent = `${label}失败：${error.message}`
+          status.textContent = t('settings.update.failed', { label, message: error.message })
         } finally {
           btn.disabled = false
         }
@@ -285,9 +314,9 @@ const renderers = {
       return btn
     }
     actions.append(
-      mkButton('检查更新', () => call('update.check')),
-      mkButton('下载更新', () => call('update.download')),
-      mkButton('安装并重启', () => call('update.install'))
+      mkButton(t('settings.update.check'), () => call('update.check')),
+      mkButton(t('settings.update.download'), () => call('update.download')),
+      mkButton(t('settings.update.install'), () => call('update.install'))
     )
     frag.append(actions, status)
 
@@ -300,39 +329,45 @@ const renderers = {
         bar.value = Number(ev.percent) || 0
         line.append(bar, document.createTextNode(` ${Math.round(Number(ev.percent) || 0)}%`))
       } else if (ev.type === 'update-downloaded') {
-        line.textContent = `已下载：${(ev.info && ev.info.version) || ''}，点「安装并重启」生效`
+        line.textContent = t('settings.update.downloaded', {
+          version: (ev.info && ev.info.version) || ''
+        })
       } else if (ev.type === 'update-available') {
-        line.textContent = `发现新版本：${(ev.info && ev.info.version) || ''}`
+        line.textContent = t('settings.update.available', {
+          version: (ev.info && ev.info.version) || ''
+        })
       } else if (ev.type === 'error') {
-        line.textContent = `更新出错：${ev.message || '未知错误'}`
+        line.textContent = t('settings.update.error', {
+          message: ev.message || t('common.unknownError')
+        })
       } else {
-        line.textContent = `事件：${ev.type}`
+        line.textContent = t('settings.update.event', { type: ev.type })
       }
       frag.append(line)
     }
-    frag.append(note('更新由当前生效的「更新提供者」扩展驱动；没有提供者时检查会提示。'))
+    frag.append(note(t('settings.update.note')))
     return frag
   },
 
   network() {
     const proxy = setting('network.proxy', {}) || {}
     const frag = document.createDocumentFragment()
-    frag.append(heading('网络'))
+    frag.append(heading(t('settings.section.network')))
     frag.append(
       row(
-        '启用代理',
+        t('settings.network.enable'),
         checkbox(proxy.enabled, (enabled) => void saveProxy({ ...proxy, enabled }))
       )
     )
     frag.append(
       row(
-        '代理地址',
+        t('settings.network.url'),
         input(proxy.url ?? '', 'http://127.0.0.1:7890', (url) => void saveProxy({ ...proxy, url }))
       )
     )
     frag.append(
       row(
-        '忽略 SSL 证书错误',
+        t('settings.network.ignoreSSL'),
         checkbox(proxy.ignoreSSL, (ignoreSSL) => void saveProxy({ ...proxy, ignoreSSL }))
       )
     )
@@ -340,15 +375,15 @@ const renderers = {
     const textarea = el('textarea', 'textarea')
     textarea.value = noProxy
     textarea.rows = 3
-    textarea.placeholder = '每行一个域名，如 example.com'
+    textarea.placeholder = t('settings.network.noProxyPlaceholder')
     textarea.addEventListener('change', () => {
       const list = textarea.value
         .split('\n')
-        .map((v) => v.trim())
+        .map((value) => value.trim())
         .filter(Boolean)
       void saveProxy({ ...proxy, noProxy: list })
     })
-    frag.append(row('不代理的域名', textarea))
+    frag.append(row(t('settings.network.noProxy'), textarea))
     return frag
   },
 
@@ -357,49 +392,45 @@ const renderers = {
     const DEFAULT_KEY = 'devRuntime.python.default'
     const current = String(setting(DEFAULT_KEY, ''))
     const frag = document.createDocumentFragment()
-    frag.append(heading('开发运行时'))
+    frag.append(heading(t('settings.section.devRuntime')))
 
-    const install = el('button', 'btn', '安装运行时…')
+    const install = el('button', 'btn', t('settings.devRuntime.install'))
     install.type = 'button'
     install.addEventListener('click', async () => {
       install.disabled = true
       try {
-        const picked = await call('dialog.openFile', { title: '选择 Python 运行时包（.oix）' })
+        const picked = await call('dialog.openFile', { title: t('settings.devRuntime.pickTitle') })
         if (!picked || picked.canceled) return
         const file = (picked.filePaths && picked.filePaths[0]) || ''
         if (!file) return
         const outcome = await call('extensions.installFromPath', { path: file })
         if (outcome && outcome.ok === false) {
-          noteMessage(`安装失败：${outcome.error}`)
+          noteMessage(t('common.installFailed', { message: outcome.error }))
         }
         await reload()
       } catch (error) {
-        noteMessage(`安装失败：${error.message}`)
+        noteMessage(t('common.installFailed', { message: error.message }))
       } finally {
         install.disabled = false
       }
     })
-    frag.append(row('安装内置版本', install))
-    frag.append(
-      note(
-        '内置版本装进**系统扩展目录**（<安装目录>/extensions，id 不带作者后缀）：包内根目录需有 runtime.json：{"language":"python","version":"3.12.4"} 并附带 python/python.exe。旧版本装在用户扩展目录里的运行时仍会被识别（可在扩展管理器卸载它）。'
-      )
-    )
+    frag.append(row(t('settings.devRuntime.installLabel'), install))
+    frag.append(note(t('settings.devRuntime.note')))
 
     const rows = el('ul', 'plain')
-    const addEntry = (key, version, detail, tag) => {
+    const addEntry = (key, version, detail, tag, isLocal) => {
       const li = el('li', 'key-row')
       const name = el(
         'span',
         'key-name',
-        tag === '本机' ? `${version || '未知版本'}` : `${version}（${tag}）`
+        isLocal ? `${version || t('settings.devRuntime.unknownVersion')}` : `${version}（${tag}）`
       )
       name.append(document.createTextNode(`  ·  ${detail}`))
       li.append(name)
       if (key === current) {
-        li.append(el('span', 'key-combo', '默认'))
+        li.append(el('span', 'key-combo', t('settings.devRuntime.default')))
       } else {
-        const btn = el('button', 'btn', '设为默认')
+        const btn = el('button', 'btn', t('settings.devRuntime.setDefault'))
         btn.type = 'button'
         btn.addEventListener('click', async () => {
           await setSetting(DEFAULT_KEY, key)
@@ -414,34 +445,39 @@ const renderers = {
       addEntry(
         `builtin:${item.extensionId}`,
         item.version,
-        item.hasExecutable ? item.dir : `${item.dir}（缺 python/python.exe）`,
-        item.source === 'user' ? '内置·用户目录（旧位置）' : '内置'
+        item.hasExecutable ? item.dir : t('settings.devRuntime.missingExe', { dir: item.dir }),
+        item.source === 'user'
+          ? t('settings.devRuntime.tagBuiltinLegacy')
+          : t('settings.devRuntime.tagBuiltin'),
+        false
       )
     }
     for (const item of data.local || []) {
-      addEntry(`local:${item.path}`, item.version, item.path, '本机')
+      addEntry(
+        `local:${item.path}`,
+        item.version,
+        item.path,
+        t('settings.devRuntime.tagLocal'),
+        true
+      )
     }
     if (rows.childElementCount === 0) {
-      frag.append(note('还没有可用的 Python：安装内置版本包，或先在本机装 Python（会自动发现）。'))
+      frag.append(note(t('settings.devRuntime.empty')))
     } else {
       frag.append(rows)
     }
-    frag.append(
-      note(
-        '多版本可并存（内置按版本、本机按路径区分）；「默认」是 api.python 与新装扩展使用的解释器。'
-      )
-    )
+    frag.append(note(t('settings.devRuntime.footer')))
     return frag
   },
 
   ai() {
     const frag = document.createDocumentFragment()
-    frag.append(heading('AI'))
+    frag.append(heading(t('settings.section.ai')))
     const fields = [
-      ['ai.baseUrl', '服务地址', 'https://api.openai.com/v1'],
-      ['ai.apiKey', 'API Key', 'sk-…'],
-      ['ai.model', '模型', 'gpt-4o-mini'],
-      ['ai.contextLen', '上下文长度', '8192']
+      ['ai.baseUrl', t('settings.ai.baseUrl'), 'https://api.openai.com/v1'],
+      ['ai.apiKey', t('settings.ai.apiKey'), 'sk-…'],
+      ['ai.model', t('settings.ai.model'), 'gpt-4o-mini'],
+      ['ai.contextLen', t('settings.ai.contextLen'), '8192']
     ]
     for (const [key, label, placeholder] of fields) {
       frag.append(
@@ -453,10 +489,10 @@ const renderers = {
     }
     frag.append(
       row(
-        '每日请求上限',
+        t('settings.ai.dailyLimit'),
         input(
           setting('ai.dailyLimit', ''),
-          '0 = 不限制',
+          t('settings.ai.dailyLimitPlaceholder'),
           (value) => {
             const num = Number(value)
             void setSetting('ai.dailyLimit', Number.isFinite(num) && value !== '' ? num : undefined)
@@ -466,11 +502,11 @@ const renderers = {
       )
     )
     const aiStatus = el('p', 'note', '')
-    const testBtn = el('button', 'btn', '测试连接')
+    const testBtn = el('button', 'btn', t('settings.ai.test'))
     testBtn.type = 'button'
     testBtn.addEventListener('click', async () => {
       testBtn.disabled = true
-      aiStatus.textContent = '测试中…'
+      aiStatus.textContent = t('settings.ai.testing')
       try {
         const result = await call('ai.test', {
           baseUrl: String(setting('ai.baseUrl', '')),
@@ -478,10 +514,12 @@ const renderers = {
         })
         aiStatus.textContent =
           result && result.ok
-            ? `连接成功：${result.message || ''}`
-            : `失败：${(result && result.message) || '未知错误'}`
+            ? t('settings.ai.ok', { message: result.message || '' })
+            : t('settings.ai.failed', {
+                error: (result && result.message) || t('common.unknownError')
+              })
       } catch (error) {
-        aiStatus.textContent = `失败：${error.message}`
+        aiStatus.textContent = t('settings.ai.failed', { error: error.message })
       } finally {
         testBtn.disabled = false
       }
@@ -492,17 +530,17 @@ const renderers = {
 
   notification() {
     const frag = document.createDocumentFragment()
-    frag.append(heading('通知'))
+    frag.append(heading(t('settings.section.notification')))
     frag.append(
       row(
-        '启用通知',
+        t('settings.notification.enable'),
         checkbox(
           setting('notifications.enabled', true),
           (enabled) => void setSetting('notifications.enabled', enabled)
         )
       )
     )
-    frag.append(note('以下按扩展屏蔽：取消勾选后该扩展的 toast 不再显示。'))
+    frag.append(note(t('settings.notification.note')))
     const list = el('ul', 'plain')
     for (const ext of snapshot.extensions || []) {
       const li = el('li', 'key-row')
@@ -520,9 +558,9 @@ const renderers = {
 
   extension() {
     const frag = document.createDocumentFragment()
-    frag.append(heading('扩展'))
+    frag.append(heading(t('settings.section.extension')))
     if (snapshot.extensionPages.length === 0) {
-      frag.append(note('暂无扩展声明设置项（扩展可经 api.settings.register 或清单声明）。'))
+      frag.append(note(t('settings.extension.empty')))
       return frag
     }
     for (const page of snapshot.extensionPages) {
@@ -553,7 +591,7 @@ function fieldControl(field) {
       return checkbox(Boolean(value), (checked) => commit(checked))
     case 'select':
       return select(
-        (field.options || []).map((o) => ({ value: o.value, label: o.label })),
+        (field.options || []).map((option) => ({ value: option.value, label: option.label })),
         String(value ?? ''),
         (next) => commit(next)
       )
@@ -585,14 +623,14 @@ function fieldControl(field) {
       const shown = input(value ?? '', field.placeholder || '', () => undefined)
       shown.readOnly = true
       shown.addEventListener('click', () => void browse(field, shown))
-      const btn = el('button', 'btn', '浏览…')
+      const btn = el('button', 'btn', t('settings.field.browse'))
       btn.type = 'button'
       btn.addEventListener('click', () => void browse(field, shown))
       wrap.append(shown, btn)
       return wrap
     }
     case 'status':
-      return el('span', 'value', String(value ?? '（未设置）'))
+      return el('span', 'value', String(value ?? t('settings.field.unset')))
     case 'progress': {
       const max = typeof field.max === 'number' && field.max > 0 ? field.max : 100
       const cur = Math.min(Math.max(Number(value) || 0, 0), max)
@@ -611,7 +649,9 @@ function fieldControl(field) {
 /** directory 字段：选目录（取消不改值） */
 async function browse(field, shown) {
   try {
-    const result = await call('dialog.openDirectory', { title: field.label || '选择目录' })
+    const result = await call('dialog.openDirectory', {
+      title: field.label || t('settings.field.pickDirectory')
+    })
     if (!result || result.canceled) return
     const picked = (result.filePaths && result.filePaths[0]) || ''
     if (!picked) return
@@ -619,7 +659,7 @@ async function browse(field, shown) {
     await setSetting(field.key, picked)
   } catch (error) {
     shown.value = String(setting(field.key, ''))
-    noteMessage(`选择目录失败：${error.message}`)
+    noteMessage(t('settings.field.pickDirectoryFailed', { message: error.message }))
   }
 }
 
@@ -640,11 +680,11 @@ function noteMessage(text) {
 
 function renderTree() {
   treeEl.replaceChildren(
-    ...SECTIONS.map((section) => {
-      const node = el('div', 'tree-node', section.label)
-      if (section.id === active) node.classList.add('active')
+    ...SECTION_IDS.map((id) => {
+      const node = el('div', 'tree-node', t(`settings.section.${id}`))
+      if (id === active) node.classList.add('active')
       node.addEventListener('click', () => {
-        active = section.id
+        active = id
         activeExtPage = null
         render()
       })
@@ -658,10 +698,23 @@ function render() {
   panelEl.replaceChildren()
   const renderer = renderers[active]
   if (!renderer) {
-    panelEl.append(note('未知分区'))
+    panelEl.append(note(t('settings.unknownSection')))
     return
   }
   panelEl.append(renderer())
+}
+
+/**
+ * 静态文案（`index.html` 的 title / 树 aria-label / 首屏 loading）：语言确定后覆盖兜底文本。
+ */
+function applyStaticText() {
+  const title = t('settings.title')
+  document.title = title
+  treeEl.setAttribute('aria-label', t('settings.treeAria'))
+  document.documentElement.lang = pageContext.getContext()?.locale === 'en' ? 'en' : 'zh-CN'
+  if (snapshot === null) {
+    panelEl.replaceChildren(note(t('settings.loading')))
+  }
 }
 
 async function reload() {
@@ -671,10 +724,11 @@ async function reload() {
 
 async function init() {
   noteEl = noteMessage
+  applyStaticText()
   try {
     await reload()
   } catch (error) {
-    panelEl.replaceChildren(note(`读取失败：${error.message}`))
+    panelEl.replaceChildren(note(t('common.readFailed', { message: error.message })))
   }
 }
 
@@ -687,14 +741,3 @@ window.addEventListener('hashchange', () => {
 })
 
 void init()
-/**
- * 主题跟随：CSS 变量不跨文档，壳子在 iframe 加载后以 `obox-theme` 下发 token。
- * 这里把 token 写到根元素上（`--x` 形式），页面样式直接用 `var(--x)`。
- */
-window.addEventListener('message', (event) => {
-  const data = event.data
-  if (!data || data.type !== 'obox-theme' || !data.tokens) return
-  for (const [key, value] of Object.entries(data.tokens)) {
-    if (typeof value === 'string') document.documentElement.style.setProperty(`--${key}`, value)
-  }
-})

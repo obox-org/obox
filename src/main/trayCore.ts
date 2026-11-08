@@ -42,7 +42,8 @@ export function trayMenuItems(locale: string | undefined): TrayMenuItem[] {
  *
  * 为什么带提示：左键单击不再有任何行为（ADR-0019 决策 21），用户没有别的途径知道
  * "双击能打开窗口 / 右键能出菜单"，因此把操作方式写进悬停提示作为缓解措施。
- * 与 `trayMenuItems` 同样按 locale 出 zh/en 两份（主进程唯一语言来源是 `app.getLocale()`）。
+ * 与 `trayMenuItems` 同样按 locale 出 zh/en 两份（语言来自 `locale.ts` 的 `getMainLocale()`，
+ * 跟随渲染侧的应用语言设置，不再直接读 `app.getLocale()`）。
  */
 export function trayTooltip(appName: string, version: string, locale: string | undefined): string {
   const name = appName.trim() || 'obox'

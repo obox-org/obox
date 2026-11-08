@@ -20,6 +20,7 @@ import {
   type CloseBehavior,
   type WindowBehaviorState
 } from './windowBehaviorCore'
+import { getMainLocale } from './locale'
 
 let state: WindowBehaviorState = { closeBehavior: DEFAULT_CLOSE_BEHAVIOR, launchAtLogin: false }
 
@@ -101,7 +102,7 @@ export function installWindowBehavior(win: BrowserWindow, opts: WindowBehaviorOp
 
 /** 弹原生提示：收进托盘 / 退出 / 取消（勾选"记住我的选择"则写偏好） */
 async function promptClose(win: BrowserWindow): Promise<void> {
-  const prompt = buildClosePrompt(app.getLocale(), app.getName())
+  const prompt = buildClosePrompt(getMainLocale(), app.getName())
   const result = await dialog.showMessageBox(win, {
     type: 'question',
     message: prompt.message,
@@ -124,7 +125,7 @@ async function promptClose(win: BrowserWindow): Promise<void> {
 
 /** 托盘"关于"：原生对话框显示名称与版本（含 Electron/Chromium/Node） */
 export function showAboutDialog(parent?: BrowserWindow): void {
-  const info = buildAboutPrompt(app.getLocale(), {
+  const info = buildAboutPrompt(getMainLocale(), {
     appName: app.getName(),
     version: app.getVersion(),
     electron: process.versions.electron,
