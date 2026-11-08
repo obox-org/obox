@@ -135,6 +135,31 @@ describe('themeStore.apply · 旧 token 清理（issue #81）', () => {
     expect(dom.removals).toEqual(['--fg'])
     expect(dom.inline).toEqual(new Map([['--bg', '#222']]))
   })
+
+  /**
+   * 回归（真机缺陷）：`setTheme` 曾经**先写设置、后写 DOM**，而 `setSetting` 会同步通知订阅者
+   * （`ContentArea` 借此向扩展页面推 `obox:context`、`AppWindow` 借此重推 token），订阅者读的
+   * 是 `getComputedStyle(:root)` 生效值 ⇒ 推出去的是**上一个主题**的 token，表现为
+   * "切了浅色、扩展页面还是深色"。这里钉住"通知发生时 DOM 已是新值"。
+   */
+  it('setTheme：先写 DOM 再通知订阅者（页面推送读到的是新 token）', async () => {
+    const store = await freshStore()
+    const { stateStore } = await import('../src/renderer/src/core/state')
+    store.register('theme-test', theme('t-dark', { '--bg': '#111111' }))
+    store.register('theme-test', theme('t-light', { '--bg': '#f3f3f3' }))
+    store.setTheme('t-dark')
+
+    const seen: string[] = []
+    const off = stateStore.onSettingsChanged((key) => {
+      if (key === 'theme') seen.push(dom.inline.get('--bg') ?? '')
+    })
+    store.setTheme('t-light')
+    off()
+
+    // 通知发生时 `:root` 已经是新主题的值（否则扩展页面会停在旧主题）
+    expect(seen).toEqual(['#f3f3f3'])
+    expect(dom.inline.get('--bg')).toBe('#f3f3f3')
+  })
 })
 
 /**
