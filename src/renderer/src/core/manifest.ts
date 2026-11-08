@@ -266,6 +266,50 @@ export function validateManifest(raw: unknown): ValidationMessage[] {
   if (contributes?.themes !== undefined && !Array.isArray(contributes.themes)) {
     messages.push({ severity: 'error', message: 'themes 必须是 [{id, label, tokens}] 数组' })
   }
+  // 扩展语言包（change `unified-page-context`）：形状 error；zh/en 键集合不一致 warning。
+  // 与 `scripts/validate-manifest.mjs` 的同一段逐字对齐（差分门禁会比较两边文案）。
+  const i18n = contributes?.i18n as unknown
+  if (i18n !== undefined) {
+    if (!i18n || typeof i18n !== 'object' || Array.isArray(i18n)) {
+      messages.push({
+        severity: 'error',
+        message: 'contributes.i18n 必须是 { locale: { key: text } } 对象'
+      })
+    } else {
+      for (const [locale, dict] of Object.entries(i18n as Record<string, unknown>)) {
+        if (!dict || typeof dict !== 'object' || Array.isArray(dict)) {
+          messages.push({
+            severity: 'error',
+            message: `contributes.i18n["${locale}"] 必须是 { key: text } 对象`
+          })
+          continue
+        }
+        for (const [key, value] of Object.entries(dict as Record<string, unknown>)) {
+          if (typeof value !== 'string') {
+            messages.push({
+              severity: 'error',
+              message: `contributes.i18n["${locale}"]["${key}"] 必须是字符串`
+            })
+          }
+        }
+      }
+      const dict = i18n as Record<string, unknown>
+      const zh = dict.zh && typeof dict.zh === 'object' ? Object.keys(dict.zh as object) : null
+      const en = dict.en && typeof dict.en === 'object' ? Object.keys(dict.en as object) : null
+      if (zh && en) {
+        const missing = [
+          ...zh.filter((key) => !en.includes(key)),
+          ...en.filter((key) => !zh.includes(key))
+        ]
+        if (missing.length > 0) {
+          messages.push({
+            severity: 'warning',
+            message: `contributes.i18n 的 zh/en 词条键不一致：${missing.sort().join(', ')}`
+          })
+        }
+      }
+    }
+  }
   const deps = m.extensionDependencies as unknown
   const invalidShape = !Array.isArray(deps) || deps.some((d) => typeof d !== 'string')
   if (deps !== undefined && invalidShape) {

@@ -91,7 +91,8 @@ describe('AppWindow.vue · 主题下发接线', () => {
     const src = source()
     // pushThemeTokens 必须按 isOverlay 选目标 URL
     expect(src).toContain('const targetUrl = isOverlay ? overlayUrl : registration.value?.url')
-    expect(src).toContain('win.postMessage(buildThemeMessage(')
+    // 旧主题消息与统一上下文一起发（change unified-page-context：旧协议先、obox:context 后）
+    expect(src).toContain('pushWithLegacy(win, pageExtensionId.value, buildThemeMessage(')
     // 不允许再出现"因 registration 缺省直接 return"的旧写法
     expect(src).not.toContain('if (!registration.value?.url) return')
     // iframe 的 load 事件仍然触发下发（overlay 的文档加载完成后才有 contentWindow）

@@ -1,15 +1,28 @@
 {
   "name": "theme-light",
   "version": "1.0.0",
-  "displayName": "Light 主题",
+  "displayName": "%theme.displayName%",
   "author": "Obox",
-  "description": "浅色主题",
+  "description": "%theme.description%",
   "main": "./index.ts",
   "contributes": {
+    "i18n": {
+      "zh": {
+        "theme.displayName": "Light 主题",
+        "theme.description": "浅色主题",
+        "theme.label": "浅色"
+      },
+      "en": {
+        "theme.displayName": "Light theme",
+        "theme.description": "Light theme",
+        "theme.label": "Light"
+      }
+    },
     "themes": [
       {
         "id": "theme-light.light",
-        "label": "浅色",
+        "label": "%theme.label%",
+        "colorScheme": "light",
         "tokens": {
           "--bg": "#f3f3f3",
           "--bg-panel": "#ffffff",

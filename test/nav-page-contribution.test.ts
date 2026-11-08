@@ -69,4 +69,26 @@ describe('navItems[].page', () => {
     expect(src).toContain('<iframe')
     expect(src).toContain('activePage')
   })
+
+  it('壳子与子窗口都投递统一上下文，且保留旧主题协议（源码门禁，change unified-page-context 2.1/2.2）', () => {
+    const content = readFileSync(
+      fileURLToPath(new URL('../src/renderer/src/components/ContentArea.vue', import.meta.url)),
+      'utf8'
+    )
+    // 四个时机：load 走 onPageLoad、主题/语言走 onSettingsChanged、请求走 isPageContextRequest
+    expect(content).toContain('pushWithLegacy')
+    expect(content).toContain('onSettingsChanged')
+    expect(content).toContain("key === 'theme'")
+    expect(content).toContain('isPageContextRequest')
+    expect(content).toContain('onPageLoad')
+
+    const appWindow = readFileSync(
+      fileURLToPath(new URL('../src/renderer/src/AppWindow.vue', import.meta.url)),
+      'utf8'
+    )
+    // 双发：旧 `obox-app` 主题消息 + 新上下文
+    expect(appWindow).toContain('pushWithLegacy')
+    expect(appWindow).toContain('buildThemeMessage')
+    expect(appWindow).toContain("key === 'locale'")
+  })
 })

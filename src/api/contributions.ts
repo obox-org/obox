@@ -12,9 +12,15 @@ export type NavGroup = 'top' | 'bottom'
 export interface NavItemContribution {
   /** 唯一 id（建议含扩展名前缀，如 `ext-manager.home`） */
   id: string
-  /** 显示名称（hover tooltip 显示） */
+  /** 显示名称（hover tooltip 显示）；**支持 `%key%`**（按本扩展 `contributes.i18n` 解析） */
   title: string
-  /** 语言包 key（可选）：存在时 tooltip/状态栏用 t(titleKey) 本地化，否则用 title 原文 */
+  /**
+   * 语言包 key（可选；**遗留**）。
+   *
+   * 它只查**宿主**语言包（`src/renderer/src/i18n/locales/`），系统扩展与用户扩展都改不了那份文件，
+   * 因此新扩展不要再用它——写 `title: "%nav.home%"` 并在 `contributes.i18n` 里给词条。
+   * 保留该字段只为既有内置扩展不失效。
+   */
   titleKey?: string
   /** 图标：SVG 字符串（data: 或 path 均可），或组件 id（宿主内置图标名） */
   icon: string
@@ -68,8 +74,15 @@ export interface CommandContribution {
 export interface ThemeContribution {
   /** 主题 id（全局唯一，建议 `<扩展名>.<主题名>`，如 `theme-dark.dark`） */
   id: string
-  /** 显示名（如 "深色"/"Dark"） */
+  /** 显示名（如 "深色"/"Dark"）；**支持 `%key%`**（按本扩展的 `contributes.i18n` 解析） */
   label: string
+  /**
+   * 原生控件/滚动条的深浅（可选）。缺省时宿主按主题 id 是否含 `light` 推断。
+   *
+   * 为什么要显式声明：id 是人取的（`solarized` 是浅色却不含 `light`），猜错的表现是页面里出现
+   * 白底黑字的原生下拉/滚动条。声明后宿主会把它随页面上下文一起下发（`colorScheme`）。
+   */
+  colorScheme?: 'dark' | 'light'
   /** CSS 变量 token 组：`--bg` → 值 */
   tokens: Record<string, string>
 }

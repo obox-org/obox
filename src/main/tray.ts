@@ -7,7 +7,8 @@
  */
 import { app, Menu, Tray, nativeImage } from 'electron'
 import { join } from 'node:path'
-import { trayMenuItems, trayTooltip, type TrayMenuItemId } from './trayCore'
+import { trayMenuItems, trayTooltip, type TrayMenuItemId, type TrayMenuItem } from './trayCore'
+import { getMainLocale } from './locale'
 
 export interface TrayActions {
   /** 打开主窗口（不存在则重建） */
@@ -22,6 +23,8 @@ export interface TrayActions {
 
 let tray: Tray | null = null
 let menu: Menu | null = null
+/** 最近一次创建托盘时的动作表（语言变化重建菜单要用） */
+let lastActions: TrayActions | null = null
 
 /** 托盘是否可用（关闭拦截据此决定是否"收进托盘"） */
 export function isTrayActive(): boolean {
@@ -31,6 +34,38 @@ export function isTrayActive(): boolean {
 function trayIconPath(): string {
   // 与主窗口图标同一约定（window.ts）：out/main/../../resources → 打包后经 asarUnpack 仍可读
   return join(__dirname, '../../resources/tray.ico')
+}
+
+/** 按语言生成菜单模板（创建与"语言变化重建"共用一份，避免两处漂移） */
+function buildTemplate(
+  actions: TrayActions,
+  locale: string
+): Electron.MenuItemConstructorOptions[] {
+  const handlers: Record<TrayMenuItemId, () => void> = {
+    open: actions.open,
+    settings: actions.settings,
+    about: actions.about,
+    quit: actions.quit
+  }
+  return trayMenuItems(locale).map((item: TrayMenuItem) =>
+    item.type === 'separator'
+      ? { type: 'separator' as const }
+      : { label: item.label, click: (): void => handlers[item.id as TrayMenuItemId]() }
+  )
+}
+
+/**
+ * 语言变化后重建托盘菜单与 tooltip（幂等；托盘未创建时无操作）。
+ *
+ * 为什么允许重建：用户切语言后托盘必须立刻跟着变，而 Electron 的 `Tray` 不能只改单项文案；
+ * 重建成本极低（几个菜单项），且 `trayMenuItems` 是纯函数。
+ */
+export function refreshTrayLocale(locale?: string): void {
+  if (!tray || !lastActions) return
+  const code = locale ?? getMainLocale()
+  tray.setToolTip(trayTooltip(app.getName(), app.getVersion(), code))
+  menu = Menu.buildFromTemplate(buildTemplate(lastActions, code))
+  tray.setContextMenu(menu)
 }
 
 /** 创建托盘；非 Windows 或图标缺失一律返回 null（保持旧行为，不拦住启动） */
@@ -44,19 +79,9 @@ export function createTray(actions: TrayActions): Tray | null {
     return null
   }
 
-  const locale = app.getLocale()
-  const handlers: Record<TrayMenuItemId, () => void> = {
-    open: actions.open,
-    settings: actions.settings,
-    about: actions.about,
-    quit: actions.quit
-  }
-  const template = trayMenuItems(locale).map((item) =>
-    item.type === 'separator'
-      ? { type: 'separator' as const }
-      : { label: item.label, click: (): void => handlers[item.id as TrayMenuItemId]() }
-  )
-
+  const locale = getMainLocale()
+  lastActions = actions
+  const template = buildTemplate(actions, locale)
   tray = new Tray(icon)
   tray.setToolTip(trayTooltip(app.getName(), app.getVersion(), locale))
   menu = Menu.buildFromTemplate(template)
@@ -74,4 +99,5 @@ export function destroyTray(): void {
   tray?.destroy()
   tray = null
   menu = null
+  lastActions = null
 }

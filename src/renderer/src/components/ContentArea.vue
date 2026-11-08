@@ -5,7 +5,12 @@ import { useI18n } from 'vue-i18n'
 import { registry } from '../core/registry'
 import { runHostQuery, toSerializable } from '../core/hostQuery'
 import { hostQueryDeps } from '../core/hostQueryDeps'
-import { themeStore } from '../core/theme'
+import { stateStore } from '../core/state'
+import {
+  buildLegacySystemThemeMessage,
+  isPageContextRequest,
+  pushWithLegacy
+} from '../core/pageContext'
 
 const { t } = useI18n()
 
@@ -25,6 +30,11 @@ const pageRef = ref<HTMLIFrameElement | null>(null)
 async function onPageMessage(event: MessageEvent): Promise<void> {
   const frame = pageRef.value
   if (!frame || event.source !== frame.contentWindow) return
+  // 页面首帧竞态兜底：页面主动请求重发上下文（主题 + 语言）
+  if (isPageContextRequest(event.data)) {
+    pushToPage()
+    return
+  }
   const data = event.data as { type?: string; id?: number; op?: string; args?: unknown } | null
   if (!data || data.type !== 'obox:page-call' || typeof data.op !== 'string') return
   const reply = (payload: Record<string, unknown>): void => {
@@ -43,12 +53,27 @@ async function onPageMessage(event: MessageEvent): Promise<void> {
   }
 }
 
-/** iframe 加载完成后下发主题 token（CSS 变量不跨文档，必须显式推） */
+/** 当前导航页所属扩展 id（上下文里的 `messages` 只能给它的词条） */
+const activePageExtId = computed<string>(() => {
+  if (!props.activeNavId) return ''
+  const item = registry.navItems.find((i) => i.id === props.activeNavId && i.active)
+  return item?.extensionId ?? ''
+})
+
+/**
+ * 把主题 + 语言上下文推给当前页面：**旧协议先、`obox:context` 后**（老页面零改动，新页面等后面那条）。
+ *
+ * 触发时机：iframe 加载完成 / 主题变化 / 语言变化 / 收到 `obox:context-request`。
+ */
+function pushToPage(): void {
+  const win = pageRef.value?.contentWindow
+  if (!win) return
+  pushWithLegacy(win, activePageExtId.value, buildLegacySystemThemeMessage())
+}
+
+/** iframe 加载完成后下发上下文（CSS 变量与语言都不跨文档，必须显式推） */
 function onPageLoad(): void {
-  pageRef.value?.contentWindow?.postMessage(
-    { type: 'obox-theme', tokens: themeStore.currentTokens },
-    '*'
-  )
+  pushToPage()
 }
 
 /**
@@ -56,16 +81,22 @@ function onPageLoad(): void {
  * 系统扩展的更新分区要显示百分比，就必须把事件推给它的 iframe。
  */
 let offUpdateEvent: (() => void) | undefined
+/** 设置变化订阅：主题（key `theme`）与语言（`emitSettingsChanged` 无 key）都要重推上下文 */
+let offSettings: (() => void) | undefined
 
 onMounted(() => {
   window.addEventListener('message', onPageMessage)
   offUpdateEvent = window.events.on('update:event', (event) => {
     pageRef.value?.contentWindow?.postMessage({ type: 'obox-update-event', event }, '*')
   })
+  offSettings = stateStore.onSettingsChanged((key) => {
+    if (key === undefined || key === 'theme' || key === 'locale') pushToPage()
+  })
 })
 onUnmounted(() => {
   window.removeEventListener('message', onPageMessage)
   offUpdateEvent?.()
+  offSettings?.()
 })
 
 /** 组件定义缓存：view id → 异步组件包装（避免每次 computed 新建导致 KeepAlive 缓存失效） */

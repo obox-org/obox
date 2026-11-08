@@ -834,3 +834,22 @@ fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
    迁移自动清掉旧副本；
 4. 装完仍不出现：确认包内有 `python/python.exe`（缺失会标「缺 python/python.exe」），
    并重启应用让宿主重新扫描。
+
+## 49. 扩展页面不跟随主题 / 语言，或界面出现 `%key%`
+
+**症状**：切主题后壳子变了、扩展页面没变；切语言后页面文案仍是中文（或半中半英）；
+扩展管理器/导航里出现 `%app.displayName%` 这类占位符原文。
+
+**原因与处理**：
+
+1. **页面没接上下文**（2.4 起）：`url` 卡片 / overlay / 系统 nav 页统一收 `obox:context`。
+   页面用一行接入即可：`import { startPageContext } from 'app://obox/page.js'`；
+   自己监听时只认 `type === 'obox:context'`，**不要**再手拼 `--` 前缀（历史 bug 会写成 `----bg`）。
+2. **页面自己写死了颜色**：token 只会写进 `:root`，页面样式必须用 `var(--bg)` 这类引用；
+   写死 `#1e1e1e` 的页面在任何主题下都不变。
+3. **`%key%` 没解析**：说明该文本所在的扩展没有对应词条（或 key 拼错）。缺 key 时宿主**故意**
+   显示占位符原文并每 key 告警一次（控制台搜 `[i18n]`）。检查该扩展的 `contributes.i18n`
+   是否同时有 `zh`/`en` 且 key 一致（`npm run validate:manifest` 会报 warning）。
+4. **老宿主（≤ 2.3.x）**：没有 `obox:context`，页面运行时会用内置默认 token/语言并 warn 一次；
+   这是降级预期，不是错误。
+5. **`titleKey` 不生效**：它只查**宿主**语言包，扩展自己的词条不会被命中；改用 `%key%`。

@@ -46,6 +46,7 @@ import { themeStore } from './core/theme'
 import { stateStore } from './core/state'
 import { uiStore } from './core/uiStore'
 import { appFrameKey, buildThemeMessage, collectThemeTokens } from './core/appTheme'
+import { pushWithLegacy } from './core/pageContext'
 
 const { t } = useI18n()
 
@@ -155,16 +156,23 @@ const frameKey = computed(() =>
   isOverlay ? overlayUrl : appFrameKey(registration.value, themeId.value)
 )
 
+/** 本页所属扩展 id：overlay 用查询串的 `extId`，卡片用注册表里的 `extensionId` */
+const pageExtensionId = computed(() =>
+  isOverlay ? extId : (registration.value?.extensionId ?? '')
+)
+
 /**
- * 把当前主题 token 下发给 iframe（`url` 型卡片 **与 overlay 浮层**）。
+ * 把当前主题与语言下发给 iframe（`url` 型卡片 **与 overlay 浮层**）。
  *
  * 为什么 overlay 也要发（2.0.3 修复）：浮层窗口加载的是外壳页，扩展页在 **iframe** 里，
  * 而 CSS 自定义属性**不跨文档继承**——2.0.1 曾把 token 写到本窗口 `documentElement`，
  * 对 iframe 里的宠物页毫无作用，面板因此一直是透明的（实测截图见
  * `openspec/changes/fix-overlay-message-and-appmessage-timeout/notes/repro/`）。
  *
- * 触发时机：iframe load 完成 / 主题变化（refreshTheme）/ 收到 `obox-theme-request`。
+ * 触发时机：iframe load 完成 / 主题变化（refreshTheme）/ 语言变化 / 收到 `obox-theme-request`。
  * 目标 URL：overlay 用查询串里的 `url`（overlay 没有 `registration`），App 卡片用清单里的 url。
+ *
+ * 兼容：**旧 `obox-app` 主题消息先发**（已发布页面在收），再发统一上下文（新页面在收）。
  */
 function pushThemeTokens(): void {
   const targetUrl = isOverlay ? overlayUrl : registration.value?.url
@@ -175,7 +183,7 @@ function pushThemeTokens(): void {
     return
   }
   const tokens = themeTokens.value
-  win.postMessage(buildThemeMessage(themeId.value, tokens), '*')
+  pushWithLegacy(win, pageExtensionId.value, buildThemeMessage(themeId.value, tokens))
   console.log('[AppWindow] 下发主题', themeId.value, Object.keys(tokens).length + ' 个 token')
 }
 
@@ -252,9 +260,11 @@ let offUiShow: (() => void) | undefined
 
 onMounted(() => {
   window.addEventListener('message', onMessage)
-  // 主题变化（本窗口或经 storage 合并进来的跨窗口快照）→ 重新应用 + 下发 token
+  // 主题/语言变化（本窗口或经 storage 合并进来的跨窗口快照）→ 重新应用 + 下发上下文
   offTheme = stateStore.onSettingsChanged((key) => {
     if (key === undefined || key === 'theme') refreshTheme()
+    // 语言变化只影响上下文里的 locale/messages，不必重算 token
+    else if (key === 'locale') pushThemeTokens()
   })
   // 扩展 ui 模态框（焦点在本窗口时由主进程转发）：驱动本地 uiStore 渲染，结果回传
   offUiShow = window.events.on('ui:show', (e) => {

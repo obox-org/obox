@@ -531,6 +531,49 @@ export function validateManifest(raw, oboxApiVersion) {
       messages.push({ level: 'error', message: 'themes 必须是 [{id, label, tokens}] 数组' })
     }
   }
+  // 扩展语言包（change `unified-page-context`）：形状 error；zh/en 键集合不一致 warning。
+  // 与宿主 `src/renderer/src/core/manifest.ts` 的同一段逐字对齐（差分门禁会比较两边文案）。
+  if (contributes && typeof contributes === 'object' && contributes.i18n !== undefined) {
+    const i18n = contributes.i18n
+    if (!i18n || typeof i18n !== 'object' || Array.isArray(i18n)) {
+      messages.push({
+        level: 'error',
+        message: 'contributes.i18n 必须是 { locale: { key: text } } 对象'
+      })
+    } else {
+      for (const [locale, dict] of Object.entries(i18n)) {
+        if (!dict || typeof dict !== 'object' || Array.isArray(dict)) {
+          messages.push({
+            level: 'error',
+            message: `contributes.i18n["${locale}"] 必须是 { key: text } 对象`
+          })
+          continue
+        }
+        for (const [key, value] of Object.entries(dict)) {
+          if (typeof value !== 'string') {
+            messages.push({
+              level: 'error',
+              message: `contributes.i18n["${locale}"]["${key}"] 必须是字符串`
+            })
+          }
+        }
+      }
+      const zh = i18n.zh && typeof i18n.zh === 'object' ? Object.keys(i18n.zh) : null
+      const en = i18n.en && typeof i18n.en === 'object' ? Object.keys(i18n.en) : null
+      if (zh && en) {
+        const missing = [
+          ...zh.filter((key) => !en.includes(key)),
+          ...en.filter((key) => !zh.includes(key))
+        ]
+        if (missing.length > 0) {
+          messages.push({
+            level: 'warning',
+            message: `contributes.i18n 的 zh/en 词条键不一致：${missing.sort().join(', ')}`
+          })
+        }
+      }
+    }
+  }
   if (contributes && typeof contributes === 'object' && contributes.settings !== undefined) {
     messages.push(...checkSettings(contributes.settings))
   }

@@ -31,6 +31,16 @@ export interface ThemeTokensPayload {
 const TOKEN_NAME_RE = /^--[a-z0-9-]+$/
 
 /**
+ * 单个主题 token 名是否合法（`--bg` 这种形状）。
+ *
+ * 导出原因：`shared/pageContext.ts` 也要用同一条规则过滤页面上下文里的 token——
+ * 抄第二份正则迟早分叉（一处放行 `background` 就是"页面能写任意样式属性"的口子）。
+ */
+export function isThemeTokenName(name: unknown): name is string {
+  return typeof name === 'string' && TOKEN_NAME_RE.test(name)
+}
+
+/**
  * 校验一份来自 IPC 的载荷。
  *
  * 跨进程边界必须验：渲染进程被攻破/写错时不能让它往 documentElement 上写任意属性

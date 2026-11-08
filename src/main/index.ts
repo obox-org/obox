@@ -14,7 +14,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'path'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { createWindow, getMainWindow, registerWindowIpc } from './window'
-import { createTray, destroyTray, isTrayActive } from './tray'
+import { createTray, destroyTray, isTrayActive, refreshTrayLocale } from './tray'
 import { registerAutoStartIpc, startedByAutoStart } from './autoStart'
 import {
   installWindowBehavior,
@@ -66,6 +66,7 @@ import { registerTimerIpc } from './timer'
 import { registerNotificationIpc } from './notification'
 import { downloadToExtensionDataDir, registerNetIpc, type DownloadRequest } from './net'
 import { currentProxy } from './proxy'
+import { getMainLocale, registerLocaleIpc } from './locale'
 import { registerAiIpc } from './ai'
 import { registerFsIpc } from './fs'
 import { registerExtIpc } from './ext'
@@ -105,7 +106,6 @@ import {
   HOST_MAIN_METHODS
 } from '../extension-host/capabilities/host-main'
 import { extensionSourceDir } from './paths'
-import { pickLocale } from './windowBehaviorCore'
 import { buildPythonEnv, pythonExecutablePath, pythonUserSiteDir } from './pythonCore'
 import { resolveProgramInExtension } from './ipcTransport'
 import type {
@@ -205,13 +205,13 @@ function readProxyParam(record: Record<string, unknown>): ProxyConfig | undefine
 /**
  * 注入给宿主进程的界面语言（R69 / 技术债 #12）。
  *
- * 主进程没有渲染进程的 i18n（`app.getLocale()` 是唯一来源，见 `windowBehaviorCore.ts` 的说明），
- * 所以按同一个 `pickLocale()` 归一成 `zh` / `en`；读不到（极少数平台/测试环境）就回 `zh`
- * ——与宿主入口 `process.env.OBOX_LOCALE ?? 'zh'` 的缺省一致。
+ * 语言来源是 `getMainLocale()`：渲染侧推送的应用语言优先，没推过时回退 `app.getLocale()`
+ * （见 `locale.ts`）；读不到（极少数平台/测试环境）就回 `zh`——与宿主入口
+ * `process.env.OBOX_LOCALE ?? 'zh'` 的缺省一致。渲染侧随后还会用 settings 快照校准。
  */
 function hostLocaleEnv(): string {
   try {
-    return pickLocale(app.getLocale())
+    return getMainLocale()
   } catch {
     return 'zh'
   }
@@ -498,8 +498,8 @@ app.whenReady().then(() => {
     env: {
       OBOX_APP_NAME: app.getName(),
       OBOX_APP_VERSION: app.getVersion(),
-      // 主进程唯一的语言来源是 `app.getLocale()`（见 `windowBehaviorCore` 的 `pickLocale`）；
-      // 渲染侧随后会用 settings 快照覆盖成用户实际选择的语言。
+      // 主进程语言 = 渲染侧设置（未推送时回退系统语言，见 `locale.ts`）；
+      // 渲染侧随后还会用 settings 快照校正宿主侧的 `api.i18n`。
       OBOX_LOCALE: hostLocaleEnv()
     }
   })
@@ -1051,6 +1051,10 @@ app.whenReady().then(() => {
       app.quit()
     }
   })
+
+  // 语言跟随设置（change `unified-page-context` 5.3）：渲染侧启动/切换语言时推过来，
+  // 变化即重建托盘菜单；`getMainLocale()` 之后被所有主进程文案读取（托盘/关窗/关于）。
+  registerLocaleIpc((locale) => refreshTrayLocale(locale))
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) ensureMainWindow()

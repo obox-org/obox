@@ -3,8 +3,9 @@
  *
  * electron-free，便于确定性单测（ADR-0019 决策 11）；Electron 接线与 IO 在 `windowBehavior.ts`。
  *
- * 主进程没有渲染进程的 i18n（`app.getLocale()` 是唯一的语言来源），因此提示文案按 `locale`
- * 在这里给出 zh/en 两份，避免"主进程对话框只有中文"。
+ * 主进程没有渲染进程的 i18n，语言来自 `locale.ts` 的 `getMainLocale()`（渲染侧设置优先、
+ * 未推送时回退 `app.getLocale()`），因此提示文案按 `locale` 在这里给出 zh/en 两份，
+ * 避免"主进程对话框只有中文"。
  */
 
 /** 关闭行为偏好：询问 / 收进托盘 / 退出 */

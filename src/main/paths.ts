@@ -51,3 +51,16 @@ export function getSystemExtensionsDir(): string {
 export function getExtensionRoots(): { systemRoot: string; userRoot: string } {
   return { systemRoot: getSystemExtensionsDir(), userRoot: getUserExtensionsDir() }
 }
+
+/**
+ * 宿主**页面运行时**目录（`app://obox/page.js` 的物理位置；change `unified-page-context`）。
+ *
+ * - 打包后：`<resources>/page-runtime`（electron-builder `extraResources` 从 `src/page-runtime` 拷入，
+ *   放在 asar 外，`net.fetch(file://)` 才能直接读）；
+ * - 开发期：仓库 `src/page-runtime`（改动即时生效，无需额外构建步骤）。
+ */
+export function getPageRuntimeDir(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'page-runtime')
+    : join(process.cwd(), 'src', 'page-runtime')
+}

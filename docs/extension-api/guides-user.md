@@ -11,13 +11,13 @@
 
 obox 有两个扩展运行时，**用户扩展与内置扩展的位置不同**，这决定了你能用什么：
 
-|              | **用户扩展**（本文，`.oix`）                                                                 | **内置扩展**（[guides-builtin.md](guides-builtin.md)）                    |
-| ------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| 跑在哪       | **Extension Host Process**：主进程用 Electron `utilityProcess` 拉起的独立 **Node 进程**，随主窗口同生共死 | **渲染进程**（与 UI 同一个进程）                                          |
-| Node         | **完整 Node**：`import fs from 'node:fs'` / `node:child_process` / `node:sqlite` 都可用        | 没有 Node，只有注入的 `api`                                              |
-| DOM          | **没有**：`document` / `window` / `localStorage` / `HTMLElement` 全部不存在                    | 有（可以写 Vue 组件、用浏览器 API）                                      |
-| 界面怎么来   | 贡献点 + **`app://` 静态页**（App 卡片 / overlay 页面）、树视图数据源                          | 还可以 `navItems[].view` 指向具名导出的 **Vue 组件**                     |
-| 激活         | 按 `activationEvents` **懒激活**（缺省 `*` = 立即）                                           | **立即激活**，不参与懒激活（写了 `activationEvents` 也不生效）            |
+|            | **用户扩展**（本文，`.oix`）                                                                              | **内置扩展**（[guides-builtin.md](guides-builtin.md)）         |
+| ---------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| 跑在哪     | **Extension Host Process**：主进程用 Electron `utilityProcess` 拉起的独立 **Node 进程**，随主窗口同生共死 | **渲染进程**（与 UI 同一个进程）                               |
+| Node       | **完整 Node**：`import fs from 'node:fs'` / `node:child_process` / `node:sqlite` 都可用                   | 没有 Node，只有注入的 `api`                                    |
+| DOM        | **没有**：`document` / `window` / `localStorage` / `HTMLElement` 全部不存在                               | 有（可以写 Vue 组件、用浏览器 API）                            |
+| 界面怎么来 | 贡献点 + **`app://` 静态页**（App 卡片 / overlay 页面）、树视图数据源                                     | 还可以 `navItems[].view` 指向具名导出的 **Vue 组件**           |
+| 激活       | 按 `activationEvents` **懒激活**（缺省 `*` = 立即）                                                       | **立即激活**，不参与懒激活（写了 `activationEvents` 也不生效） |
 
 - **API 仍是 `plugin(api)`**：`export default function (api) {…}`，`api` 由宿主进程按扩展 id 现场构造后传入。别去找全局变量，也别 `require('obox')`。
 - **跨进程**：每次 `api.*` 都是 RPC。参数/返回值只过 **JSON 值 + 二进制旁路**（函数、类实例、循环引用、`Map`/`Set` 过不去，报 `EH_UNSERIALIZABLE`）。
@@ -66,7 +66,7 @@ export default function myHello(api) {
 - 生命周期钩子（可选具名导出 `install` / `uninstall`）见 [api-reference.md](api-reference.md) 的「生命周期钩子」。
 - **界面怎么来**：`navItems[].view` 需要 Vue 组件对象，而你的入口没有 Vue、也没有 DOM —— 用户扩展的界面用 **App 卡片静态页**（下一节）或 **`contributes.views` 树**（宿主内置树视图渲染，数据源 `api.views.registerTreeProvider(viewId, provider)`）；纯命令 / 状态栏 / 通知类扩展不需要界面。
 - **激活时机由 `activationEvents` 决定**（缺省 `*` = 立即）：只注册 App 卡片的扩展如果写了 `onCommand`/`onView`，会**永不激活**（卡片也就永远不出现）。规则见 [manifest-reference.md](manifest-reference.md) 的「activationEvents」一节。
-- 贡献点声明与内置扩展同构（`contributes` 里写 `commands` / `statusBarItems` / `views` / `keybindings` / `menus` / `settings` / `themes` / `ipcChannels` / `i18n` / `updater` 等），但 **`titleKey` 对你无效**——它由宿主语言包解析（`components/NavBar.vue:14`、`components/TreeView.vue:65`），而用户扩展改不了 `src/renderer/src/i18n/locales/`，写了只会显示原始 key；要双语用 `api.i18n` 自己的命名空间。**命令必须先声明**：未声明的 `registerCommand` 会被 `registry.setCommandHandler` 抛错（`core/registry.ts:203`），扩展标红 `activationError`。
+- 贡献点声明与内置扩展同构（`contributes` 里写 `commands` / `statusBarItems` / `views` / `keybindings` / `menus` / `settings` / `themes` / `ipcChannels` / `i18n` / `updater` 等），但 **`titleKey` 对你无效**——它由宿主语言包解析（`components/NavBar.vue:14`、`components/TreeView.vue:65`），而用户扩展改不了 `src/renderer/src/i18n/locales/`，写了只会显示原始 key；要双语：**壳子渲染的标签**（`displayName` / `navItems[].title` / `commands[].title` / `statusBarItems[].name` / 设置字段 `label`）写成 `%key%` 并在 `contributes.i18n` 给词条；**自己的代码**用 `api.i18n`；**静态页面**用 `app://obox/page.js` 的 `ctx.t()`（见 [themes-settings.md](themes-settings.md)）。**命令必须先声明**：未声明的 `registerCommand` 会被 `registry.setCommandHandler` 抛错（`core/registry.ts:203`），扩展标红 `activationError`。
 
 ## 3. 两种形态
 
@@ -153,18 +153,18 @@ export default function myHello(api) {
 - **内容一律用 `url`，不要用 `html` 内联 `<script>`**：`html` 走 iframe `srcdoc`，而 srcdoc 继承主文档 CSP `script-src 'self' app:`（`src/renderer/index.html:9-10`），内联脚本**必被拦**（按钮点了没反应）。静态页里写**外部脚本** `<script src="./page.js"></script>`：`app://` 文档由协议直出、没有 CSP 头（`main/protocol.ts:33-82`），脚本正常执行。
 - `iconUrl`（可选）：**只接受 `app://extensions/…`**，主进程据此转磁盘路径设任务栏图标（`main/appWindow.ts:34-44,83-86`）；其它协议/主机名（含调试态的 `app://debug/…`）会被忽略，回退应用默认图标。
 - iframe sandbox 为 `allow-scripts allow-same-origin allow-forms allow-popups`（`AppWindow.vue:291-300`）：**没有 `allow-modals` → 页内 `alert` / `confirm` / `prompt` 全部无效**，交互一律自绘 UI。
-- 主题：`srcdoc` 由宿主**自动注入**；**`url` 静态页由宿主经 `obox-theme` 消息下发**（跨源注入不了 CSS，协议与最小接收代码见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)）。仍**建议保留一份兜底**（老宿主 / 推送未达时不空白），但兜底值应集中在**一处**常量而不是散在 CSS 里。另：`url` 型卡片切主题**不重渲染**（变量更新，页内表单内容不丢），`html`/`srcdoc` 型**仍重渲染**。
+- 主题与语言：`srcdoc` 由宿主**自动注入**主题；**`url` 静态页用页面运行时一行接入**（`import { startPageContext } from 'app://obox/page.js'`），实时收 `obox:context`（25 个生效 token + `colorScheme` + `locale` + 本扩展词条），协议见 [themes-settings.md](themes-settings.md)。仍**建议保留一份兜底**（老宿主 / 推送未达时不空白），但兜底值应集中在**一处**常量而不是散在 CSS 里。另：`url` 型卡片切主题**不重渲染**（变量更新，页内表单内容不丢），`html`/`srcdoc` 型**仍重渲染**。
 - 数据持久化用该页面自己的 `localStorage`（按 `app://` 源隔离，跨窗口/重启保留）。
 - 子窗口**不跑扩展代码**（`core/host.ts:1006-1012` 只注册贡献点不激活）：页面里没有 `api`，一切能力都靠下面这座消息桥。
 - 子窗口日志转发到主进程终端，前缀 `[child-renderer:<level>]`（`main/appWindow.ts:108-113`）。
 
 ### 子窗口 ↔ 扩展消息桥
 
-| 方向        | 消息                                                                                   | 说明                                                                        |
-| ----------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 方向        | 消息                                                                                   | 说明                                                                          |
+| ----------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | 页面 → 宿主 | `{ source: 'obox-app', action: 'close' \| 'minimize' \| 'maximize' }`                  | 窗口控制（`AppWindow.vue:183-193`）                                           |
 | 页面 → 扩展 | `{ source: 'obox-app', action: 'obox-extension', appId, channel, payload, requestId }` | 转给注册该卡片的扩展的 `api.app.onMessage` handler（`AppWindow.vue:204-237`） |
-| 扩展 → 页面 | `{ source: 'obox-app', action: 'obox-extension-reply', requestId, result }`            | `result` = `{ ok: true, data }` 或 `{ ok: false, error }`                   |
+| 扩展 → 页面 | `{ source: 'obox-app', action: 'obox-extension-reply', requestId, result }`            | `result` = `{ ok: true, data }` 或 `{ ok: false, error }`                     |
 
 > 关联链路：子窗口 iframe → `AppWindow` → 主进程 → 主窗口宿主 → 卡片所属扩展的 handler → 回传（`main/appWindow.ts:132-214`、`core/host.ts:619-643`）。
 
@@ -173,7 +173,7 @@ export default function myHello(api) {
 - 单次请求 **60s 超时**（`main/appWindow.ts:185-193`，给模态框留时间），超时 reply `{ ok: false, error: '扩展未响应（超时）' }`。
 - 主窗口关闭时子窗口全部关闭（`main/appWindow.ts:217-232`）。
 - 卡片注册是持久化的：宿主写入 localStorage、扩展停用时清理、同 id 重复注册只更新（`core/appStore.ts:5-6,61-74,92-102`）。
-- 后台扩展的**透明 overlay 窗体**是另一类窗体（无卡片、不进启动器），完整契约见 [api-reference.md](api-reference.md) 的 `### overlay` 小节，本节不复制；本节的卡片/消息桥约定对 overlay 的差异：**不进 `appStore`**、不渲染 TitleBar/PromptHost、主题推送不触达。
+- 后台扩展的**透明 overlay 窗体**是另一类窗体（无卡片、不进启动器），完整契约见 [api-reference.md](api-reference.md) 的 `### overlay` 小节，本节不复制；本节的卡片/消息桥约定对 overlay 的差异：**不进 `appStore`**、不渲染 TitleBar/PromptHost；主题/语言上下文**同样下发**（外壳从查询串取 `extId`）。
 
 ## 6. 打包 `.oix`
 

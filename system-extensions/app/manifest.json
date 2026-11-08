@@ -1,17 +1,53 @@
 {
   "name": "app",
-  "displayName": "应用",
-  "description": "系统扩展：应用首页（卡片列表，点击打开独立窗口）",
+  "displayName": "%app.displayName%",
+  "description": "%app.description%",
   "version": "1.0.0",
   "author": "obox",
   "apiVersion": 4,
   "main": "./index.js",
   "activationEvents": ["*"],
   "contributes": {
+    "i18n": {
+      "zh": {
+        "app.displayName": "应用",
+        "app.description": "系统扩展：应用首页（卡片列表，点击打开独立窗口）",
+        "app.nav": "应用",
+        "app.title": "应用",
+        "app.searchPlaceholder": "搜索应用",
+        "app.status.loading": "正在读取应用…",
+        "app.status.empty": "暂无已注册的应用（扩展可经 api.app.register 注册卡片）",
+        "app.status.filtered": "匹配 {matched} / {total} 个应用",
+        "app.status.count": "共 {total} 个应用",
+        "app.openFailed": "打开失败：{message}",
+        "app.menu.open": "打开",
+        "app.menu.viewInManager": "在扩展管理中查看",
+        "common.callFailed": "调用失败",
+        "common.callTimeout": "调用超时：{op}",
+        "common.readFailed": "读取失败：{message}"
+      },
+      "en": {
+        "app.displayName": "Apps",
+        "app.description": "System extension: app home (card list; click to open a window)",
+        "app.nav": "Apps",
+        "app.title": "Apps",
+        "app.searchPlaceholder": "Search apps",
+        "app.status.loading": "Loading apps…",
+        "app.status.empty": "No apps registered yet (extensions can register cards via api.app.register)",
+        "app.status.filtered": "{matched} of {total} apps",
+        "app.status.count": "{total} apps",
+        "app.openFailed": "Failed to open: {message}",
+        "app.menu.open": "Open",
+        "app.menu.viewInManager": "Show in Extension Manager",
+        "common.callFailed": "Call failed",
+        "common.callTimeout": "Call timed out: {op}",
+        "common.readFailed": "Failed to read: {message}"
+      }
+    },
     "navItems": [
       {
         "id": "app.home",
-        "title": "应用",
+        "title": "%app.nav%",
         "icon": "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.8'><rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/></svg>",
         "group": "top",
         "page": "index.html"
