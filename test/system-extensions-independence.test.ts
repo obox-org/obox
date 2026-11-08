@@ -94,6 +94,50 @@ describe('主题与语言（页面运行时统一驱动）', () => {
   })
 
   /**
+   * change `component-css-library` 任务 9.x：三页必须**使用**组件库，且不再各自定义通用组件外观，
+   * 否则"一份样式多处定义"的漂移会立刻回来。
+   */
+  it('三个系统扩展页面都使用组件库的 obox-* class', () => {
+    const expected: Record<string, string[]> = {
+      app: ['obox-card', 'obox-input', 'obox-menu', 'obox-title'],
+      settings: ['obox-tree__node', 'obox-form-item', 'obox-input', 'obox-select', 'obox-btn'],
+      'ext-manager': ['obox-card', 'obox-btn', 'obox-tag', 'obox-desc']
+    }
+    for (const [name, classes] of Object.entries(expected)) {
+      // 静态骨架写在 index.html、动态节点写在 page.js，两边合起来看
+      const src =
+        readFileSync(`${root}${name}/page.js`, 'utf8') +
+        readFileSync(`${root}${name}/index.html`, 'utf8')
+      for (const cls of classes) {
+        expect(src, `${name} 未使用 ${cls}`).toContain(cls)
+      }
+    }
+  })
+
+  it('三页 page.css 不再定义按钮/输入/下拉的通用外观（只留布局与专有样式）', () => {
+    for (const name of ['app', 'settings', 'ext-manager']) {
+      const css = readFileSync(`${root}${name}/page.css`, 'utf8')
+      const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+      // 旧的通用组件类名（迁移前每页各写一份）
+      for (const legacy of [
+        '.btn ',
+        '.btn{',
+        '.btn,',
+        '.text ',
+        '.textarea ',
+        'select,',
+        'select:focus'
+      ]) {
+        expect(code, `${name}/page.css 仍在定义 ${legacy}`).not.toContain(legacy)
+      }
+      // 也不应再写裸元素选择器去改通用外观
+      expect(code, `${name}/page.css 有裸 select 规则`).not.toMatch(/^select\s*\{/m)
+      expect(code, `${name}/page.css 有裸 button 规则`).not.toMatch(/^button\s*\{/m)
+      expect(code, `${name}/page.css 有裸 input 规则`).not.toMatch(/^input\s*\{/m)
+    }
+  })
+
+  /**
    * 回归（真机踩到）：`dev`/`start` 只跑 `electron-vite`，不重建 `.extensions/`，于是开发态
    * 一直加载**上一次构建**的系统扩展页——改了 `system-extensions/` 却"怎么都不生效"。
    * 现在两个脚本都先跑 `build:extensions`；这条用例防止有人把前缀去掉。

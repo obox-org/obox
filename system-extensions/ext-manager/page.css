@@ -1,39 +1,36 @@
-:root {
-  --bg: #1e1e1e;
-  --bg-panel: #252526;
-  --fg: #cccccc;
-  --fg-dim: #8a8a8a;
-  --border: #3c3c3c;
-  --accent: #4ea1ff;
-}
+/* ext-manager 页面样式：**只保留布局与页面专有样式**。
+   按钮 / 标签 / 卡片 / 描述列表 / 文本层级一律用组件库（`app://obox/ui.css` 的 `obox-*` class），
+   这里再定义一遍就会与库漂移（这条约定由 `test/system-extensions-independence.test.ts` 门禁）。 */
 
 html,
 body {
   margin: 0;
   height: 100%;
+}
+
+body {
   background: var(--bg);
   color: var(--fg);
-  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
-  font-size: 13px;
+  font-family: var(--font-family, 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif);
+  font-size: var(--font-size, 13px);
 }
 
 .page-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 14px 18px 8px;
 }
 
-.page-head h1 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
+.page-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .status {
   margin: 0;
   padding: 0 18px 10px;
-  color: var(--fg-dim);
 }
 
 .ext-list {
@@ -42,45 +39,38 @@ body {
   padding: 0 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
+/* 一行 = 一张卡片；展开时高亮边框（页面级交互状态，不进组件库） */
 .ext-row {
+  overflow: visible;
+}
+
+.ext-row.expanded {
+  border-color: var(--accent);
+}
+
+.ext-main {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-panel);
+}
+
+.ext-meta {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
 }
 
 .ext-title {
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--fg-bright);
   font-weight: 600;
-}
-
-.badge {
-  font-size: 11px;
-  font-weight: 400;
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--fg-dim);
-}
-
-.badge.system {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.ext-state {
-  color: var(--fg-dim);
-  margin-top: 2px;
 }
 
 .ext-actions {
@@ -88,63 +78,20 @@ body {
   gap: 8px;
 }
 
-.btn {
-  appearance: none;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--fg);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.btn.danger:hover:not(:disabled) {
-  border-color: #e05252;
-  color: #e05252;
-}
-
-.btn.ghost {
-  color: var(--fg-dim);
-}
-.ext-row.expanded {
-  border-color: var(--accent);
-}
-
-.ext-meta {
-  cursor: pointer;
-  flex: 1;
+/* 详情：默认隐藏，点标题展开（`obox-desc` 负责键值网格外观）。
+   ⚠ 用 `:not(.open)` 提高特异性：库的 `.obox-desc` 也声明 `display: grid`，而 ui.css 由运行时注入到
+   head 末尾（晚于本文件）⇒ 同特异性的 `.ext-details { display: none }` 会被它盖掉，表现为"详情一直
+   全展开"（真机踩到）。 */
+.ext-details:not(.open) {
+  display: none;
 }
 
 .ext-details {
-  display: none;
-  width: 100%;
-  margin: 8px 0 0;
-  padding: 8px 0 0;
+  margin: 0;
+  padding: 10px 12px 12px;
   border-top: 1px dashed var(--border);
-  gap: 2px 12px;
 }
 
 .ext-details.open {
   display: grid;
-  grid-template-columns: 72px 1fr;
-}
-
-.ext-details dt {
-  color: var(--fg-dim);
-}
-
-.ext-details dd {
-  margin: 0;
-  word-break: break-all;
 }

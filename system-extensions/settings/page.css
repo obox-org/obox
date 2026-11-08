@@ -1,59 +1,39 @@
-:root {
-  --bg: #1e1e1e;
-  --bg-panel: #252526;
-  --fg: #cccccc;
-  --fg-dim: #8a8a8a;
-  --border: #3c3c3c;
-  --accent: #4ea1ff;
-}
+/* settings 页面样式：**只保留布局与页面专有样式**。
+   按钮 / 输入框 / 下拉框 / 树节点 / 列表 / 文本层级一律用组件库（`app://obox/ui.css`），
+   这里再定义一遍通用组件外观会与库漂移（门禁：`test/system-extensions-independence.test.ts`）。 */
 
 html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
-  font-size: 13px;
 }
 
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-family, 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif);
+  font-size: var(--font-size, 13px);
+}
+
+/* 两栏布局：左树 + 右侧表单 */
 .settings {
   display: flex;
   height: 100%;
   min-height: 100%;
 }
 
-/* 左侧树 */
 .tree {
   width: 180px;
   flex: 0 0 180px;
   padding: 12px 8px;
   box-sizing: border-box;
+  overflow: auto;
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
-  overflow: auto;
 }
 
-.tree-node {
-  padding: 6px 10px;
-  border-radius: 6px;
-  color: var(--fg-dim);
-  cursor: pointer;
-  user-select: none;
-}
-
-.tree-node:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--fg);
-}
-
-.tree-node.active {
-  background: rgba(78, 161, 255, 0.16);
-  color: var(--accent);
-}
-
-/* 「扩展」可折叠节点：父行 + 独立箭头（箭头只切换展开，不触发父行的列表态） */
-.tree-node.has-children {
+/* 「扩展」节点：父行 + 独立箭头（箭头只切展开，不触发父行的列表态） */
+.tree-node--has-children {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -65,7 +45,7 @@ body {
   height: 16px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--obox-radius-sm, 4px);
   background: transparent;
   color: inherit;
   font-size: 10px;
@@ -74,59 +54,15 @@ body {
 }
 
 .tree-arrow:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--hover-bg);
 }
 
-.tree-children {
-  margin: 0 0 2px 14px;
-  border-left: 1px solid var(--border);
-}
-
-.tree-node.child {
-  padding: 5px 10px;
-  font-size: 12px;
+.tree-node--child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 「扩展」列表态：每行一个扩展（名 + 设置项数） */
-.ext-groups {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.ext-group {
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.ext-count {
-  color: var(--fg-dim);
-  font-size: var(--font-size-sm, 12px);
-}
-
-.link-btn {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--fg-link);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.link-btn:hover {
-  text-decoration: underline;
-}
-
-.ext-back {
-  display: inline-block;
-  margin-top: 4px;
-}
-
-/* 右侧表单 */
 .panel {
   flex: 1;
   min-width: 0;
@@ -134,139 +70,64 @@ body {
   overflow: auto;
 }
 
-.section-title {
-  margin: 0 0 12px;
-  font-size: 15px;
-  font-weight: 600;
+/* 行内表单行：库给形态（label 固定宽 + 控件占满），页面只加分隔线以保持分组观感。
+   ⚠ 用 .panel 前缀提高特异性：ui.css 由运行时注入在 head 末尾，同特异性覆盖会被它盖掉。 */
+.panel .obox-form-item--inline {
+  margin-bottom: 0;
+  padding: 8px 2px;
+  border-bottom: 1px dashed var(--border);
 }
 
-/* 行卡片化：每项配置一张卡（向旧设置页的分组观感靠拢，但更轻） */
-.row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-  padding: 9px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-panel);
+.panel .obox-form-item--inline:last-child {
+  border-bottom: 0;
 }
 
-.row:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+/* 「扩展」列表态的行：名 + 设置项数分列两端 */
+.ext-group {
+  justify-content: space-between;
 }
 
-.section-title {
-  margin: 4px 0 10px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
+.ext-back {
+  margin-top: 8px;
 }
 
-.row-label {
-  min-width: 120px;
-  color: var(--fg-dim);
+.obox-list {
+  gap: 4px;
 }
 
-.value {
-  color: var(--fg);
-}
-
-.note {
-  margin: 6px 0 10px;
-  color: var(--fg-dim);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-select,
-.text,
-.textarea {
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
-  color: var(--fg);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font: inherit;
-  outline: none;
-  min-width: 220px;
-}
-
-.textarea {
-  width: 320px;
-  resize: vertical;
-  font-family: Consolas, 'Courier New', monospace;
-  font-size: 12px;
-}
-
-select:focus,
-.text:focus,
-.textarea:focus {
-  border-color: var(--accent);
-}
-
-.keys,
-.plain {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.key-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-panel);
-}
-
+/* 快捷键 / 运行时的等宽名称列 */
 .key-name {
   flex: 1;
-  font-family: Consolas, 'Courier New', monospace;
-  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--obox-font-mono, Consolas, monospace);
 }
 
 .key-combo {
-  color: var(--accent);
-  font-family: Consolas, 'Courier New', monospace;
-  font-size: 12px;
   min-width: 110px;
   text-align: right;
+  font-family: var(--obox-font-mono, Consolas, monospace);
 }
 
-.btn {
-  appearance: none;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--fg);
-  border-radius: 6px;
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
+/* 目录字段：输入框 + 浏览按钮并排 */
+.dir-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
-.btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
+/* 原生 <progress> 的库外补丁：外观跟主题走（库只提供容器式进度条） */
+.progress {
+  width: 200px;
+  accent-color: var(--accent);
 }
 
-.btn:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
+/* 扩展设置页分组之间的分隔 */
 .ext-page {
   margin-bottom: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
-}
-
-.ext-title {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 600;
 }

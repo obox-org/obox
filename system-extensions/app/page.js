@@ -57,23 +57,23 @@ function isSvg(icon) {
 
 function card(item) {
   const el = document.createElement('button')
-  el.className = 'card'
+  el.className = 'obox-card app-card'
   el.type = 'button'
   el.title = item.description || item.name
 
   const icon = document.createElement('span')
-  icon.className = 'card-icon'
+  icon.className = 'app-card__icon'
   if (isSvg(item.icon)) icon.innerHTML = item.icon
   else icon.textContent = (item.name || '?').slice(0, 1)
   el.appendChild(icon)
 
   const name = document.createElement('span')
-  name.className = 'card-name'
+  name.className = 'app-card__name'
   name.textContent = item.name || item.id
   el.appendChild(name)
 
   const desc = document.createElement('span')
-  desc.className = 'card-desc'
+  desc.className = 'app-card__desc'
   desc.textContent = item.description || ''
   el.appendChild(desc)
 
@@ -112,11 +112,11 @@ function closeMenu() {
 function showMenu(x, y, items) {
   closeMenu()
   menuEl = document.createElement('div')
-  menuEl.className = 'ctx-menu'
+  menuEl.className = 'obox-menu ctx-menu'
   for (const item of items) {
     const btn = document.createElement('button')
     btn.type = 'button'
-    btn.className = 'ctx-item'
+    btn.className = 'obox-menu__item'
     btn.textContent = item.label
     btn.addEventListener('click', () => {
       closeMenu()

@@ -6,15 +6,19 @@
     <title>扩展</title>
     <link rel="stylesheet" href="./page.css" />
   </head>
-  <body>
+  <body class="obox-base">
     <header class="page-head">
-      <h1 id="title">扩展</h1>
-      <div class="actions">
-        <button id="install" class="btn" type="button">安装扩展…</button>
-        <button id="restart" class="btn ghost" type="button">重启 obox</button>
+      <h1 id="title" class="obox-title obox-title--h2">扩展</h1>
+      <div class="page-actions">
+        <button id="install" class="obox-btn obox-btn--sm obox-btn--primary" type="button">
+          安装扩展…
+        </button>
+        <button id="restart" class="obox-btn obox-btn--sm obox-btn--ghost" type="button">
+          重启 obox
+        </button>
       </div>
     </header>
-    <p id="status" class="status">正在读取扩展列表…</p>
+    <p id="status" class="status obox-text obox-text--sm obox-text--secondary">正在读取扩展列表…</p>
     <ul id="list" class="ext-list"></ul>
     <script type="module" src="./page.js"></script>
   </body>

@@ -66,42 +66,46 @@ function sourceLabel(source, runtime) {
 }
 
 function row(ext) {
-  const li = document.createElement('li')
-  li.className = 'ext-row'
+  const li = el('li', 'obox-card ext-row')
   // 运行时包（目录根有 runtime.json）：落在系统扩展目录，但**不随安装包分发** ⇒ 允许卸载/覆盖升级
   const isRuntime = ext.runtime === true
 
-  const meta = document.createElement('div')
-  meta.className = 'ext-meta'
-  const title = document.createElement('div')
-  title.className = 'ext-title'
+  const body = el('div', 'obox-card__body ext-main')
+
+  const meta = el('div', 'ext-meta')
+  const title = el('div', 'ext-title')
   title.textContent = ext.id
-  const badge = document.createElement('span')
-  badge.className = ext.source === 'system' ? 'badge system' : 'badge'
-  badge.textContent = sourceLabel(ext.source, isRuntime)
+  // 来源用组件库的 tag（系统扩展用强调色，其余用中性色）
+  const badge = el(
+    'span',
+    ext.source === 'system' ? 'obox-tag obox-tag--info' : 'obox-tag',
+    sourceLabel(ext.source, isRuntime)
+  )
   title.appendChild(badge)
   meta.appendChild(title)
 
-  const state = document.createElement('div')
-  state.className = 'ext-state'
-  state.textContent = ext.shadowed
-    ? t('ext.state.shadowed')
-    : ext.enabled === false
-      ? t('ext.state.disabled')
-      : ext.error
-        ? t('ext.state.invalid', { message: ext.error })
-        : ext.isActive
-          ? t('ext.state.active')
-          : t('ext.state.enabled')
+  const state = el(
+    'div',
+    'obox-text obox-text--sm obox-text--secondary',
+    ext.shadowed
+      ? t('ext.state.shadowed')
+      : ext.enabled === false
+        ? t('ext.state.disabled')
+        : ext.error
+          ? t('ext.state.invalid', { message: ext.error })
+          : ext.isActive
+            ? t('ext.state.active')
+            : t('ext.state.enabled')
+  )
   meta.appendChild(state)
+  body.appendChild(meta)
 
   // 详情（点击行展开）：版本/作者/入口/描述/校验错误——排障时最常看这几项
-  const details = document.createElement('dl')
-  details.className = 'ext-details'
+  const details = el('dl', 'obox-desc ext-details')
   const manifest = ext.manifest || {}
   const addRow = (label, value) => {
     if (value === undefined || value === null || value === '') return
-    details.append(el('dt', '', label), el('dd', '', String(value)))
+    details.append(el('dt', 'obox-desc__term', label), el('dd', 'obox-desc__detail', String(value)))
   }
   addRow(t('ext.detail.version'), manifest.version)
   addRow(t('ext.detail.author'), manifest.author)
@@ -123,18 +127,17 @@ function row(ext) {
     li.classList.toggle('expanded', open)
   }
   meta.addEventListener('click', toggleDetails)
-  li.appendChild(meta)
-  li.appendChild(details)
 
   // 系统扩展不渲染操作按钮（底层也拒绝）；运行时包例外——它由用户手动安装，必须可卸载/升级
   if ((ext.source !== 'system' || isRuntime) && !ext.shadowed) {
-    const actions = document.createElement('div')
-    actions.className = 'ext-actions'
+    const actions = el('div', 'ext-actions')
 
-    const toggle = document.createElement('button')
-    toggle.className = 'btn'
+    const toggle = el(
+      'button',
+      'obox-btn obox-btn--sm',
+      ext.enabled === false ? t('ext.action.enable') : t('ext.action.disable')
+    )
     toggle.type = 'button'
-    toggle.textContent = ext.enabled === false ? t('ext.action.enable') : t('ext.action.disable')
     toggle.addEventListener('click', async () => {
       toggle.disabled = true
       try {
@@ -148,10 +151,8 @@ function row(ext) {
     })
     actions.appendChild(toggle)
 
-    const remove = document.createElement('button')
-    remove.className = 'btn danger'
+    const remove = el('button', 'obox-btn obox-btn--sm obox-btn--danger', t('ext.action.uninstall'))
     remove.type = 'button'
-    remove.textContent = t('ext.action.uninstall')
     remove.addEventListener('click', async () => {
       remove.disabled = true
       try {
@@ -164,8 +165,10 @@ function row(ext) {
       }
     })
     actions.appendChild(remove)
-    li.appendChild(actions)
+    body.appendChild(actions)
   }
+
+  li.append(body, details)
   return li
 }
 

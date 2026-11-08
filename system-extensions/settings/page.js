@@ -130,21 +130,22 @@ function el(tag, className, text) {
 }
 
 function heading(text) {
-  return el('h2', 'section-title', text)
+  return el('h2', 'obox-title obox-title--h2', text)
 }
 
 function row(labelText, control) {
-  const wrap = el('label', 'row')
-  wrap.append(el('span', 'row-label', labelText), control)
+  const wrap = el('label', 'obox-form-item obox-form-item--inline')
+  wrap.append(el('span', 'obox-form-item__label', labelText), control)
   return wrap
 }
 
 function note(text) {
-  return el('p', 'note', text)
+  return el('p', 'obox-text obox-text--sm obox-text--secondary', text)
 }
 
 function select(options, value, onChange) {
   const node = document.createElement('select')
+  node.className = 'obox-select obox-select--sm'
   for (const option of options) {
     const item = document.createElement('option')
     item.value = option.value
@@ -159,7 +160,7 @@ function select(options, value, onChange) {
 function input(value, placeholder, onChange, type = 'text') {
   const node = document.createElement('input')
   node.type = type
-  node.className = 'text'
+  node.className = 'obox-input obox-input--sm'
   node.value = value ?? ''
   if (placeholder) node.placeholder = placeholder
   node.addEventListener('change', () => onChange(node.value))
@@ -276,13 +277,19 @@ const renderers = {
     const frag = document.createDocumentFragment()
     frag.append(heading(t('settings.section.keyboard')))
     frag.append(note(t('settings.keyboard.note')))
-    const list = el('ul', 'keys')
+    const list = el('ul', 'obox-list')
     for (const item of snapshot.keybindings) {
-      const li = el('li', 'key-row')
+      const li = el('li', 'obox-list__item')
       li.append(el('span', 'key-name', item.labelKey || item.command))
-      li.append(el('span', 'key-combo', item.currentKey || item.defaultKey || '—'))
+      li.append(
+        el(
+          'span',
+          'obox-text obox-text--accent key-combo',
+          item.currentKey || item.defaultKey || '—'
+        )
+      )
 
-      const edit = el('button', 'btn', t('settings.keyboard.edit'))
+      const edit = el('button', 'obox-btn obox-btn--sm', t('settings.keyboard.edit'))
       edit.type = 'button'
       edit.addEventListener('click', () => {
         edit.textContent = t('settings.keyboard.press')
@@ -307,7 +314,7 @@ const renderers = {
         window.addEventListener('keydown', onKey, true)
       })
 
-      const reset = el('button', 'btn', t('settings.keyboard.reset'))
+      const reset = el('button', 'obox-btn obox-btn--sm', t('settings.keyboard.reset'))
       reset.type = 'button'
       reset.addEventListener('click', async () => {
         await call('keybindings.reset', { command: item.command })
@@ -324,25 +331,33 @@ const renderers = {
   update() {
     const frag = document.createDocumentFragment()
     frag.append(heading(t('settings.section.update')))
-    frag.append(row(t('settings.update.currentVersion'), el('span', 'value', snapshot.app.version)))
+    frag.append(
+      row(t('settings.update.currentVersion'), el('span', 'obox-text', snapshot.app.version))
+    )
     frag.append(
       row(
         t('settings.update.provider'),
-        el('span', 'value', snapshot.update.activeId || t('settings.update.noProvider'))
+        el('span', 'obox-text', snapshot.update.activeId || t('settings.update.noProvider'))
       )
     )
-    const providers = el('ul', 'plain')
+    const providers = el('ul', 'obox-list')
     for (const provider of snapshot.update.providers) {
       providers.appendChild(el('li', '', provider.extensionId))
     }
     if (snapshot.update.providers.length === 0) {
-      providers.appendChild(el('li', 'note', t('settings.update.noProviderDeclared')))
+      providers.appendChild(
+        el(
+          'li',
+          'obox-text obox-text--sm obox-text--secondary',
+          t('settings.update.noProviderDeclared')
+        )
+      )
     }
     frag.append(providers)
-    const status = el('p', 'note', '')
-    const actions = el('div', 'row')
+    const status = el('p', 'obox-text obox-text--sm obox-text--secondary', '')
+    const actions = el('div', 'obox-row')
     const mkButton = (label, run) => {
-      const btn = el('button', 'btn', label)
+      const btn = el('button', 'obox-btn obox-btn--sm', label)
       btn.type = 'button'
       btn.addEventListener('click', async () => {
         btn.disabled = true
@@ -372,7 +387,7 @@ const renderers = {
 
     if (lastUpdateEvent) {
       const ev = lastUpdateEvent
-      const line = el('p', 'note')
+      const line = el('p', 'obox-text obox-text--sm obox-text--secondary')
       if (ev.type === 'download-progress') {
         const bar = el('progress', 'progress')
         bar.max = 100
@@ -422,7 +437,7 @@ const renderers = {
       )
     )
     const noProxy = Array.isArray(proxy.noProxy) ? proxy.noProxy.join('\n') : ''
-    const textarea = el('textarea', 'textarea')
+    const textarea = el('textarea', 'obox-textarea')
     textarea.value = noProxy
     textarea.rows = 3
     textarea.placeholder = t('settings.network.noProxyPlaceholder')
@@ -444,7 +459,7 @@ const renderers = {
     const frag = document.createDocumentFragment()
     frag.append(heading(t('settings.section.devRuntime')))
 
-    const install = el('button', 'btn', t('settings.devRuntime.install'))
+    const install = el('button', 'obox-btn obox-btn--sm', t('settings.devRuntime.install'))
     install.type = 'button'
     install.addEventListener('click', async () => {
       install.disabled = true
@@ -467,9 +482,9 @@ const renderers = {
     frag.append(row(t('settings.devRuntime.installLabel'), install))
     frag.append(note(t('settings.devRuntime.note')))
 
-    const rows = el('ul', 'plain')
+    const rows = el('ul', 'obox-list')
     const addEntry = (key, version, detail, tag, isLocal) => {
-      const li = el('li', 'key-row')
+      const li = el('li', 'obox-list__item')
       const name = el(
         'span',
         'key-name',
@@ -478,9 +493,11 @@ const renderers = {
       name.append(document.createTextNode(`  ·  ${detail}`))
       li.append(name)
       if (key === current) {
-        li.append(el('span', 'key-combo', t('settings.devRuntime.default')))
+        li.append(
+          el('span', 'obox-text obox-text--accent key-combo', t('settings.devRuntime.default'))
+        )
       } else {
-        const btn = el('button', 'btn', t('settings.devRuntime.setDefault'))
+        const btn = el('button', 'obox-btn obox-btn--sm', t('settings.devRuntime.setDefault'))
         btn.type = 'button'
         btn.addEventListener('click', async () => {
           await setSetting(DEFAULT_KEY, key)
@@ -551,8 +568,8 @@ const renderers = {
         )
       )
     )
-    const aiStatus = el('p', 'note', '')
-    const testBtn = el('button', 'btn', t('settings.ai.test'))
+    const aiStatus = el('p', 'obox-text obox-text--sm obox-text--secondary', '')
+    const testBtn = el('button', 'obox-btn obox-btn--sm obox-btn--primary', t('settings.ai.test'))
     testBtn.type = 'button'
     testBtn.addEventListener('click', async () => {
       testBtn.disabled = true
@@ -591,9 +608,9 @@ const renderers = {
       )
     )
     frag.append(note(t('settings.notification.note')))
-    const list = el('ul', 'plain')
+    const list = el('ul', 'obox-list')
     for (const ext of snapshot.extensions || []) {
-      const li = el('li', 'key-row')
+      const li = el('li', 'obox-list__item')
       li.append(el('span', 'key-name', ext.id))
       const toggle = checkbox(!ext.notificationDisabled, async (enabled) => {
         await call('settings.notification.set', { id: ext.id, disabled: !enabled })
@@ -620,10 +637,10 @@ const renderers = {
     // 列表态：每个有设置页的用户扩展一行（显示名 + 设置项数），点进该扩展的配置
     if (!selected) {
       frag.append(note(t('settings.extension.listHint')))
-      const list = el('ul', 'plain ext-groups')
+      const list = el('ul', 'obox-list ext-groups')
       for (const group of groups) {
-        const li = el('li', 'key-row ext-group')
-        const open = el('button', 'link-btn', group.label)
+        const li = el('li', 'obox-list__item ext-group')
+        const open = el('button', 'obox-btn obox-btn--text', group.label)
         open.type = 'button'
         open.addEventListener('click', () => {
           activeExt = group.extensionId
@@ -634,7 +651,11 @@ const renderers = {
         const fieldCount = group.pages.reduce((sum, page) => sum + (page.fields?.length ?? 0), 0)
         li.append(
           open,
-          el('span', 'ext-count', t('settings.extension.count', { count: fieldCount }))
+          el(
+            'span',
+            'obox-text obox-text--sm obox-text--secondary',
+            t('settings.extension.count', { count: fieldCount })
+          )
         )
         list.appendChild(li)
       }
@@ -646,14 +667,14 @@ const renderers = {
     for (const page of selected.pages) {
       const box = el('div', 'ext-page')
       if (selected.pages.length > 1) {
-        box.appendChild(el('h3', 'ext-title', page.title || page.id))
+        box.appendChild(el('h3', 'obox-title obox-title--h3', page.title || page.id))
       }
       for (const field of page.fields || []) {
         box.append(row(field.label || field.key, fieldControl(field)))
       }
       frag.append(box)
     }
-    const back = el('button', 'link-btn ext-back', t('settings.extension.back'))
+    const back = el('button', 'obox-btn obox-btn--text ext-back', t('settings.extension.back'))
     back.type = 'button'
     back.addEventListener('click', openExtensionsList)
     frag.append(back)
@@ -699,32 +720,32 @@ function fieldControl(field) {
     case 'time':
       return input(value ?? '', '', (next) => commit(next || undefined), 'time')
     case 'textarea': {
-      const node = el('textarea', 'textarea')
+      const node = el('textarea', 'obox-textarea')
       node.value = value ?? ''
       node.placeholder = field.placeholder || ''
       node.addEventListener('change', () => commit(node.value))
       return node
     }
     case 'directory': {
-      const wrap = el('span', 'row')
+      const wrap = el('span', 'dir-field')
       const shown = input(value ?? '', field.placeholder || '', () => undefined)
       shown.readOnly = true
       shown.addEventListener('click', () => void browse(field, shown))
-      const btn = el('button', 'btn', t('settings.field.browse'))
+      const btn = el('button', 'obox-btn obox-btn--sm', t('settings.field.browse'))
       btn.type = 'button'
       btn.addEventListener('click', () => void browse(field, shown))
       wrap.append(shown, btn)
       return wrap
     }
     case 'status':
-      return el('span', 'value', String(value ?? t('settings.field.unset')))
+      return el('span', 'obox-text', String(value ?? t('settings.field.unset')))
     case 'progress': {
       const max = typeof field.max === 'number' && field.max > 0 ? field.max : 100
       const cur = Math.min(Math.max(Number(value) || 0, 0), max)
       const bar = el('progress', 'progress')
       bar.max = max
       bar.value = cur
-      const wrap = el('span', 'value')
+      const wrap = el('span', 'obox-text')
       wrap.append(bar, document.createTextNode(` ${Math.floor(cur)}/${max}`))
       return wrap
     }
@@ -758,7 +779,7 @@ async function saveProxy(proxy) {
 let noteEl = () => undefined
 
 function noteMessage(text) {
-  const p = el('p', 'note', text)
+  const p = el('p', 'obox-text obox-text--sm obox-text--secondary', text)
   panelEl.prepend(p)
   setTimeout(() => p.remove(), 4000)
 }
@@ -780,7 +801,7 @@ function renderTree() {
   const nodes = []
   for (const id of SECTION_IDS) {
     const isExtension = id === 'extension'
-    const node = el('div', 'tree-node', t(`settings.section.${id}`))
+    const node = el('div', 'obox-tree__node', t(`settings.section.${id}`))
     if (id === active && !(isExtension && activeExt)) node.classList.add('active')
     node.addEventListener('click', () => {
       active = id
@@ -789,7 +810,7 @@ function renderTree() {
       render()
     })
     if (isExtension && groups.length > 0) {
-      node.classList.add('has-children')
+      node.classList.add('tree-node--has-children')
       const arrow = el('button', 'tree-arrow', extTreeOpen ? '▾' : '▸')
       arrow.type = 'button'
       arrow.setAttribute('aria-expanded', String(extTreeOpen))
@@ -807,9 +828,9 @@ function renderTree() {
     nodes.push(node)
 
     if (isExtension && extTreeOpen) {
-      const children = el('div', 'tree-children')
+      const children = el('div', 'obox-tree__children')
       for (const group of groups) {
-        const child = el('div', 'tree-node child', group.label)
+        const child = el('div', 'obox-tree__node tree-node--child', group.label)
         if (activeExt === group.extensionId) child.classList.add('active')
         child.addEventListener('click', (event) => {
           event.stopPropagation()
