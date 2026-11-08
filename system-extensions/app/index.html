@@ -6,12 +6,17 @@
     <title>应用</title>
     <link rel="stylesheet" href="./page.css" />
   </head>
-  <body>
+  <body class="obox-base">
     <header class="page-head">
-      <h1 id="title">应用</h1>
-      <input id="search" class="search" type="search" placeholder="搜索应用" />
+      <h1 id="title" class="obox-title obox-title--h2">应用</h1>
+      <input
+        id="search"
+        class="search obox-input obox-input--sm"
+        type="search"
+        placeholder="搜索应用"
+      />
     </header>
-    <p id="status" class="status">正在读取应用…</p>
+    <p id="status" class="status obox-text obox-text--sm obox-text--secondary">正在读取应用…</p>
     <div id="grid" class="grid"></div>
     <script type="module" src="./page.js"></script>
   </body>

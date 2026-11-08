@@ -106,6 +106,13 @@ overlay 的 iframe 与 App `url` 卡片**同一条上下文链路**（overlay �
 
 **核对结论（当前一致）**：上表 25 个 token 与 `src/renderer/src/assets/main.css:2-29` 的 `:root` 默认值、`src/renderer/src/extensions/theme-dark/manifest.json:13-39` 的 token 取值逐项相同；`theme-light/manifest.json:13-39` 键集合相同、取值不同。三处任一处增删或改名 token，本表必须同步。`--font-size-lg` / `--icon-size` 仅 `:root` 与两个主题声明（`main.css:26,28`），宿主 CSS 中没有任何 `var()` 消费——扩展仍可用 `var(--icon-size)` 取到 24px，但不要当成宿主既有约定。
 
+### 组件样式库（`app://obox/ui.css`）
+
+宿主还提供一套**预编译组件样式**（按钮/输入/卡片/表格/标签/弹窗外观等），扩展页面直接写 `obox-*` class 即可
+与 obox 一致。它只消费上面这 25 个 token，因此**切主题自动生效**、无需重载样式表；页面运行时
+`startPageContext()` 默认注入该样式表。组件清单、状态约定与可复制片段见
+[ui-components.md](ui-components.md)。
+
 ### 图标尺寸
 
 - 导航栏图标尺寸用 `var(--nav-icon-size)`（宿主已消费：`src/renderer/src/components/NavBar.vue:186-191`）

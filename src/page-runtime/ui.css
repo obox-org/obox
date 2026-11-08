@@ -718,6 +718,26 @@
   font-size: var(--font-size-sm, 12px);
 }
 
+/* 行内表单（label 固定宽 + 控件占满）：系统设置页每一行都是这种形态，
+   放进库里而不是各页自定义（AntD 的 Form layout="horizontal" 同位置） */
+.obox-form-item--inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--obox-space-4);
+}
+
+.obox-form-item--inline > .obox-form-item__label {
+  flex: 0 0 auto;
+  min-width: 120px;
+}
+
+.obox-form-item--inline > * {
+  min-width: 0;
+}
+
+.obox-text--accent {
+  color: var(--accent);
+}
 /* ---------------------------- 数据展示 ---------------------------- */
 
 .obox-card {

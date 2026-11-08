@@ -151,6 +151,10 @@ export default function myHello(api: ExtensionActivationApi): () => void {
 ```
 
 - 样式用 `<style scoped>`；颜色/尺寸一律 `var(--token, fallback)`，别写死颜色（token 清单见 [themes-settings.md](themes-settings.md)；真实用例 `extensions/ext-manager/ExtensionManagerView.vue:422`）。
+- **HTML 页面型内置扩展**（如磁盘上的系统扩展 `app` / `settings` / `ext-manager`）请直接用宿主组件库
+  `app://obox/ui.css`（`obox-*` class，纯 CSS），页面 `page.css` 只保留布局与专有样式——通用组件外观
+  不要在页面里再写一份，否则会与库漂移（门禁：`test/system-extensions-independence.test.ts`）。
+  组件清单与状态约定见 [ui-components.md](ui-components.md)。
 - 宿主给导航视图传 `active-nav-id` prop（`components/ContentArea.vue:39`）。
 - 需要弹出独立窗口的富界面 → 注册 App 卡片（写法见 [guides-user.md](guides-user.md) 的「App 卡片与子窗口」，两类扩展共用同一套 `api.app`）。
 

@@ -157,6 +157,27 @@ export default function myHello(api) {
 - iframe sandbox 为 `allow-scripts allow-same-origin allow-forms allow-popups`（`AppWindow.vue:291-300`）：**没有 `allow-modals` → 页内 `alert` / `confirm` / `prompt` 全部无效**，交互一律自绘 UI。
 - 主题与语言：`srcdoc` 由宿主**自动注入**主题；**`url` 静态页用页面运行时一行接入**（`import { startPageContext } from 'app://obox/page.js'`），实时收 `obox:context`（25 个生效 token + `colorScheme` + `locale` + 本扩展词条），协议见 [themes-settings.md](themes-settings.md)。仍**建议保留一份兜底**（老宿主 / 推送未达时不空白），但兜底值应集中在**一处**常量而不是散在 CSS 里。另：`url` 型卡片切主题**不重渲染**（变量更新，页内表单内容不丢），`html`/`srcdoc` 型**仍重渲染**。
 - 数据持久化用该页面自己的 `localStorage`（按 `app://` 源隔离，跨窗口/重启保留）。
+- **页面外观直接用宿主组件库**：`app://obox/ui.css` 提供按钮/输入/卡片/表格/标签/弹窗外观等（纯 CSS，无 JS），
+  页面只写 class 即可与 obox 一致，且切主题自动跟随。清单、class 与状态约定见
+  [ui-components.md](ui-components.md)。最小页面骨架：
+
+  ```html
+  <body class="obox-base">
+    <h1 class="obox-title obox-title--h2">我的工具</h1>
+    <form class="obox-card obox-card__body">
+      <label class="obox-form-item obox-form-item--inline">
+        <span class="obox-form-item__label">名称</span>
+        <input class="obox-input" id="name" />
+      </label>
+      <button class="obox-btn obox-btn--primary" type="submit">保存</button>
+    </form>
+    <script type="module">
+      import { startPageContext } from 'app://obox/page.js'
+      startPageContext({}) // 自动注入组件库 + 主题 token + 词条
+    </script>
+  </body>
+  ```
+
 - 子窗口**不跑扩展代码**（`core/host.ts:1006-1012` 只注册贡献点不激活）：页面里没有 `api`，一切能力都靠下面这座消息桥。
 - 子窗口日志转发到主进程终端，前缀 `[child-renderer:<level>]`（`main/appWindow.ts:108-113`）。
 
