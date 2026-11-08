@@ -107,7 +107,19 @@ export default {
     empty: '暂无已注册的应用',
     emptyHint: '扩展可通过 api.app.register 注册插件卡片',
     notFound: '未找到应用「{appId}」（可能已被移除或禁用）',
-    emptyContent: '空内容'
+    emptyContent: '空内容',
+    // 卡片地址不可用时的诊断文案（change `fix-app-card-blank-page`）
+    loadFailed: {
+      title: '扩展页面未能加载',
+      appLabel: '应用',
+      urlLabel: '卡片地址',
+      protocol: '仅支持 app:// 协议的扩展页面（当前是 {protocol}:）',
+      file: 'file:// 地址会被安全策略拦截，且无法判定它属于哪个扩展',
+      host: 'app:// 只允许 extensions / builtin / debug 三个命名空间（当前是 {host}）',
+      invalid: '卡片地址不是合法的 URL',
+      empty: '卡片既没有 url 也没有 html 内容',
+      hint: '请让扩展用 appPageUrl() 生成地址，或手写 app://extensions/<安装目录名>/…（见 docs/extension-api/guides-user.md）'
+    }
   },
   settings: {
     title: '设置',

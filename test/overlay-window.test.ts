@@ -1363,15 +1363,16 @@ describe('外壳 · 五处透明改动（验收⑥；design D-11，缺一处就�
     )
   })
 
-  it('回归（R9）：卡片模式的基础样式逐字保留——var(--bg,#1e1e1e) 两处 + .app-frame 白底 + sandbox 属性', () => {
+  it('回归（R9）：卡片模式的基础样式保留——var(--bg,#1e1e1e) + sandbox 属性；iframe 底色不再写死白色', () => {
     const styleBlock = vueSrc.slice(vueSrc.indexOf('<style scoped>'))
-    // 基础规则仍在（overlay 规则是**追加**的覆盖，不是替换）
+    // 基础规则仍在（overlay 规则是**追加**的覆盖，不是替换）：容器、内容区、iframe 三处都走主题底色
     expect(styleBlock).toContain('background: var(--bg, #1e1e1e);')
-    expect(styleBlock.match(/background: var\(--bg, #1e1e1e\);/g)).toHaveLength(2)
-    expect(styleBlock).toContain('background: #ffffff;')
+    expect(styleBlock.match(/background: var\(--bg, #1e1e1e\);/g)).toHaveLength(3)
+    // change `fix-app-card-blank-page`：写死白色正是"白屏"观感来源 ⇒ 改为主题 token
+    expect(styleBlock).not.toContain('background: #ffffff;')
     // overlay 覆盖规则位于基础规则之后（层叠顺序保证覆盖生效）
     expect(styleBlock.indexOf('.app-window--overlay')).toBeGreaterThan(
-      styleBlock.indexOf('background: #ffffff;')
+      styleBlock.indexOf('.app-frame {')
     )
     // iframe sandbox 与 srcdoc/url 双路径未被 overlay 改动破坏
     expect(vueFlat).toContain('sandbox="allow-scripts allow-same-origin allow-forms allow-popups"')
@@ -1408,9 +1409,10 @@ describe('外壳 · 五处透明改动（验收⑥；design D-11，缺一处就�
     expect(appWindowSrc).toContain(
       'slash > 0 && slash < rest.length - 1 && rest.slice(0, slash) === extId'
     )
-    // 校验失败 ⇒ overlayUrl 为空 ⇒ iframe v-if 不成立 ⇒ 空白；且 warn 一条可转发的日志
+    // 校验失败 ⇒ overlayUrl 为空 ⇒ iframe 不渲染（showFrame 为假）⇒ 空白；且 warn 一条可转发的日志
     expect(vueFlat).toContain('[overlay] 拒绝非法 url:')
-    expect(vueFlat).toContain(`v-if="isOverlay ? overlayUrl : registration"`)
+    expect(vueFlat).toContain('v-if="showFrame"')
+    expect(vueFlat).toContain('isOverlay ? Boolean(overlayUrl) : Boolean(registration.value)')
     // overlay 的空态**不渲染提示文字**（文字也是像素）；卡片空态保留
     expect(vueFlat).toContain('v-else-if="!isOverlay"')
     expect(vueFlat).toContain(`t('appExt.notFound', { appId })`)

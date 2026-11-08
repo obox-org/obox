@@ -37,7 +37,7 @@ if (new URLSearchParams(window.location.search).get('obox-window') === 'overlay'
  *   结果 iframe 里的面板拿不到 token、整块透明（实测见 change notes/repro）。
  * 跨窗口主题变化经 `storage` 事件合并进本窗口 stateStore（core/state.ts），再 applyCurrent + 推送。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import TitleBar from './components/TitleBar.vue'
 import PromptHost from './components/PromptHost.vue'
@@ -47,6 +47,7 @@ import { stateStore } from './core/state'
 import { uiStore } from './core/uiStore'
 import { appFrameKey, buildThemeMessage, collectThemeTokens } from './core/appTheme'
 import { pushWithLegacy } from './core/pageContext'
+import { normalizeCardUrl, usableCardUrl } from './core/appPageUrl'
 
 const { t } = useI18n()
 
@@ -136,16 +137,91 @@ const themeStyleHtml = computed(() => {
   return rules ? `<style>:root{${rules}}</style>` : ''
 })
 
-const iframeSrc = computed(() =>
-  isOverlay ? overlayUrl || undefined : (registration.value?.url ?? undefined)
+/**
+ * 卡片地址的判定结果（change `fix-app-card-blank-page`）。
+ *
+ * 为什么要在塞进 iframe 之前判定：卡片地址由扩展自己给，旧构建用
+ * `new URL('./ui/index.html', import.meta.url)` 在宿主模式下得到 `file://…`，而外壳 CSP
+ * 只允许 `self`/`app:` ⇒ iframe 被整块拦掉、只剩一片白。这里把"落在扩展目录内"的 `file://`
+ * 归一化成 `app://`（旧扩展免重发即可用），其余给出可读原因供诊断态渲染。
+ */
+const cardUrl = computed(() => (isOverlay ? null : normalizeCardUrl(registration.value?.url)))
+/** 可加载的地址（归一化后）；undefined = 不能塞 iframe */
+const cardSrc = computed(() => (cardUrl.value ? usableCardUrl(cardUrl.value) : undefined))
+/** 卡片是否声明了非空 url（纯空白串按"没有 url"处理，走 srcdoc 空态） */
+const hasCardUrl = computed(() => Boolean(registration.value?.url?.trim()))
+/** 走 srcdoc 的卡片：没有 url（有 url 一律走 url 路径，避免两种来源打架） */
+const usesSrcdoc = computed(() => !isOverlay && Boolean(registration.value) && !hasCardUrl.value)
+/** 是否渲染 iframe：overlay 要有合法 url；卡片要有可用地址或是 srcdoc 型 */
+const showFrame = computed(() =>
+  isOverlay
+    ? Boolean(overlayUrl)
+    : Boolean(registration.value) && (usesSrcdoc.value || Boolean(cardSrc.value))
 )
+/** 诊断态：卡片存在、不是 srcdoc 型、地址又不可用 */
+const cardFailure = computed(() => {
+  if (isOverlay || !registration.value || usesSrcdoc.value) return null
+  const result = cardUrl.value
+  return result && result.kind === 'unusable' ? result : null
+})
+
+const iframeSrc = computed(() => (isOverlay ? overlayUrl || undefined : cardSrc.value))
 const iframeSrcdoc = computed(() => {
   // overlay 只有 url 型（主进程/外壳两道校验保证指向扩展目录内页面），不走 srcdoc 注入
   if (isOverlay) return undefined
-  if (registration.value?.url) return undefined
+  if (hasCardUrl.value) return undefined
   const html =
     registration.value?.html ?? `<p style="color:#888;padding:16px">${t('appExt.emptyContent')}</p>`
   return themeStyleHtml.value + html
+})
+
+/** 诊断块文案：原因码 → 人话（i18n 提供，日志里同时带原始地址） */
+const cardFailureText = computed(() => {
+  const failure = cardFailure.value
+  if (!failure) return { reason: '', hint: '' }
+  switch (failure.reason) {
+    case 'unsupported-protocol':
+      return {
+        reason: t('appExt.loadFailed.protocol', { protocol: failure.detail ?? '' }),
+        hint: t('appExt.loadFailed.hint')
+      }
+    case 'file-not-extension':
+      return { reason: t('appExt.loadFailed.file'), hint: t('appExt.loadFailed.hint') }
+    case 'app-not-allowed':
+      return {
+        reason: t('appExt.loadFailed.host', { host: failure.detail ?? '' }),
+        hint: t('appExt.loadFailed.hint')
+      }
+    case 'invalid':
+      return { reason: t('appExt.loadFailed.invalid'), hint: t('appExt.loadFailed.hint') }
+    default:
+      return { reason: t('appExt.loadFailed.empty'), hint: t('appExt.loadFailed.hint') }
+  }
+})
+
+/**
+ * 归一化/拒绝各只告警一次（同一次窗口生命周期内，键 = appId + 原始地址）。
+ *
+ * 为什么去重：主题/语言变化会触发重算，不去重会刷屏；历史先例是 `[i18n]` 缺 key 的同款处理。
+ */
+const warnedCardUrls = new Set<string>()
+function warnCardOnce(result: { kind: string; url?: string; reason?: string }, raw: string): void {
+  const key = `${appId}|${result.kind}|${raw}|${result.url ?? result.reason ?? ''}`
+  if (warnedCardUrls.has(key)) return
+  warnedCardUrls.add(key)
+  if (result.kind === 'normalized') {
+    console.warn(`[AppWindow] 卡片地址已归一化：${raw} → ${result.url}`)
+  } else if (result.kind === 'unusable') {
+    console.warn(
+      `[AppWindow] 卡片地址不可用（${result.reason}）：${raw || '(空)'}（仅支持 app://extensions|builtin|debug/…，见 docs/extension-api/guides-user.md）`
+    )
+  }
+}
+
+watchEffect(() => {
+  const result = cardUrl.value
+  if (!result) return
+  warnCardOnce(result, registration.value?.url ?? '')
 })
 
 /**
@@ -308,7 +384,7 @@ onUnmounted(() => {
     <TitleBar v-if="!isOverlay" :title="title" :icon="windowIcon" />
     <div class="app-window-content">
       <iframe
-        v-if="isOverlay ? overlayUrl : registration"
+        v-if="showFrame"
         ref="frameRef"
         :key="frameKey"
         class="app-frame"
@@ -317,6 +393,21 @@ onUnmounted(() => {
         sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
         @load="pushThemeTokens"
       />
+      <!-- 地址不可用（协议不符 / file:// 无法判定归属）⇒ 诊断块，而不是空白 iframe。
+           为什么要显式渲染：白屏既不告诉用户、也不告诉扩展作者问题在哪（真机缺陷）。 -->
+      <div v-else-if="cardFailure" class="app-window-empty app-window-diag">
+        <h2 class="diag-title">{{ t('appExt.loadFailed.title') }}</h2>
+        <p class="diag-row">
+          <span class="diag-label">{{ t('appExt.loadFailed.appLabel') }}</span>
+          <span>{{ registration?.name || appId }}</span>
+        </p>
+        <p class="diag-row">
+          <span class="diag-label">{{ t('appExt.loadFailed.urlLabel') }}</span>
+          <code class="diag-url">{{ registration?.url || '(空)' }}</code>
+        </p>
+        <p class="diag-reason">{{ cardFailureText.reason }}</p>
+        <p class="diag-hint">{{ cardFailureText.hint }}</p>
+      </div>
       <!-- overlay 的 url 缺失/非法（外壳二次校验拒绝）⇒ 渲染空白：透明窗体直接透出桌面，
            空态提示文字也是像素、不能画；卡片子窗口的空态提示保持既有行为 -->
       <div v-else-if="!isOverlay" class="app-window-empty">
@@ -350,7 +441,8 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   border: none;
-  background: #ffffff;
+  /* 用主题底色而不是写死白色：页面未加载/被拒时不再出现整块刺眼白（真机"白屏"观感来源） */
+  background: var(--bg, #1e1e1e);
 }
 /* 透明改动 3/5 与 4/5（D-11）：overlay 根 class 下外壳三层背景全透明——
    .app-window / .app-window-content 的 var(--bg) 与 .app-frame 的白底。
@@ -369,5 +461,49 @@ onUnmounted(() => {
   justify-content: center;
   color: var(--fg-dim, #6e6e6e);
   font-size: 13px;
+}
+/* 诊断块：地址不可用时的可读失败（不再是一片白）。
+   颜色全部走主题 token；原始地址可选中复制，便于贴给扩展作者。 */
+.app-window-diag {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 24px 28px;
+  box-sizing: border-box;
+  color: var(--fg, #cccccc);
+  font-size: var(--font-size, 13px);
+  overflow: auto;
+}
+.diag-title {
+  margin: 0 0 4px;
+  font-size: var(--font-size-lg, 16px);
+  color: var(--fg-bright, #ffffff);
+}
+.diag-row {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  align-items: baseline;
+  max-width: 100%;
+}
+.diag-label {
+  flex: 0 0 auto;
+  color: var(--fg-dim, #6e6e6e);
+}
+.diag-url {
+  user-select: text;
+  word-break: break-all;
+  color: var(--fg-link, #75beff);
+  font-family: var(--font-family, monospace);
+  font-size: var(--font-size-sm, 12px);
+}
+.diag-reason {
+  margin: 8px 0 0;
+  color: var(--fg-error, #f48771);
+}
+.diag-hint {
+  margin: 2px 0 0;
+  color: var(--fg-dim, #6e6e6e);
 }
 </style>

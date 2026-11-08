@@ -113,7 +113,9 @@ const pageUrl = `app://extensions/${dirName}/page.html`
 
 - **不要硬编码 `app://extensions/<manifest.name>/`**：安装目录名是 `<name>_<清洗后 author>`（`main/oixCore.ts:56-60`），带作者时与 `manifest.name` 不同。
 - `app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（`main/protocol.ts`）；同一份代码在 `--debug-extension` 下指向 `app://debug/<id>/`。
-- **这是一处正在迁移的坑**（如实登记）：上面那段"从 `file://` 反推安装目录名"的写法**未实机验证**，5 个既有用户扩展的改造会逐个确认。交付前请自己验一遍：卡片能打开、overlay 能加载；若页面打不开，先打印 `import.meta.url` 与拼出来的 `pageUrl` 对照。
+- **卡片 / overlay 的 `url` 必须是 `app://…`（硬要求）**：外壳 CSP 只允许 `self` 与 `app:`（`src/renderer/index.html`），`file://` 的 iframe 会被**整块拦掉**，用户看到的是一片白色空白窗口。
+  - 宿主会兜底：旧扩展用 `new URL('./x.html', import.meta.url)` 得到的 `file://…/extensions/<目录名>/…` 会被**归一化**成 `app://extensions/<目录名>/…` 并打一条 `[AppWindow]` 警告（所以已安装的旧版本升级后能直接打开）。但**不要依赖兜底**，新代码请照上一节显式拼 `app://`（参考 `appPageUrl()`）。
+  - 真正不可用的地址（`https://`、无法判定归属的 `file://`、非法 URL）不再白屏：子窗口显示诊断块（应用名 / 原始地址 / 原因 / 修法），原始地址可选中复制。
 
 ## 5. App 卡片与子窗口
 

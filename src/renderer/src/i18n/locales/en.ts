@@ -107,7 +107,19 @@ export default {
     empty: 'No apps registered yet',
     emptyHint: 'Extensions can register app cards via api.app.register',
     notFound: 'App "{appId}" not found (may have been removed or disabled)',
-    emptyContent: 'Empty content'
+    emptyContent: 'Empty content',
+    // Diagnostics shown when a card URL cannot be loaded (change `fix-app-card-blank-page`)
+    loadFailed: {
+      title: 'The extension page could not be loaded',
+      appLabel: 'App',
+      urlLabel: 'Card URL',
+      protocol: 'Only app:// pages are supported (got {protocol}:)',
+      file: 'file:// URLs are blocked by the security policy, and the owning extension cannot be determined',
+      host: 'app:// only allows the extensions / builtin / debug namespaces (got {host})',
+      invalid: 'The card URL is not a valid URL',
+      empty: 'The card has neither url nor html content',
+      hint: 'Generate the URL with appPageUrl(), or write app://extensions/<install dir name>/… (see docs/extension-api/guides-user.md)'
+    }
   },
   settings: {
     title: 'Settings',
