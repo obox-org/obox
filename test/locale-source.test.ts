@@ -140,6 +140,37 @@ describe('setLocale', () => {
     expect(buildPageContextFor('ext-x').locale).toBe('en')
   })
 
+  /**
+   * 回归（真机缺陷，与主题同型）：`setLocale` 曾经**先写设置、后切 vue-i18n**，而 `setSetting`
+   * 同步通知订阅者——`ContentArea` 在回调里读 `currentLocale()` 组 `obox:context` 推给页面，
+   * 于是页面收到的永远是**上一个**语言（切英文后仍中文，切回中文才变英文）。这里钉住
+   * "通知发生时 `currentLocale()` 已是新值"。
+   */
+  it('setLocale：先切 vue-i18n 再通知（页面推送读到的是新语言）', async () => {
+    const { i18nMod, stateMod } = await boot({})
+    const seen: string[] = []
+    const off = stateMod.stateStore.onSettingsChanged((key) => {
+      if (key === 'locale') seen.push(i18nMod.currentLocale())
+    })
+    i18nMod.setLocale('en')
+    off()
+    expect(seen).toEqual(['en'])
+    expect(i18nMod.currentLocale()).toBe('en')
+  })
+
+  /**
+   * 子窗口视角（真机缺陷）：主窗口切语言 → 子窗口只经 `storage` 事件合并到设置（`applyExternal`），
+   * 它自己的 vue-i18n 实例不会自动切。这里模拟"只写设置"这条路径，要求 `currentLocale()` 与
+   * 本窗口 vue-i18n 都跟随（否则 App 卡片窗口的 `obox:context` 仍带旧 locale）。
+   */
+  it('只写设置（模拟跨窗口合并）时 currentLocale 与本窗口 vue-i18n 都跟随', async () => {
+    const { i18nMod, stateMod } = await boot({})
+    expect(i18nMod.currentLocale()).toBe('zh')
+    stateMod.stateStore.setSetting('locale', 'en')
+    expect(i18nMod.currentLocale()).toBe('en')
+    expect(i18nMod.i18n.global.locale.value).toBe('en')
+  })
+
   it('扩展宿主的 snapshot 推送依赖同一个设置变更通知（源码门禁）', () => {
     const consumer = readFileSync(
       fileURLToPath(new URL('../src/renderer/src/core/extensionHostConsumer.ts', import.meta.url)),

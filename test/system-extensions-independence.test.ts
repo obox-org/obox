@@ -92,6 +92,19 @@ describe('主题与语言（页面运行时统一驱动）', () => {
       expect(cjk, `${name} 仍含中文字面量：${cjk.slice(0, 3).join(' / ')}`).toEqual([])
     }
   })
+
+  /**
+   * 回归（真机踩到）：`dev`/`start` 只跑 `electron-vite`，不重建 `.extensions/`，于是开发态
+   * 一直加载**上一次构建**的系统扩展页——改了 `system-extensions/` 却"怎么都不生效"。
+   * 现在两个脚本都先跑 `build:extensions`；这条用例防止有人把前缀去掉。
+   */
+  it('dev / start 脚本先构建系统扩展（否则 dev 读 .extensions 旧产物）', () => {
+    const pkg = JSON.parse(
+      readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')
+    ) as { scripts: Record<string, string> }
+    expect(pkg.scripts.dev).toContain('build:extensions')
+    expect(pkg.scripts.start).toContain('build:extensions')
+  })
 })
 describe('文档同步（扩展来源/打包路径变了）', () => {
   const readRepo = (rel: string): string =>

@@ -142,20 +142,20 @@ extensions/          # 用户扩展独立项目（仅依赖扩展 API，经 .oix
 
 ## 常用命令
 
-| 命令                                                               | 说明                                                                                           |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `npm run dev`                                                      | 开发模式（HMR，Electron 窗口自动打开）                                                         |
-| `npm test`                                                         | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具）                                            |
-| `npm run typecheck`                                                | 类型检查（node 主进程 + web 渲染进程）                                                         |
-| `npm run lint`                                                     | ESLint 检查（0 errors 为门槛）                                                                 |
-| `npm run security:audit`                                           | 依赖安全审计（`npm audit --audit-level=moderate`，0 告警为门槛；CI 与发版同样强制）            |
-| `npm run build:extensions`                                         | 构建系统扩展（`system-extensions/` → 项目 `.extensions/`；打包时映射到安装目录 `extensions/`） |
-| `npm run build`                                                    | typecheck + 构建系统扩展 + electron-vite 构建到 `out/`                                         |
-| `npm run build:win`                                                | 打包 Windows 安装包（electron-builder）                                                        |
-| `npm run format`                                                   | Prettier 格式化                                                                                |
-| `node scripts/validate-manifest.mjs --all`                         | 校验全部内置扩展 manifest（规则与宿主一致，有差分门禁守着）                                    |
-| `node skills/obox-ext-init/scripts/create-extension.mjs <id>`      | 生成新内置扩展骨架                                                                             |
-| `node skills/obox-ext-init/scripts/create-user-extension.mjs <id>` | 生成新用户扩展项目（纯 ESM 入口 + `node --test` + `.oix` 打包脚本）                            |
+| 命令                                                               | 说明                                                                                                  |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `npm run dev`                                                      | 开发模式（HMR，Electron 窗口自动打开；**先自动 `build:extensions`**，否则读到 `.extensions/` 旧产物） |
+| `npm test`                                                         | 单元测试（vitest，跑 `test/` 下核心逻辑与宿主工具）                                                   |
+| `npm run typecheck`                                                | 类型检查（node 主进程 + web 渲染进程）                                                                |
+| `npm run lint`                                                     | ESLint 检查（0 errors 为门槛）                                                                        |
+| `npm run security:audit`                                           | 依赖安全审计（`npm audit --audit-level=moderate`，0 告警为门槛；CI 与发版同样强制）                   |
+| `npm run build:extensions`                                         | 构建系统扩展（`system-extensions/` → 项目 `.extensions/`；打包时映射到安装目录 `extensions/`）        |
+| `npm run build`                                                    | typecheck + 构建系统扩展 + electron-vite 构建到 `out/`                                                |
+| `npm run build:win`                                                | 打包 Windows 安装包（electron-builder）                                                               |
+| `npm run format`                                                   | Prettier 格式化                                                                                       |
+| `node scripts/validate-manifest.mjs --all`                         | 校验全部内置扩展 manifest（规则与宿主一致，有差分门禁守着）                                           |
+| `node skills/obox-ext-init/scripts/create-extension.mjs <id>`      | 生成新内置扩展骨架                                                                                    |
+| `node skills/obox-ext-init/scripts/create-user-extension.mjs <id>` | 生成新用户扩展项目（纯 ESM 入口 + `node --test` + `.oix` 打包脚本）                                   |
 
 ## 发布（GitHub CI + Releases）
 
