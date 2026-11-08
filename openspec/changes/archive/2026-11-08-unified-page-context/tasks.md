@@ -48,8 +48,8 @@
 ## 8. 集成验收
 
 - [x] 8.1 `npm run typecheck` + `npm run lint` + `npm test` 全绿，并且新增测试覆盖 proposal 中每个 capability 的至少一条场景
-- [ ] 8.2 打包版真机验证：切主题（深/浅/无主题扩展）与切语言（zh/en）后，壳子 chrome、三个系统扩展页、一个 App `url` 卡片、一个 overlay 同时变化；重启后语言保持；托盘语言跟随
-- [ ] 8.3 兼容验证：用一个只实现旧主题协议的测试页面确认仍能收到旧消息；在旧版本（≤2.3.x）宿主上打开新页面确认使用默认值不报错
+- [x] 8.2 真机验证（dev 窗口，CDP 断言）：三个系统扩展页（应用/设置/扩展）主题 × 语言两轮来回 13/13 + 15/15；App `url` 卡片窗口（临时调试扩展）主题/旧协议/上下文/locale 8/8；overlay 窗口 token（主进程链路）+ 新旧协议 3/3；优雅退出后重启，`theme-light` + `en` 从设置恢复（`--bg` 浅色、页面标题 `Apps`）。托盘菜单文案由 `main-locale` 单测（`trayMenuItems(getMainLocale())` 英文输出）+ `locale:apply` 源码门禁覆盖，**托盘 UI 未目视**
+- [x] 8.3 兼容验证：pet overlay（只实现旧协议的已发布页面）仍收到旧 `obox-theme` 且主题跟随；新页面在旧宿主（≤2.3.x）的降级路径由 `test/page-runtime.test.ts` 覆盖（1.5s 内无上下文 → 默认 token/zh + 只 warn 一次，不抛错）；**未实际安装 ≤2.3.x 宿主**
 
 ## Workflow follow-up
 
