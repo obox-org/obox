@@ -1483,6 +1483,155 @@
 .obox-disclosure__body {
   padding: var(--obox-space-3) 0 0 var(--obox-space-4);
 }
+
+/* ---------------------- 单选卡片（容器 + 卡片，v2 视觉） ---------------------- */
+/* 容器：纵向排列，每行一张卡片（用于"运行时/版本"这类互斥选择） */
+.obox-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--obox-space-3);
+}
+
+/* 卡片：整张可点；原生 radio 视觉隐藏但保留键盘可达与读屏语义 */
+.obox-radio-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--obox-space-4);
+  min-height: 68px;
+  /* 右侧多留 24px 给右下角打勾，避免它压住路径文本 */
+  padding: var(--obox-space-5) calc(var(--obox-space-5) + 24px) var(--obox-space-5)
+    var(--obox-space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--obox-radius-md);
+  background: var(--bg-panel);
+  cursor: pointer;
+  transition:
+    border-color var(--obox-transition),
+    background var(--obox-transition),
+    box-shadow var(--obox-transition);
+}
+
+.obox-radio-card:hover {
+  border-color: var(--fg-dim);
+}
+
+.obox-radio-card:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 左侧单选指示器：未选 = 细圆环，选中 = 绿色圆环 + 实心点（状态不只靠边框颜色表达） */
+.obox-radio-card__indicator {
+  position: relative;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  border: 1.5px solid var(--fg-dim);
+  border-radius: 50%;
+  transition: border-color var(--obox-transition);
+}
+
+.obox-radio-card__indicator::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: var(--fg-success);
+  transform: scale(0);
+  transition: transform var(--obox-transition);
+}
+
+.obox-radio-card:has(.obox-radio-card__input:checked) .obox-radio-card__indicator {
+  border-color: var(--fg-success);
+}
+
+.obox-radio-card:has(.obox-radio-card__input:checked) .obox-radio-card__indicator::after {
+  transform: scale(1);
+}
+
+.obox-radio-card__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.obox-radio-card__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--obox-space-1);
+}
+
+/* 标题行：版本号（主色加粗）+ 来源徽标靠右，路径行因此能占满整行宽度 */
+.obox-radio-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--obox-space-2);
+  color: var(--fg-bright);
+  font-size: var(--font-size-lg, 16px);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.obox-radio-card__title > .obox-tag {
+  margin-left: auto;
+}
+
+/* 路径行：等宽、超长省略（完整值放 title 悬浮提示） */
+.obox-radio-card__path {
+  overflow: hidden;
+  color: var(--fg-dim);
+  font-family: var(--obox-font-mono);
+  font-size: var(--font-size, 13px);
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 选中态：绿色边框 + 极淡绿色底（1px 内描边保证不引起布局跳动） */
+.obox-radio-card:has(.obox-radio-card__input:checked) {
+  border-color: var(--fg-success);
+  background: color-mix(in srgb, var(--fg-success) 7%, var(--bg-panel));
+  box-shadow: inset 0 0 0 1px var(--fg-success);
+}
+
+/* 右下角打勾：默认不占位，选中才显示；对勾用两条边框旋转绘制（不依赖图标字体） */
+.obox-radio-card__check {
+  position: absolute;
+  right: var(--obox-space-4);
+  bottom: var(--obox-space-4);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--fg-success);
+}
+
+.obox-radio-card__check::after {
+  content: '';
+  width: 7px;
+  height: 3.5px;
+  border-left: 2px solid var(--bg);
+  border-bottom: 2px solid var(--bg);
+  transform: rotate(-45deg) translate(0, -1px);
+}
+
+.obox-radio-card:has(.obox-radio-card__input:checked) > .obox-radio-card__check {
+  display: flex;
+}
+
+.obox-radio-card[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 /* ------------------------------- 导航 ------------------------------- */
 
 .obox-tabs {

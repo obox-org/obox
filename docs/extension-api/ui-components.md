@@ -99,6 +99,41 @@
 </label>
 ```
 
+### 单选卡片
+
+用于"互斥选一项、且每项信息不只一行"的场景（如运行时/版本选择）：整张卡片可点，原生 `radio` 视觉隐藏但保留键盘可达与读屏语义。
+
+| class                        | 说明                                                              |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `obox-radio-group`           | 容器（纵向，每行一张卡片；`role="radiogroup"` + `aria-label`）     |
+| `obox-radio-card`            | 卡片本体；`:has(input:checked)` 时绿边框 + 淡绿底 + 右下角打勾      |
+| `obox-radio-card__input`     | 原生 `<input type="radio">`，视觉隐藏                             |
+| `obox-radio-card__indicator` | 左侧单选圆点（未选细圆环 / 选中绿环实心点）                        |
+| `obox-radio-card__body`      | 文本容器（`__title` 主行 + `__path` 等宽路径行）                   |
+| `obox-radio-card__title`     | 主行；行内放 `obox-tag` 会自动靠右                                 |
+| `obox-radio-card__path`      | 等宽路径行，超长省略（完整值放 `title` 悬浮提示）                  |
+| `obox-radio-card__check`     | 右下角打勾（仅选中态显示，由库自己控制）                           |
+
+```html
+<div class="obox-radio-group" role="radiogroup" aria-label="开发运行时">
+  <label class="obox-radio-card">
+    <input class="obox-radio-card__input" type="radio" name="runtime" checked />
+    <span class="obox-radio-card__indicator"></span>
+    <span class="obox-radio-card__body">
+      <span class="obox-radio-card__title">
+        3.12
+        <span class="obox-tag obox-tag--success">本机</span>
+      </span>
+      <span class="obox-radio-card__path" title="C:\Python312\python.exe">C:\Python312\python.exe</span>
+    </span>
+    <span class="obox-radio-card__check"></span>
+  </label>
+</div>
+```
+
+> 只放必要信息（版本、来源徽标、路径），不要塞长说明段落——卡片会很快变成一堵墙。
+> 选中态用「绿边框 + 淡绿底 + 圆点 + 打勾」四重信号，不只靠颜色，色觉障碍用户也能分辨。
+
 ### 数据展示
 
 `obox-card`（`__header` / `__body` / `__footer`，`--flat` / `--bordered`）、`obox-list` + `obox-list__item`（`--compact` / `--divided`）、`obox-table`（`--bordered` / `--striped` / `--hover` / `--compact`，`obox-table__num` 数字右对齐）、`obox-tag`（`--success` / `--warning` / `--danger` / `--info`）、`obox-badge`（`--dot`）、`obox-avatar`（`--sm` / `--lg` / `--square`）、`obox-progress` + `obox-progress__bar`（`--success` / `--warning` / `--danger`）、`obox-stat`（`__value` / `__label`）、`obox-desc`（`__term` / `__detail`）、`obox-empty`（`__icon` / `__text` / `__actions`）、`obox-skeleton`（`--text` / `--circle` / `--rect`）。
