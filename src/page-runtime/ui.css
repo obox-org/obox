@@ -140,6 +140,26 @@
   flex: 0 0 100%;
 }
 
+/* 少量间距/对齐工具类：页面不再为了"margin-bottom: 12px"另写一份样式表 */
+.obox-row--center {
+  align-items: center;
+}
+
+.obox-mb-3 {
+  margin-bottom: var(--obox-space-3);
+}
+.obox-mb-4 {
+  margin-bottom: var(--obox-space-4);
+}
+.obox-mb-5 {
+  margin-bottom: var(--obox-space-5);
+}
+.obox-mt-4 {
+  margin-top: var(--obox-space-4);
+}
+.obox-gap-2 {
+  gap: var(--obox-space-2);
+}
 .obox-divider {
   height: 1px;
   margin: var(--obox-space-4) 0;
@@ -750,6 +770,11 @@
   overflow: hidden;
 }
 
+/* 忙碌态：打开中/查询中（页面用 aria-busy 表达，不新造状态类） */
+.obox-card[aria-busy='true'] {
+  opacity: 0.7;
+}
+
 .obox-card--flat {
   border-color: transparent;
   background: transparent;
@@ -1246,6 +1271,166 @@
   z-index: var(--obox-z-popover);
 }
 
+/* ------------------------- 页面骨架 / 网格（用户扩展在用） ------------------------- */
+
+/* 竖向页面骨架：header + 可滚动 body（App 卡片子窗口的常见形态） */
+.obox-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.obox-page__header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--obox-space-4);
+  padding: var(--obox-space-4) var(--obox-space-5);
+}
+
+.obox-page__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--obox-space-5) var(--obox-space-5);
+}
+
+/* 卡片网格：auto-fill 的最小卡片宽度可调（--obox-card-min-w） */
+.obox-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--obox-card-min-w, 200px), 1fr));
+  gap: var(--obox-space-4);
+}
+
+/* 栅格表单行：标签列固定宽 + 控件列，desc/error 与控件左对齐（RDP/Webapp 的对齐要求） */
+.obox-form-row {
+  display: grid;
+  grid-template-columns: var(--obox-form-label-w, 120px) minmax(0, 1fr);
+  gap: var(--obox-space-1) var(--obox-space-4);
+  align-items: center;
+  margin-bottom: var(--obox-space-3);
+}
+
+.obox-form-row__label {
+  grid-column: 1;
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm, 12px);
+}
+
+.obox-form-row__control {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--obox-space-2);
+  min-width: 0;
+}
+
+.obox-form-row__desc,
+.obox-form-row__error {
+  grid-column: 2;
+  font-size: var(--font-size-sm, 12px);
+  line-height: 1.4;
+}
+
+.obox-form-row__desc {
+  color: var(--fg-dim);
+}
+
+.obox-form-row__error {
+  color: var(--fg-error);
+}
+
+.obox-form-row--full {
+  grid-column: 1 / -1;
+}
+
+/* 表单行的警示行（如"该值只本机生效"这类提醒）：与 __desc 同列、警示色 */
+.obox-form-row__warn {
+  grid-column: 2;
+  color: var(--fg-warning);
+  font-size: var(--font-size-sm, 12px);
+  line-height: 1.4;
+}
+
+/* 成对输入（宽 × 高）：两个输入等宽并排 */
+.obox-field-pair {
+  display: flex;
+  align-items: center;
+  gap: var(--obox-space-2);
+  min-width: 0;
+}
+
+.obox-field-pair .obox-input {
+  width: 96px;
+}
+
+.obox-field-pair__sep {
+  color: var(--fg-dim);
+}
+
+/* 输入框 + 操作按钮并排（如密码眼睛） */
+.obox-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--obox-space-2);
+  min-width: 0;
+}
+
+.obox-input-row .obox-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 表单分组（模态框里的一组字段）：标题 + 字段堆叠 */
+.obox-form-section {
+  margin-bottom: var(--obox-space-5);
+}
+
+.obox-form-section__title {
+  margin: 0 0 var(--obox-space-3);
+  color: var(--fg-dim);
+  font-size: var(--font-size-sm, 12px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* 折叠区（高级选项这类"可选展开"）：ria-expanded 驱动箭头，body 由页面 v-show/display 控制 */
+.obox-disclosure {
+  margin-bottom: var(--obox-space-4);
+}
+
+.obox-disclosure__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--obox-space-2);
+  width: 100%;
+  padding: var(--obox-space-2) var(--obox-space-1);
+  border: 0;
+  border-radius: var(--obox-radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.obox-disclosure__toggle:hover {
+  background: var(--hover-bg);
+}
+
+.obox-disclosure__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.obox-disclosure__body {
+  padding: var(--obox-space-3) 0 0 var(--obox-space-4);
+}
 /* ------------------------------- 导航 ------------------------------- */
 
 .obox-tabs {
