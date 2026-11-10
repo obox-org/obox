@@ -145,7 +145,7 @@ function note(text) {
 
 function select(options, value, onChange) {
   const node = document.createElement('select')
-  node.className = 'obox-select obox-select--sm'
+  node.className = 'obox-select'
   for (const option of options) {
     const item = document.createElement('option')
     item.value = option.value
@@ -160,7 +160,7 @@ function select(options, value, onChange) {
 function input(value, placeholder, onChange, type = 'text') {
   const node = document.createElement('input')
   node.type = type
-  node.className = 'obox-input obox-input--sm'
+  node.className = 'obox-input'
   node.value = value ?? ''
   if (placeholder) node.placeholder = placeholder
   node.addEventListener('change', () => onChange(node.value))
@@ -172,7 +172,11 @@ function checkbox(checked, onChange) {
   node.type = 'checkbox'
   node.checked = Boolean(checked)
   node.addEventListener('change', () => onChange(node.checked))
-  return node
+  // 用库的 obox-checkbox 容器：勾选框尺寸跟主题走（裸 input 是浏览器默认 13px，太小）
+  // 容器用 span 而不是 label：外层行本身就是 <label>，嵌套 label 会让点击切换两次
+  const wrap = el('span', 'obox-checkbox')
+  wrap.append(node)
+  return wrap
 }
 
 async function setSetting(key, value) {
@@ -289,7 +293,7 @@ const renderers = {
         )
       )
 
-      const edit = el('button', 'obox-btn obox-btn--sm', t('settings.keyboard.edit'))
+      const edit = el('button', 'obox-btn', t('settings.keyboard.edit'))
       edit.type = 'button'
       edit.addEventListener('click', () => {
         edit.textContent = t('settings.keyboard.press')
@@ -314,7 +318,7 @@ const renderers = {
         window.addEventListener('keydown', onKey, true)
       })
 
-      const reset = el('button', 'obox-btn obox-btn--sm', t('settings.keyboard.reset'))
+      const reset = el('button', 'obox-btn', t('settings.keyboard.reset'))
       reset.type = 'button'
       reset.addEventListener('click', async () => {
         await call('keybindings.reset', { command: item.command })
@@ -357,7 +361,7 @@ const renderers = {
     const status = el('p', 'obox-text obox-text--sm obox-text--secondary', '')
     const actions = el('div', 'obox-row')
     const mkButton = (label, run) => {
-      const btn = el('button', 'obox-btn obox-btn--sm', label)
+      const btn = el('button', 'obox-btn', label)
       btn.type = 'button'
       btn.addEventListener('click', async () => {
         btn.disabled = true
@@ -459,7 +463,7 @@ const renderers = {
     const frag = document.createDocumentFragment()
     frag.append(heading(t('settings.section.devRuntime')))
 
-    const install = el('button', 'obox-btn obox-btn--sm', t('settings.devRuntime.install'))
+    const install = el('button', 'obox-btn', t('settings.devRuntime.install'))
     install.type = 'button'
     install.addEventListener('click', async () => {
       install.disabled = true
@@ -600,7 +604,7 @@ const renderers = {
       )
     )
     const aiStatus = el('p', 'obox-text obox-text--sm obox-text--secondary', '')
-    const testBtn = el('button', 'obox-btn obox-btn--sm obox-btn--primary', t('settings.ai.test'))
+    const testBtn = el('button', 'obox-btn obox-btn--primary', t('settings.ai.test'))
     testBtn.type = 'button'
     testBtn.addEventListener('click', async () => {
       testBtn.disabled = true
@@ -762,7 +766,7 @@ function fieldControl(field) {
       const shown = input(value ?? '', field.placeholder || '', () => undefined)
       shown.readOnly = true
       shown.addEventListener('click', () => void browse(field, shown))
-      const btn = el('button', 'obox-btn obox-btn--sm', t('settings.field.browse'))
+      const btn = el('button', 'obox-btn', t('settings.field.browse'))
       btn.type = 'button'
       btn.addEventListener('click', () => void browse(field, shown))
       wrap.append(shown, btn)
