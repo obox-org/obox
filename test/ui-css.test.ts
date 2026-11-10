@@ -63,7 +63,7 @@ describe('ui.css · 不污染页面既有样式', () => {
     expect(offenders).toEqual([])
   })
 
-  it('所有选择器都带 obox- 前缀（或 :root / 带前缀的后代）', () => {
+  it('所有选择器都带 obox- 前缀（或 :root / 滚动条伪元素 / 带前缀的后代）', () => {
     const offenders = selectors(cssNoComments)
       .filter((sel) => !sel.startsWith('@'))
       .filter((sel) =>
@@ -74,10 +74,21 @@ describe('ui.css · 不污染页面既有样式', () => {
             if (part === ':root') return false
             // 允许 `:root[data-…]`、以及以 .obox- 开头的组合
             if (part.startsWith(':root')) return false
+            // 滚动条样式只能写在 `::-webkit-scrollbar*` 伪元素上（没有对应的 class 写法）
+            if (part.startsWith('::-webkit-scrollbar')) return false
             return !part.includes('.obox-')
           })
       )
     expect(offenders).toEqual([])
+  })
+
+  it('滚动条是最小形态：6px 细滑块、滑轨透明、无两端箭头', () => {
+    expect(cssNoComments).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*6px/)
+    expect(cssNoComments).toMatch(/::-webkit-scrollbar-track\s*\{[^}]*background:\s*transparent/)
+    expect(cssNoComments).toMatch(/::-webkit-scrollbar-button[^{]*\{[^}]*display:\s*none/)
+    // 标准属性也要写（Chromium 121+ / Firefox），颜色随 token
+    expect(cssNoComments).toMatch(/scrollbar-width:\s*thin/)
+    expect(cssNoComments).toMatch(/scrollbar-color:\s*var\(--border\)\s+transparent/)
   })
 
   it('不使用 !important', () => {
