@@ -60,19 +60,37 @@ html.obox-overlay body {
   background: transparent;
 }
 
-/* 滚动条 */
+/* 滚动条：**最小形态**——细滑块、无滑轨、无两端箭头（用户要求）。
+   scrollbar-width/scrollbar-color 是标准属性（Chromium 121+ 与 Firefox），
+   ::-webkit-scrollbar* 负责 Chromium 的细节；两者都写，切换主题时颜色跟着 token 走。 */
+:root {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--fg-dim, #424242);
-  border-radius: 5px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--fg, #4f4f4f);
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border, #3c3c3c);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-dim, #6e6e6e);
+}
+::-webkit-scrollbar-thumb:vertical {
+  min-height: 24px;
+}
+::-webkit-scrollbar-thumb:horizontal {
+  min-width: 24px;
+}
+/* 不画两端箭头与角块（"不需要滑轨"的另一半） */
+::-webkit-scrollbar-button,
+::-webkit-scrollbar-corner {
+  display: none;
   background: transparent;
 }
 
