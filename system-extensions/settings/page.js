@@ -480,60 +480,91 @@ const renderers = {
       }
     })
     frag.append(row(t('settings.devRuntime.installLabel'), install))
-    frag.append(note(t('settings.devRuntime.note')))
 
-    const rows = el('ul', 'obox-list')
-    const addEntry = (key, version, detail, tag, isLocal) => {
-      const li = el('li', 'obox-list__item')
-      const name = el(
-        'span',
-        'key-name',
-        isLocal ? `${version || t('settings.devRuntime.unknownVersion')}` : `${version}（${tag}）`
+    /**
+     * 一棵单选卡片：版本（标题）+ 来源徽标 + 路径（次行），整张可点。
+     *
+     * 为什么用卡片而不是列表行 + "设为默认"按钮：这一组是**互斥选择**（哪个解释器默认生效），
+     * 单选语义直接表达意图；按钮形态要把"当前值"和"操作"读两遍才明白。
+     * 选中态由组件库画（绿色边框 + 右下角打勾），这里只负责数据与 `checked`。
+     */
+    const radioCard = ({ key, version, path, tag, selected, onSelect }) => {
+      const card = el('label', 'obox-radio-card')
+      const input = document.createElement('input')
+      input.type = 'radio'
+      input.name = 'obox-dev-runtime'
+      input.className = 'obox-radio-card__input'
+      input.value = key
+      input.checked = selected
+      input.addEventListener('change', () => {
+        if (input.checked) onSelect()
+      })
+
+      const indicator = el('span', 'obox-radio-card__indicator')
+      indicator.setAttribute('aria-hidden', 'true')
+
+      const body = el('span', 'obox-radio-card__body')
+      const title = el('span', 'obox-radio-card__title')
+      title.append(
+        el('span', '', version || t('settings.devRuntime.unknownVersion')),
+        el('span', 'obox-tag', tag)
       )
-      name.append(document.createTextNode(`  ·  ${detail}`))
-      li.append(name)
-      if (key === current) {
-        li.append(
-          el('span', 'obox-text obox-text--accent key-combo', t('settings.devRuntime.default'))
-        )
-      } else {
-        const btn = el('button', 'obox-btn obox-btn--sm', t('settings.devRuntime.setDefault'))
-        btn.type = 'button'
-        btn.addEventListener('click', async () => {
-          await setSetting(DEFAULT_KEY, key)
-          await reload()
-        })
-        li.append(btn)
-      }
-      rows.appendChild(li)
+      const pathEl = el('span', 'obox-radio-card__path', path)
+      pathEl.title = path
+      body.append(title, pathEl)
+
+      const check = el('span', 'obox-radio-card__check')
+      check.setAttribute('aria-hidden', 'true')
+
+      card.append(input, indicator, body, check)
+      return card
     }
 
+    const select = async (key) => {
+      await setSetting(DEFAULT_KEY, key)
+      await reload()
+    }
+
+    const entries = []
     for (const item of data.builtin || []) {
-      addEntry(
-        `builtin:${item.extensionId}`,
-        item.version,
-        item.hasExecutable ? item.dir : t('settings.devRuntime.missingExe', { dir: item.dir }),
-        item.source === 'user'
-          ? t('settings.devRuntime.tagBuiltinLegacy')
-          : t('settings.devRuntime.tagBuiltin'),
-        false
-      )
+      entries.push({
+        key: `builtin:${item.extensionId}`,
+        version: item.version,
+        path: item.hasExecutable
+          ? item.dir
+          : t('settings.devRuntime.missingExe', { dir: item.dir }),
+        tag:
+          item.source === 'user'
+            ? t('settings.devRuntime.tagBuiltinLegacy')
+            : t('settings.devRuntime.tagBuiltin')
+      })
     }
     for (const item of data.local || []) {
-      addEntry(
-        `local:${item.path}`,
-        item.version,
-        item.path,
-        t('settings.devRuntime.tagLocal'),
-        true
-      )
+      entries.push({
+        key: `local:${item.path}`,
+        version: item.version,
+        path: item.path,
+        tag: t('settings.devRuntime.tagLocal')
+      })
     }
-    if (rows.childElementCount === 0) {
+
+    if (entries.length === 0) {
       frag.append(note(t('settings.devRuntime.empty')))
     } else {
-      frag.append(rows)
+      const group = el('div', 'obox-radio-group')
+      group.setAttribute('role', 'radiogroup')
+      group.setAttribute('aria-label', t('settings.section.devRuntime'))
+      for (const entry of entries) {
+        group.appendChild(
+          radioCard({
+            ...entry,
+            selected: entry.key === current,
+            onSelect: () => void select(entry.key)
+          })
+        )
+      }
+      frag.append(group)
     }
-    frag.append(note(t('settings.devRuntime.footer')))
     return frag
   },
 

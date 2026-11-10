@@ -82,6 +82,22 @@ describe('ui.css · 不污染页面既有样式', () => {
     expect(offenders).toEqual([])
   })
 
+  it('单选卡片：选中态是绿色边框 + 右下角打勾（颜色走 token，不写死）', () => {
+    // 选中态靠 :has(input:checked)（原生 radio 是真实控件，键盘/读屏可用）
+    expect(cssNoComments).toMatch(/\.obox-radio-card:has\(\.obox-radio-card__input:checked\)/)
+    // 绿色边框取主题 token；外框 + 1px 内描边避免选中时布局跳动
+    expect(cssNoComments).toMatch(
+      /\.obox-radio-card:has\([^)]*:checked\)\s*\{[^}]*border-color:\s*var\(--fg-success\)/
+    )
+    expect(cssNoComments).toMatch(
+      /:has\([^)]*:checked\)[^{]*\{[^}]*box-shadow:\s*inset 0 0 0 1px var\(--fg-success\)/
+    )
+    // 打勾标记：默认不显示，选中才 flex；对勾用边框旋转画（不引图标）
+    expect(cssNoComments).toMatch(/\.obox-radio-card__check\s*\{[^}]*display:\s*none/)
+    expect(cssNoComments).toMatch(/__check::after\s*\{[^}]*transform:\s*rotate\(-45deg\)/)
+    expect(cssNoComments).toMatch(/> \.obox-radio-card__check\s*\{[^}]*display:\s*flex/)
+  })
+
   it('滚动条是最小形态：6px 细滑块、滑轨透明、无两端箭头', () => {
     expect(cssNoComments).toMatch(/::-webkit-scrollbar\s*\{[^}]*width:\s*6px/)
     expect(cssNoComments).toMatch(/::-webkit-scrollbar-track\s*\{[^}]*background:\s*transparent/)
@@ -137,6 +153,13 @@ describe('ui.css · 覆盖面', () => {
       '.obox-drawer',
       '.obox-tooltip',
       '.obox-popover'
+    ],
+    单选卡片: [
+      '.obox-radio-group',
+      '.obox-radio-card',
+      '.obox-radio-card__title',
+      '.obox-radio-card__path',
+      '.obox-radio-card__check'
     ],
     导航: [
       '.obox-tabs',

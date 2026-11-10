@@ -100,7 +100,14 @@ describe('主题与语言（页面运行时统一驱动）', () => {
   it('三个系统扩展页面都使用组件库的 obox-* class', () => {
     const expected: Record<string, string[]> = {
       app: ['obox-card', 'obox-input', 'obox-menu', 'obox-title'],
-      settings: ['obox-tree__node', 'obox-form-item', 'obox-input', 'obox-select', 'obox-btn'],
+      settings: [
+        'obox-tree__node',
+        'obox-form-item',
+        'obox-input',
+        'obox-select',
+        'obox-btn',
+        'obox-radio-card'
+      ],
       'ext-manager': ['obox-card', 'obox-btn', 'obox-tag', 'obox-desc']
     }
     for (const [name, classes] of Object.entries(expected)) {
