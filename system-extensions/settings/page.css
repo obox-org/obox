@@ -74,7 +74,8 @@ body {
    ⚠ 用 .panel 前缀提高特异性：ui.css 由运行时注入在 head 末尾，同特异性覆盖会被它盖掉。 */
 .panel .obox-form-item--inline {
   margin-bottom: 0;
-  padding: 8px 2px;
+  /* 行要"站得住"：控件已加高到 34px，行内再给 12px 上下留白 */
+  padding: 12px 2px;
   border-bottom: 1px dashed var(--border);
 }
 
@@ -92,7 +93,7 @@ body {
 }
 
 .obox-list {
-  gap: 4px;
+  gap: 8px;
 }
 
 /* 快捷键 / 运行时的等宽名称列 */
