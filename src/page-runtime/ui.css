@@ -841,21 +841,54 @@
   display: flex;
   align-items: center;
   gap: var(--obox-space-3);
-  padding: var(--obox-space-3) var(--obox-space-4);
+  padding: var(--obox-space-4) var(--obox-space-5);
   border-bottom: 1px solid var(--border);
   color: var(--fg-bright);
   font-weight: 600;
 }
 
+/* 内容区：**只给内边距，不接管子元素布局**。
+   有页面把 `__body` 同时当作整行容器（`ext-manager` 的 `.ext-main` 就是 `display:flex` 的一行），
+   库在这里写 `display:flex; flex-direction:column` 会把它压成竖排、按钮跑到标题下面去。 */
 .obox-card__body {
-  padding: var(--obox-space-4);
+  padding: var(--obox-space-5);
+}
+
+/* 卡片内的排版节奏：相邻文本行 12px。
+   标题自带的 `margin-bottom: 8px` 要归零，否则 8px + 12px 叠成 20px。 */
+.obox-card__body > .obox-title {
+  margin-bottom: 0;
+}
+
+.obox-card__body > .obox-text {
+  margin-top: var(--obox-space-4);
+}
+
+.obox-card__body > .obox-text:first-child {
+  margin-top: 0;
+}
+
+/* 直接放在卡片下的文本行（不经 `__body`，如 webapp 的网址与说明行）：
+   左右与页眉/页脚对齐，行间与前后区块留出与 `__body` 相同的节奏 */
+.obox-card > .obox-text {
+  margin: 0;
+  padding: 0 var(--obox-space-5);
+}
+
+.obox-card > .obox-text + .obox-text,
+.obox-card > .obox-card__header + .obox-text {
+  margin-top: var(--obox-space-4);
+}
+
+.obox-card > .obox-text + .obox-card__footer {
+  margin-top: var(--obox-space-4);
 }
 
 .obox-card__footer {
   display: flex;
   align-items: center;
   gap: var(--obox-space-3);
-  padding: var(--obox-space-3) var(--obox-space-4);
+  padding: var(--obox-space-4) var(--obox-space-5);
   border-top: 1px solid var(--border);
   color: var(--fg-dim);
 }
@@ -1352,11 +1385,12 @@
   padding: 0 var(--obox-space-5) var(--obox-space-5);
 }
 
-/* 卡片网格：auto-fill 的最小卡片宽度可调（--obox-card-min-w） */
+/* 卡片网格：auto-fill 的最小卡片宽度可调（--obox-card-min-w，默认 300px —— 足够放下
+   一行 `user@host:port` 或一条网址；页面仍可用该变量压小/放大） */
 .obox-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--obox-card-min-w, 200px), 1fr));
-  gap: var(--obox-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(var(--obox-card-min-w, 300px), 1fr));
+  gap: var(--obox-space-5);
 }
 
 /* 栅格表单行：标签列固定宽 + 控件列，desc/error 与控件左对齐（RDP/Webapp 的对齐要求） */

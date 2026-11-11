@@ -112,6 +112,17 @@
 > 只有浏览器默认 13px，看上去会明显偏小）。容器用 `<span>`/`<label>` 都行，但**外层行本身是
 > `<label>` 时不要再用 `<label>` 包**——嵌套 label 会让点击切换两次。
 
+卡片尺寸（别自己给卡片写内边距，库里已经定好）：
+
+| 部位                       | 尺寸                                     | 说明                                        |
+| -------------------------- | ---------------------------------------- | ------------------------------------------- |
+| 卡片网格 `.obox-card-grid` | 最小卡片宽 **300px**、间距 **16px**      | 最小宽可用页面变量 `--obox-card-min-w` 覆盖 |
+| 内容区 `.obox-card__body`  | 内边距 **16px**、行间距 **12px**         | 纵向 flex，子元素之间自动 12px              |
+| 页眉 / 页脚                | 上下 **12px**、左右 **16px**             | 与内容区左右对齐                            |
+| 直下文本行                 | 左右 **16px**、与相邻行/前后区块 **12px** | 见下方「两种写法」                           |
+
+> 卡片内的字号不在库里改（标题 13px、说明 12px），要大就用 `obox-title--h2` 之类显式换档。
+
 ### 单选卡片
 
 用于"互斥选一项、且每项信息不只一行"的场景（如运行时/版本选择）：整张卡片可点，原生 `radio` 视觉隐藏但保留键盘可达与读屏语义。
@@ -150,6 +161,45 @@
 ### 数据展示
 
 `obox-card`（`__header` / `__body` / `__footer`，`--flat` / `--bordered`）、`obox-list` + `obox-list__item`（`--compact` / `--divided`）、`obox-table`（`--bordered` / `--striped` / `--hover` / `--compact`，`obox-table__num` 数字右对齐）、`obox-tag`（`--success` / `--warning` / `--danger` / `--info`）、`obox-badge`（`--dot`）、`obox-avatar`（`--sm` / `--lg` / `--square`）、`obox-progress` + `obox-progress__bar`（`--success` / `--warning` / `--danger`）、`obox-stat`（`__value` / `__label`）、`obox-desc`（`__term` / `__detail`）、`obox-empty`（`__icon` / `__text` / `__actions`）、`obox-skeleton`（`--text` / `--circle` / `--rect`）。
+
+#### 卡片：两种写法都可以
+
+**写法 A（推荐，内容较多时）——用 `__body` 包住文本行**：内容区自带 16px 内边距与 12px 行间距，
+塞表单控件、列表都合适。
+
+```html
+<article class="obox-card">
+  <div class="obox-card__body">
+    <h3 class="obox-title obox-title--h3">user@host:3389</h3>
+    <p class="obox-text obox-text--sm obox-text--secondary">域 CORP · 上次连接 2 天前</p>
+  </div>
+  <div class="obox-card__footer">
+    <button class="obox-btn obox-btn--sm">打开</button>
+  </div>
+</article>
+```
+
+**写法 B（`__header` + 若干行 `obox-text` + `__footer`）——文本行直接挂在卡片下**：
+库会给这些行补上左右 16px 内边距，并让相邻行、以及它们与页眉/页脚之间各留 12px，
+所以**不需要**自己在页面里塞 padding，也不会出现"文字贴着边框"。
+
+```html
+<article class="obox-card">
+  <div class="obox-card__header">
+    <h3 class="obox-title obox-title--h3 obox-truncate">内部后台</h3>
+    <span class="obox-tag obox-tag--warning">TLS 已降级</span>
+  </div>
+  <p class="obox-text obox-text--sm obox-text--secondary obox-truncate">https://admin.example.com</p>
+  <p class="obox-text obox-text--sm obox-text--secondary obox-truncate">生产环境入口</p>
+  <div class="obox-card__footer">
+    <button class="obox-btn">打开</button>
+  </div>
+</article>
+```
+
+> 取舍：行数少、以"读"为主（网址、说明、体积这类）用 B 最省事；一旦要在卡片里放控件或多段结构，
+> 换 A——`__body` 的行距与内边距是显式的，不会因为多一层 div 就丢样式。
+> 注意 B 的样式只作用于 `.obox-card` 的**直接子元素**，`__body` 里的 `.obox-text` 不会被二次加内边距。
 
 ### 反馈
 
