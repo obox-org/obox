@@ -735,7 +735,7 @@ api.timer.clearInterval('tick')
 > **SQL 限制**：`exec` / `query` 会拒绝 `ATTACH` / `DETACH` / `VACUUM` / `PRAGMA` / `load_extension`——这些语句能读写库外文件或加载外部代码，会绕过"仅限扩展 data 目录"的封装。两者的失败形态不同：`exec` **原样返回** `{ ok:false, error:'不允许的 SQL 语句：…' }`，`query` **抛 `Error`**。常规 `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`CREATE`/`ALTER`/`WITH` 等不受影响。
 
 ```ts
-const db = await api.sqlite.open('todo.db') // → userData/extensions/todo_chenzhi/data/todo.db
+const db = await api.sqlite.open('todo.db') // → userData/extensions/todo.chenzhi/data/todo.db
 // 首次写入自动建表（id 主键自增；列按 JS 类型声明：number/boolean→INTEGER，string→TEXT；boolean 读写自动 0/1 还原）
 await db.insert({ title: '买菜', done: false }) // → 新行（含 id）
 await db.insert({ id: 1, title: '买菜改', done: true }) // 含 id = upsert

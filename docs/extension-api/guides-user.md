@@ -1,6 +1,6 @@
 # 用户扩展开发指南（独立仓库 + `.oix` 分发）
 
-**用户扩展**：源码在**自己的仓库**（与 obox 仓库只有扩展 API 依赖），打成 `.oix`（zip）分发，安装到 `userData/extensions/<name>_<清洗后 author>/`（`main/oixCore.ts:56-60`）——**目录名就是宿主看到的扩展 id**，也是 `app://extensions/<id>/` 的那段 id。
+**用户扩展**：源码在**自己的仓库**（与 obox 仓库只有扩展 API 依赖），打成 `.oix`（zip）分发，安装到 `userData/extensions/<name>.<清洗后 author>/`（`main/oixCore.ts:75-84`，**点号**分隔，不是下划线）——**目录名就是宿主看到的扩展 id**，也是 `app://extensions/<id>/` 的那段 id。
 若你的扩展要随 obox 打包、改仓库源码 —— 那是内置扩展，读 [guides-builtin.md](guides-builtin.md)。
 
 前置：贡献点字段查 [manifest-reference.md](manifest-reference.md)；运行时 API 查 [api-reference.md](api-reference.md)；踩坑查 [troubleshooting.md](troubleshooting.md)。
@@ -104,14 +104,22 @@ export default defineConfig({
 // const pageUrl = new URL('./page.html', import.meta.url).href  // → app://extensions/<安装目录名>/page.html
 
 // 宿主模式（入口经 file:// 加载）：import.meta.url 是磁盘路径，需要显式拼 app://
-const dirName = decodeURIComponent(new URL('.', import.meta.url).pathname)
+// ⚠ 别去复刻"安装目录怎么命名"：那条规则是宿主的内部实现（现在用点号 <name>.<author>），
+//   复刻会随宿主改名而静默失效（rdp 1.1.0 就因此把安装态判成调试态，页面地址变成
+//   app://debug/…，协议侧直接 404 not found）。只看路径结构最稳。
+const segments = decodeURIComponent(new URL('.', import.meta.url).pathname)
   .split(/[\\/]/)
   .filter(Boolean)
-  .pop() // 安装目录名 = <name>_<清洗后 author>（调试扩展则是 --debug-extension 的 id）
-const pageUrl = `app://extensions/${dirName}/page.html`
+segments.pop() // 丢掉末尾的空段（路径以 / 结尾）
+const dirName = segments.pop() // 扩展目录名（= 安装目录名 / 调试目录名）
+const parent = (segments.pop() ?? '').toLowerCase() // 父目录名
+// 父目录叫 extensions ⇒ 装好的扩展（系统根 <安装目录>/extensions 与用户根 <userData>/extensions 都叫这个名字）
+// 否则 ⇒ --debug-extension 的本地目录，走 app://debug/<目录名>
+const pageUrl = `app://${parent === 'extensions' ? 'extensions' : 'debug'}/${dirName}/page.html`
 ```
 
-- **不要硬编码 `app://extensions/<manifest.name>/`**：安装目录名是 `<name>_<清洗后 author>`（`main/oixCore.ts:56-60`），带作者时与 `manifest.name` 不同。
+- **不要硬编码 `app://extensions/<manifest.name>/`**：安装目录名是 `<name>.<清洗后 author>`（`main/oixCore.ts:75-84`），带作者时与 `manifest.name` 不同。
+- **也不要复刻那条命名规则来做"安装态 / 调试态"判断**（`rdp` 1.1.0 的真实事故）：规则是宿主的内部实现，改一次扩展就静默报废，症状是卡片里只有 `not found`。按上一段**只看父目录名**。参考实现：`rdp` 的 `lib/appUrl.mjs`（`resolveAppHost` / `appPageUrl`）与 `webapp` 的 `extensionPageUrl`。
 - `app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（`main/protocol.ts`）；同一份代码在 `--debug-extension` 下指向 `app://debug/<id>/`。
 - **卡片 / overlay 的 `url` 必须是 `app://…`（硬要求）**：外壳 CSP 只允许 `self` 与 `app:`（`src/renderer/index.html`），`file://` 的 iframe 会被**整块拦掉**，用户看到的是一片白色空白窗口。
   - 宿主会兜底：旧扩展用 `new URL('./x.html', import.meta.url)` 得到的 `file://…/extensions/<目录名>/…` 会被**归一化**成 `app://extensions/<目录名>/…` 并打一条 `[AppWindow]` 警告（所以已安装的旧版本升级后能直接打开）。但**不要依赖兜底**，新代码请照上一节显式拼 `app://`（参考 `appPageUrl()`）。
