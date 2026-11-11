@@ -38,12 +38,12 @@
 
 ## 4. 集成验证与交付
 
-- [ ] 4.1 三条门槛全绿：`npm run typecheck`、`npm run lint`（0 error）、`npm test`（含 1.x/2.x 新增断言）
-- [ ] 4.2 从 master 拉 `feat/card-size` 分支提交（中文 commit message），推送并开 PR，正文附 3.x 的截图与量测结论；
+- [x] 4.1 三条门槛全绿：`npm run typecheck`、`npm run lint`（0 error）、`npm test`（含 1.x/2.x 新增断言）
+- [x] 4.2 从 master 拉 `feat/card-size` 分支提交（中文 commit message），推送并开 PR，正文附 3.x 的截图与量测结论；
       CI `check` 绿后按 AGENTS 规则 squash 合并并删除分支
-- [ ] 4.3 合并后复核依赖面：`npm run security:audit --registry=https://registry.npmjs.org` = 0、
+- [x] 4.3 合并后复核依赖面：`npm run security:audit --registry=https://registry.npmjs.org` = 0、
       Dependabot 开放告警 = 0
-- [ ] 4.4 确认 `rdp` / `webapp` 两个扩展**无需改代码**（它们引用宿主 `app://obox/ui.css`）；
+- [x] 4.4 确认 `rdp` / `webapp` 两个扩展**无需改代码**（它们引用宿主 `app://obox/ui.css`）；
       是否随之发布宿主新版本（版本号）由用户决定，本 change 不自行发版
 
 ## Workflow follow-up
