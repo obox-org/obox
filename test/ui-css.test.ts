@@ -190,6 +190,69 @@ describe('ui.css · 覆盖面', () => {
   })
 })
 
+describe('ui.css · 卡片尺寸与内部节奏（change enlarge-card-components）', () => {
+  /** 取某个选择器的规则体（用于断言具体声明）；按行首锚定，避免被 `.a > .b {` 这类后代规则抢先命中 */
+  const ruleOf = (selector: string): string => {
+    const at = cssNoComments.search(
+      new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{`)
+    )
+    expect(at, `找不到规则 ${selector}`).toBeGreaterThan(-1)
+    return cssNoComments.slice(at, cssNoComments.indexOf('}', at))
+  }
+
+  it('卡片网格：最小卡片宽默认 300px、间距 16px（页面仍可用 --obox-card-min-w 覆盖）', () => {
+    const grid = ruleOf('.obox-card-grid')
+    expect(grid).toContain('minmax(var(--obox-card-min-w, 300px), 1fr)')
+    expect(grid).toMatch(/gap:\s*var\(--obox-space-5\)/)
+  })
+
+  it('卡片内容区内边距 16px', () => {
+    expect(ruleOf('.obox-card__body')).toMatch(/padding:\s*var\(--obox-space-5\)/)
+  })
+
+  it('页眉与页脚：上下 12px、左右 16px，且两者一致', () => {
+    const pad = /padding:\s*([^;]+);/
+    const header = pad.exec(ruleOf('.obox-card__header'))?.[1]?.trim()
+    const footer = pad.exec(ruleOf('.obox-card__footer'))?.[1]?.trim()
+    expect(header).toBe('var(--obox-space-4) var(--obox-space-5)')
+    expect(footer).toBe(header)
+  })
+
+  it('卡片内相邻内容行有 12px 间距，标题自带外边距归零（避免叠加成 20px）', () => {
+    // 行距用子元素的 margin-top，而不是把 __body 改成 flex 列：
+    // ext-manager 把 __body 当整行容器（.ext-main 自带 display:flex），库里写 flex-direction:column
+    // 会把那一行压成竖排（真机踩到，见 change 的 tasks 3.1）
+    const body = ruleOf('.obox-card__body')
+    expect(body).not.toMatch(/display:\s*flex/)
+    expect(body).not.toMatch(/flex-direction:\s*column/)
+
+    expect(ruleOf('.obox-card__body > .obox-title')).toMatch(/margin-bottom:\s*0/)
+    expect(ruleOf('.obox-card__body > .obox-text')).toMatch(/margin-top:\s*var\(--obox-space-4\)/)
+    expect(ruleOf('.obox-card__body > .obox-text:first-child')).toMatch(/margin-top:\s*0/)
+  })
+
+  it('直下文本行：左右 16px、与相邻行及页眉页脚各 12px；选择器是直接子元素', () => {
+    // 直接子元素形态：`__body` 里的 `.obox-text` 不受影响
+    expect(cssNoComments).toMatch(/\.obox-card > \.obox-text \{/)
+    expect(cssNoComments).not.toMatch(/\.obox-card \.obox-text \{/)
+    expect(ruleOf('.obox-card > .obox-text')).toMatch(/padding:\s*0 var\(--obox-space-5\)/)
+    // 三条间距规则：相邻文本行、页眉之后、页脚之前
+    for (const prev of [
+      '.obox-card > .obox-text + .obox-text',
+      '.obox-card > .obox-card__header + .obox-text'
+    ]) {
+      const at = cssNoComments.indexOf(prev)
+      expect(at, `缺间距规则 ${prev}`).toBeGreaterThan(-1)
+      expect(cssNoComments.slice(at, cssNoComments.indexOf('}', at))).toMatch(
+        /margin-top:\s*var\(--obox-space-4\)/
+      )
+    }
+    expect(cssNoComments).toMatch(
+      /\.obox-card > \.obox-text \+ \.obox-card__footer \{[^}]*margin-top:\s*var\(--obox-space-4\)/
+    )
+  })
+})
+
 describe('ui.css · 体积', () => {
   it('未压缩不超过 60 KB', () => {
     const size = statSync(cssPath).size
