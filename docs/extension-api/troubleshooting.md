@@ -28,7 +28,7 @@ Obox 扩展开发中遇到的常见问题与修复。**遇到新坑后，把解�
 
 - **内置扩展？**`app://builtin/<id>/<rest>` → `resources/extensions/<id>/<rest>` 这条通道**虽已注册**（`src/main/protocol.ts:14,47`）却**没有任何构建步骤填充**该目录（`electron-builder.yml` 无 `extraResources`；内置扩展由 Vite 的 `import.meta.glob` 静态收集，`src/renderer/src/core/loader.ts:15-17`）→ 打包版与开发版都取不到文件。内置扩展别指望这条通道，App 卡片走 `html`/srcdoc，并受 #1 的 CSP 限制
 - **用户扩展？**确认它已装到 `userData/extensions/<id>/`——`app://extensions` 只映射 userData（`src/main/protocol.ts:46`）
-- `<id>` 是**安装目录名**（`<name>_<author>`，如 `todo_chenzhi`），不是 manifest.name；`index.js` 里用 `new URL('./todo.html', import.meta.url)` 推导，勿硬编码
+- `<id>` 是**安装目录名**（`<name>.<author>`，**点号**，如 `todo.chenzhi`），不是 manifest.name；`index.js` 里用 `new URL('./todo.html', import.meta.url)` 推导，勿硬编码
 - 协议映射：`app://extensions/<id>/<rest>` → `userData/extensions/<id>/<rest>`（协议注册在 `src/main/protocol.ts`）
 
 ## 3. iframe 里 alert/confirm/prompt 无效
@@ -748,7 +748,7 @@ fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
 **症状**：obox 升级到 2.0.x 后，宠物成长值回到 0、待办清空、网页应用要重新登录 —— 但**文件其实没丢**。
 
 **原因**：扩展数据目录是 `<userData>/extensions/<安装目录名>/data`，而**安装目录名改过**：
-旧版是 `<manifest.name>`（如 `pet`），2.0 起是 `<name>_<清洗后 author>`（如 `pet_chenzhi`）。
+旧版是 `<manifest.name>`（如 `pet`），2.0 起是 `<name>.<清洗后 author>`（如 `pet.chenzhi`）。
 升级时程序装进了新目录、数据留在旧目录 ⇒ 新版读不到。
 
 **obox 2.0.2 起自动处理**：每次启动扫描扩展时，若新目录的 `data/` **还不存在或为空**，
@@ -873,9 +873,43 @@ fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
    若你的卡片能打开但控制台有这条警告，说明**扩展该更新了**（重装或改源码后用 `appPageUrl()`）。
 2. **无法判定的地址会显示诊断块**（不是白屏）：块里给出应用名、原始地址（可选中复制）、
    原因与修法。按提示改掉 `url` 即可：
-   - 用 `appPageUrl(import.meta.url, { name, author, page })`（参考 `extensions/rdp/lib/appUrl.mjs`）；
-   - 或显式拼 `app://extensions/<安装目录名>/<相对路径>`（目录名是 `<name>_<清洗后 author>`，
-     **不要**硬编码 `manifest.name`）。
+   - 用 `appPageUrl(import.meta.url, { page })`（参考 `extensions/rdp/lib/appUrl.mjs` 的 `resolveAppHost`）；
+   - 或显式拼 `app://extensions/<安装目录名>/<相对路径>`（目录名是 `<name>.<清洗后 author>`，
+     **不要**硬编码 `manifest.name`，**也不要复刻这条命名规则**）。
 3. **调试扩展**走 `app://debug/<--debug-extension 的 id>/…`，不是 `app://extensions/`。
 4. **确认方法**：子窗口按 `Ctrl+Shift+I` 看 `<iframe>` 的 `src`；或看主进程终端里的
    `[child-renderer:warning] [AppWindow] …`（子窗口日志会转发）。
+
+## 51. 装好后打开 App 卡片只显示 `not found`（不是白屏、也不是诊断块）
+
+**症状**：扩展装好了、管理器里状态正常、卡片也出现在「应用」里，点开子窗口里只有一行 `not found`。
+（区别于 #50 的**白屏**：白屏是 `file://` 被 CSP 拦；这里是页面地址**指向了错误的 app:// 主机**。）
+
+**原因**：卡片 `url` 被推成了 `app://debug/<目录名>/…`。`app://debug/` **只映射 `--debug-extension`
+声明过的目录**，装好的用户扩展在 `app://extensions/<安装目录名>/…`，两者不通用
+（`src/main/appUrlCore.ts` 里 `debug` 分支查不到就回 404，响应体正是 `not found`）。
+
+**最常见的触发方式（真实事故：`rdp` 1.1.0）**：扩展自己复刻了"安装目录怎么命名"来判断
+"我是安装态还是调试态"，而那条规则改过（旧 `<name>_<author>` → 现行 `<name>.<清洗后 author>`，
+`main/oixCore.ts:75-84`）。复刻值一旦与宿主不一致，就会把**安装态误判成调试态**，
+页面地址落到 `app://debug/`，于是 404 `not found`。当时的单测还把错值写成了期望值，所以本地全绿。
+
+**改法**：不要复刻命名规则，只看入口路径的**父目录名**：
+
+```js
+const seg = decodeURIComponent(new URL('.', import.meta.url).pathname).split(/[\\/]/).filter(Boolean)
+seg.pop()                                        // 末尾空段
+const dirName = seg.pop()                        // 目录名
+const parent = (seg.pop() ?? '').toLowerCase()   // 父目录名
+const host = parent === 'extensions' ? 'extensions' : 'debug'
+const pageUrl = `app://${host}/${dirName}/ui/index.html`
+```
+
+**确认方法**：
+1. 子窗口按 `Ctrl+Shift+I`，看 `<iframe>` 的 `src` 是不是 `app://debug/…`；
+2. 在任意页面 console 里 `await fetch('app://debug/<目录名>/ui/index.html')` —— 返回
+   `404 not found` 就是本条；`app://extensions/<目录名>/…` 返回 200 即正常；
+3. 宿主侧日志：`app://` 请求失败没有额外提示，只有子窗口里那句 `not found`。
+
+**参考实现**：`extensions/rdp` 的 `lib/appUrl.mjs`（`resolveAppHost` / `appPageUrl`，1.1.1 起）、
+`extensions/webapp` 的 `extensionPageUrl`。

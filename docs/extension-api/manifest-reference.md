@@ -9,7 +9,7 @@
 ## 文件位置
 
 - **内置扩展**：`src/renderer/src/extensions/<id>/manifest.json`，与入口 `index.ts` 同目录（只按 `index.ts` 收集，缺入口则该扩展不会加载，`core/loader.ts:15,34-45`）；随应用打包，只读不可卸载
-- **用户扩展**：`userData/extensions/<name>_<author>/manifest.json`（经 `app://extensions/<id>/manifest.json` 加载，可卸载；经 .oix 安装，目录名 = `<name>_<清洗后 author>`，清洗后为空则退化为纯 name，`main/oixCore.ts:56-60`）
+- **用户扩展**：`userData/extensions/<name>.<author>/manifest.json`（经 `app://extensions/<id>/manifest.json` 加载，可卸载；经 .oix 安装，目录名 = `<name>.<清洗后 author>`（**点号**，不是下划线），清洗后为空则退化为纯 name，`main/oixCore.ts:75-84`）
 
 ## 字段
 
