@@ -26,7 +26,7 @@ import {
   readExtensionHostFlag
 } from './extensionHostBridge'
 import { currentExtensionHostConsumer, type HostedActivationPort } from './extensionHostConsumer'
-import { collectHostedExtensions } from './loader'
+import { collectHostedExtensions, collectUserExtensions } from './loader'
 import { contributesArray, makeExtensionInfo, topoSort } from './manifest'
 import { stateStore } from './state'
 import { appStore } from './appStore'
@@ -1390,6 +1390,41 @@ class ExtensionHost {
 
     return all
   }
+  /**
+   * 重扫磁盘上的**用户扩展**并只登记、**不激活**（安装完成后让「扩展」页立刻看到新装的扩展）。
+   *
+   * 为什么只登记不激活：用户裁定（2026-11-12）安装后先刷新列表 + 弹系统通知，激活交给"重启 obox"。
+   * 渲染进程模式下激活是可行的，但宿主模式（2.0 默认）的扩展清单在 `start()` 时固定、
+   * 宿主已 ready 时不会重加，两条路会分叉 ⇒ 统一走"重启后生效"，界面与通知的文案才对得上。
+   *
+   * 语义：
+   * - **已存在的 id**（覆盖安装 / 升级）：换清单与版本，保留磁盘禁用状态；
+   * - **新 id**：按 `stateStore.isDisabled()` 决定启用与否（新装的默认启用），登记 loaders/hookLoaders；
+   * - **不删除**任何条目：运行期删目录不归这里管（下次启动的完整扫描负责）。
+   */
+  async refreshExtensions(): Promise<ExtensionInfo[]> {
+    const entries = await collectUserExtensions()
+    const added: string[] = []
+    for (const entry of entries) {
+      const known = this.extensions.has(entry.id)
+      const enabled = !stateStore.isDisabled(entry.id)
+      const info = makeExtensionInfo(entry.id, entry.manifest, entry.source ?? 'user', enabled, {
+        installedTimestamp: entry.installedTimestamp,
+        pendingInstall: entry.pendingInstall,
+        runtime: entry.runtime
+      })
+      this.extensions.set(entry.id, info)
+      // 钩子专用表：清单有效即登记（与是否启用无关，禁用态的 install/uninstall 钩子也要能跑）
+      if (info.isValid) this.hookLoaders.set(entry.id, entry.load)
+      if (enabled && info.isValid) this.loaders.set(entry.id, entry.load)
+      if (!known) added.push(entry.id)
+    }
+    if (added.length > 0) {
+      console.log(`[host] 重扫用户扩展：新增 ${added.join(', ')}（未激活，重启 obox 后生效）`)
+    }
+    return this.getExtensions()
+  }
+
   /** 热安装：安装 .oix 后增量加载单个用户扩展（立即显示 + 立即激活，无需重启） */
   async loadUserExtension(entry: ExtensionEntry): Promise<ExtensionInfo> {
     const id = entry.id

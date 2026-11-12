@@ -6,7 +6,9 @@
   "author": "obox",
   "apiVersion": 4,
   "main": "./index.js",
-  "activationEvents": ["*"],
+  "activationEvents": [
+    "*"
+  ],
   "contributes": {
     "i18n": {
       "zh": {
@@ -45,7 +47,8 @@
         "ext.install.failed": "安装失败：{message}",
         "common.callFailed": "调用失败",
         "common.callTimeout": "调用超时：{op}",
-        "common.readFailed": "读取失败：{message}"
+        "common.readFailed": "读取失败：{message}",
+        "ext.install.done": "已安装「{name}」v{version}，重启 obox 后生效（卡片 / 命令会在这之后出现）"
       },
       "en": {
         "ext.displayName": "Extensions",
@@ -83,7 +86,8 @@
         "ext.install.failed": "Install failed: {message}",
         "common.callFailed": "Call failed",
         "common.callTimeout": "Call timed out: {op}",
-        "common.readFailed": "Failed to read: {message}"
+        "common.readFailed": "Failed to read: {message}",
+        "ext.install.done": "Installed {name} v{version}. Restart obox to activate it (cards and commands appear after that)."
       }
     },
     "navItems": [

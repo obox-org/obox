@@ -207,6 +207,20 @@ installBtn.addEventListener('click', async () => {
     // 用户在文件选择器里取消时返回 null：不是错误，什么都不做
     if (outcome && outcome.ok === false) {
       statusEl.textContent = t('ext.install.failed', { message: outcome.error })
+    } else if (outcome && outcome.ok === true) {
+      // 安装成功后**立刻**重扫磁盘：列表读的是启动时的内存注册表，不重扫就看不到新装的扩展。
+      // 重扫只登记、不激活（激活要等重启 obox，宿主清单在 start() 时固定）；文案里明说这一点。
+      try {
+        await call('extensions.rescan')
+        const result = outcome.result ?? {}
+        statusEl.textContent = t('ext.install.done', {
+          name: result.displayName || result.name || result.id || '',
+          version: result.version || ''
+        })
+      } catch (error) {
+        // 重扫失败不影响"已装好"这个事实：退回原来的刷新 + 失败提示
+        statusEl.textContent = t('common.readFailed', { message: error.message })
+      }
     }
     await refresh()
   } catch (error) {

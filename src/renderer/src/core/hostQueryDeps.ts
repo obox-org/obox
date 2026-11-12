@@ -36,12 +36,15 @@ function withResolvedLabels<T extends { id: string; manifest?: Record<string, un
 /** 懒取渲染侧 host：避免把 App.vue 静态拉进只跑 node 的测试模块图 */
 async function lazyHost(): Promise<{
   getExtensions(): unknown[]
+  /** 重扫用户扩展（只登记不激活） */
+  refreshExtensions(): Promise<unknown[]>
   setEnabled(id: string, enabled: boolean): unknown
   uninstall(id: string): Promise<unknown>
 }> {
   const mod = await import('./host')
   return mod.host as unknown as {
     getExtensions(): unknown[]
+    refreshExtensions(): Promise<unknown[]>
     setEnabled(id: string, enabled: boolean): unknown
     uninstall(id: string): Promise<unknown>
   }
@@ -51,6 +54,14 @@ export function hostQueryDeps(): HostQueryDeps {
   return {
     listExtensions: async () => {
       const list = (await lazyHost()).getExtensions() as Array<{
+        id: string
+        manifest?: Record<string, unknown>
+      }>
+      return list.map(withResolvedLabels)
+    },
+    // 安装完成后让「扩展」页立刻看到新装的扩展：重扫磁盘（只登记不激活，重启后生效）
+    rescanExtensions: async () => {
+      const list = (await (await lazyHost()).refreshExtensions()) as Array<{
         id: string
         manifest?: Record<string, unknown>
       }>
