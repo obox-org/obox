@@ -13,6 +13,7 @@ import type { InstallOixOutcome } from '../shared/types'
 import { getUserExtensionsDir } from './capabilities'
 import { getSystemExtensionsDir } from './paths'
 import { addKnownExtension } from './extGuard'
+import { notifyExtensionInstalled } from './installNotify'
 import { registerHookIpc, runExtensionHook } from './hookRunner'
 import {
   installFromPackage,
@@ -99,6 +100,8 @@ export async function installOixFromPath(filePath: string): Promise<InstallOixOu
     })
     // 登记进"已知扩展"集合（成员校验的真值来源之一）
     addKnownExtension(result.id)
+    // 装完立刻在右下角提醒（点击通知 = 重启 obox 让新扩展的卡片/命令生效）
+    notifyExtensionInstalled(result)
     // 安装完成后立刻跑 install 钩子（渲染进程执行；见上面 triggerInstallHook 的降级语义）
     await triggerInstallHook({
       dir: result.dir,

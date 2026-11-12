@@ -51,4 +51,34 @@ describe('系统扩展 ext-manager', () => {
     expect(shell).toContain('buildLegacySystemThemeMessage')
     expect(shell).toContain('pushWithLegacy')
   })
+
+  /**
+   * 安装后**立刻显示**（用户 2026-11-12 反馈）：页面列表读的是启动时的内存注册表，
+   * 装完只 `refresh()`（= `extensions.list`）永远看不到新扩展 ⇒ 必须显式重扫。
+   * 同时钉住状态文案：要明确"重启 obox 后生效"，别让用户以为卡片该立刻出现。
+   */
+  it('安装成功后先重扫再刷新列表，并提示"重启后生效"', () => {
+    const page = readFileSync(`${dir}page.js`, 'utf8')
+    const installBlock = page.slice(page.indexOf("call('extensions.install')"))
+    expect(installBlock).toContain("call('extensions.rescan')")
+    // 重扫必须在刷新之前（refresh 读的正是重扫后的注册表）
+    expect(installBlock.indexOf("call('extensions.rescan')")).toBeLessThan(
+      installBlock.indexOf('await refresh()')
+    )
+    expect(installBlock).toContain("t('ext.install.done'")
+  })
+
+  it('清单为 ext.install.done 提供 zh/en 文案（重启后生效的说明）', () => {
+    const manifest = JSON.parse(readFileSync(`${dir}manifest.json`, 'utf8')) as {
+      contributes: { i18n: Record<string, Record<string, string>> }
+    }
+    for (const locale of ['zh', 'en']) {
+      const text = manifest.contributes.i18n[locale]?.['ext.install.done'] ?? ''
+      expect(text, `${locale} 缺 ext.install.done`).not.toBe('')
+      expect(text).toMatch(/\{name\}/)
+      expect(text).toMatch(/\{version\}/)
+    }
+    expect(manifest.contributes.i18n.zh['ext.install.done']).toContain('重启')
+    expect(manifest.contributes.i18n.en['ext.install.done']).toMatch(/restart/i)
+  })
 })

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { runHostQuery, type HostQueryDeps } from '../src/renderer/src/core/hostQuery'
+import {
+  HOST_QUERY_OPS,
+  runHostQuery,
+  type HostQueryDeps
+} from '../src/renderer/src/core/hostQuery'
 
 /**
  * `ui.hostQuery` 的渲染侧分发（change `system-extensions-from-install-dir` 任务 5.1 / 5.2）。
@@ -15,6 +19,7 @@ function deps(overrides: Partial<HostQueryDeps> = {}): HostQueryDeps {
       { id: 'pet.chenzhi', source: 'user', version: '2.0.2' },
       { id: 'settings', source: 'system', version: '1.0.0' }
     ],
+    rescanExtensions: () => [],
     setEnabled: () => undefined,
     uninstall: async () => undefined,
     restartHost: () => undefined,
@@ -58,6 +63,34 @@ describe('ui.hostQuery 分发', () => {
       'pet.chenzhi:user',
       'settings:system'
     ])
+  })
+
+  /**
+   * 安装完成后「扩展」页要立刻看到新装的扩展：`extensions.list` 读的是**启动时的内存注册表**，
+   * 所以必须有单独的 `extensions.rescan`（重扫磁盘、只登记不激活）。
+   */
+  it('extensions.rescan 触发重扫并返回重扫后的扩展表', async () => {
+    let rescanned = 0
+    const result = (await runHostQuery(
+      'extensions.rescan',
+      {},
+      deps({
+        rescanExtensions: async () => {
+          rescanned += 1
+          return [
+            { id: 'pet.chenzhi', source: 'user', version: '2.0.2' },
+            { id: 'fresh.install', source: 'user', version: '1.0.0' }
+          ]
+        }
+      })
+    )) as Array<{ id: string }>
+    expect(rescanned).toBe(1)
+    expect(result.map((e) => e.id)).toContain('fresh.install')
+  })
+
+  it('extensions.rescan / extensions.list 是两个 op（安装后不能只靠 list）', () => {
+    expect(HOST_QUERY_OPS).toContain('extensions.rescan')
+    expect(HOST_QUERY_OPS).toContain('extensions.list')
   })
 
   it('extensions.setEnabled 把参数透传给宿主', async () => {

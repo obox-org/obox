@@ -13,6 +13,8 @@
 /** 分发器需要的宿主能力（渲染侧真实实现注入；单测注入假实现） */
 export interface HostQueryDeps {
   listExtensions(): unknown[] | Promise<unknown[]>
+  /** 重扫磁盘上的用户扩展（只登记不激活；安装完成后用） */
+  rescanExtensions(): unknown[] | Promise<unknown[]>
   setEnabled(id: string, enabled: boolean): void
   uninstall(id: string): Promise<void>
   restartHost(): void
@@ -78,6 +80,8 @@ export async function runHostQuery(
   switch (op) {
     case 'extensions.list':
       return await deps.listExtensions()
+    case 'extensions.rescan':
+      return await deps.rescanExtensions()
     case 'extensions.setEnabled':
       deps.setEnabled(requireString(args, 'id'), requireBoolean(args, 'enabled'))
       return null
@@ -183,6 +187,7 @@ export async function runHostQuery(
 /** 宿主侧可用的 op 名单（文档与自检用；与上面的 switch 必须同步） */
 export const HOST_QUERY_OPS = [
   'extensions.list',
+  'extensions.rescan',
   'extensions.setEnabled',
   'extensions.uninstall',
   'extensions.install',
