@@ -213,7 +213,7 @@ const d = api.app.register({
 - **url 加载用户扩展静态页**：CSP 已放行 `app:` scheme（`src/renderer/index.html:10` 的 `default-src 'self' app:` 也覆盖 `frame-src`，故 iframe 可加载），`url: 'app://extensions/<id>/todo.html'` 的页面可执行脚本、可用 localStorage；子窗口 iframe 无 allow-modals，禁 alert/confirm/prompt
 - **`url` 必须是 `app://`，否则显示诊断而不是白屏**：`file://`（旧扩展用 `new URL('./x.html', import.meta.url)` 在宿主模式下就会得到它）**会被 CSP 拦掉**。宿主会把路径形如 `…/extensions/<目录名>/…` 的 `file://` **归一化**为 `app://extensions/<目录名>/…` 并打一条 `[AppWindow]` 警告（已安装的旧扩展因此免重发即可打开）；其余不可用地址（`https://`、无法判定归属的 `file://`、非法 URL）不再创建 iframe，而是显示诊断块（应用名 / 原始地址 / 原因 / 修法）。实现见 `src/renderer/src/core/appPageUrl.ts` 与 `AppWindow.vue`
 - **这是跨源加载，不是同源**：父文档在 dev 是 `http://localhost:5173`（`ELECTRON_RENDERER_URL`）、打包是 `file://`（`src/main/appWindow.ts:26-31`），而 `app:` 是独立注册的 standard scheme（`src/main/protocol.ts:18-29`）——`app://extensions` 与父文档**不同源**，靠 CSP 放行而非同源策略。因此该静态页有**自己的 localStorage**，与主窗口/扩展的 localStorage **不共享**（跨窗口传数据请走 `api.app.onMessage` 消息桥）
-- **主题下发（宿主 → 子窗口，单向）**：`url` 型卡片跨源，宿主**注入不了** CSS（`iframe.contentDocument` 恒为 `null`），CSS 变量也不跨文档继承 ⇒ token 只能经消息送达。宿主在 iframe `load` 完成、每次主题变化、以及收到子页面请求这三个时机，向 `iframe.contentWindow` 发 `{source:'obox-app', action:'obox-theme', themeId, tokens}`：`tokens` 是宿主 25 个 token 的**生效值**快照（与主窗口所见一致），扩展侧把每条 `documentElement.style.setProperty(k, v)` 即跟随主题；拿不到时用**内置兜底**（不报错、不空白）。子页面可用 `{source:'obox-app', action:'obox-theme-request'}` 请宿主重发。**`url` 型卡片切主题不再重渲染**（`:key` 为 `url:<url>`，与主题无关 ⇒ 页内表单内容不丢），**`srcdoc` 型仍靠重渲染**（`:key` 为 `srcdoc:<themeId>`）。协议细节、最小接收代码与降级行为见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)；实现见 `src/renderer/src/core/appTheme.ts` 与 `src/renderer/src/AppWindow.vue`
+- **主题下发（宿主 → 子窗口，单向）**：`url` 型卡片跨源，宿主**注入不了** CSS（`iframe.contentDocument` 恒为 `null`），CSS 变量也不跨文档继承 ⇒ token 只能经消息送达。宿主在 iframe `load` 完成、每次主题变化、以及收到子页面请求这三个时机，向 `iframe.contentWindow` 发 `{source:'obox-app', action:'obox-theme', themeId, tokens}`：`tokens` 是宿主 全部主题 token（当前 26 个）的**生效值**快照（与主窗口所见一致），扩展侧把每条 `documentElement.style.setProperty(k, v)` 即跟随主题；拿不到时用**内置兜底**（不报错、不空白）。子页面可用 `{source:'obox-app', action:'obox-theme-request'}` 请宿主重发。**`url` 型卡片切主题不再重渲染**（`:key` 为 `url:<url>`，与主题无关 ⇒ 页内表单内容不丢），**`srcdoc` 型仍靠重渲染**（`:key` 为 `srcdoc:<themeId>`）。协议细节、最小接收代码与降级行为见 [themes-settings.md](themes-settings.md#app-子窗口url-型主题下发协议)；实现见 `src/renderer/src/core/appTheme.ts` 与 `src/renderer/src/AppWindow.vue`
 
 ### app.onMessage(handler) → Disposable（App 子窗口 ↔ 扩展消息桥）
 
@@ -475,7 +475,7 @@ overlay 页面里**没有 `api` 对象**（扩展入口只跑在主窗口），�
 
 overlay 是**独立文档**（`app://extensions/<id>/dist/index.html` 由主进程建窗加载）：CSS 自定义属性
 **不跨文档继承**，App 子窗口那条 `obox-theme` postMessage 也送不到它。所以**宿主会在页面就绪后
-把 25 个主题 token 下发到该窗口的 `documentElement` 上**（2.0.1 起）：
+把 全部主题 token 下发到该窗口的 `documentElement` 上**（2.0.1 起）：
 
 - 渲染侧主题生效/变更后上报一份"当前生效 token 快照" → 主进程缓存并广播给所有 overlay；
   新建的 overlay 在 `dom-ready` 时补发缓存的那一份；

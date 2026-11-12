@@ -21,7 +21,7 @@ export const APP_THEME_REQUEST_ACTION = 'obox-theme-request'
 export const APP_THEME_SOURCE = 'obox-app'
 
 /**
- * 宿主主题 token 白名单（25 个），逐条对齐 `src/renderer/src/assets/main.css` 的 `:root`。
+ * 宿主主题 token 白名单（数量以 main.css 的 :root 为准），逐条对齐 `src/renderer/src/assets/main.css` 的 `:root`。
  * 顺序也保持一致 —— `test/app-theme.test.ts` 会按「集合 + 顺序」与 main.css 差分比对，
  * 因此改 `main.css` 的 token 必须同步改这里（token 漂移即测试红）。
  */
@@ -40,6 +40,7 @@ export const HOST_THEME_TOKEN_NAMES: readonly string[] = [
   '--fg-warning',
   '--fg-success',
   '--accent',
+  '--fg-on-accent',
   '--hover-bg',
   '--selection-bg',
   '--nav-icon',

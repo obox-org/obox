@@ -4,18 +4,18 @@
  * ## 为什么要有它（change `unified-page-context`）
  *
  * 主体界面已是磁盘系统扩展的 HTML 页面，但"宿主当前是什么主题、什么语言"此前分成两条链路：
- * - App 卡片/overlay：`{ source:'obox-app', action:'obox-theme', themeId, tokens }`（25 个生效值）；
+ * - App 卡片/overlay：`{ source:'obox-app', action:'obox-theme', themeId, tokens }`（全部主题 token 的生效值）；
  * - 系统 nav 页：`{ type:'obox-theme', tokens }`（只推主题**声明**值，且页面还多拼了一层 `--`）。
  *
  * 结果是同一份状态要写两套监听，且"主题到了、语言没到"成为合法中间态。本模块把状态收成**一条**
- * `obox:context` 消息：主题（`themeId` + `colorScheme` + 25 个生效 token）与语言（`locale` +
+ * `obox:context` 消息：主题（`themeId` + `colorScheme` + 全部主题 token 的生效值）与语言（`locale` +
  * 该扩展自己的词条）一起下发，页面只需处理一份快照。
  *
  * ## 边界
  *
  * - 本文件只做「形状 / 校验 / 规范化」，不碰 DOM、不碰消息通道、不读主题或语言存储——
  *   组装在渲染进程（`src/renderer/src/core/pageContext.ts`），落地在页面运行时（`src/page-runtime/`）。
- * - **不校验 token 数量**：25 个是宿主组装侧的契约（`HOST_THEME_TOKEN_NAMES`），
+ * - **不校验 token 数量**：数量是宿主组装侧的契约（`HOST_THEME_TOKEN_NAMES`），
  *   这里只保证"名字合法、值非空"，避免把白名单抄成第三份。
  * - `messages` **只装本扩展自己的词条**：泄漏别人的词条等于跨扩展读数据（组装侧保证）。
  */
@@ -46,7 +46,7 @@ export interface PageContextMessage {
   /** 当前主题 id（空串 = 没有主题扩展） */
   themeId: string
   colorScheme: PageColorScheme
-  /** token 名（`--bg` 形式）→ 生效值；组装侧给的是 25 个 token 的完整快照 */
+  /** token 名（`--bg` 形式）→ 生效值；组装侧给的是 全部主题 token（当前 26 个）的完整快照 */
   tokens: Record<string, string>
   /** 当前界面语言（`zh` / `en`） */
   locale: string

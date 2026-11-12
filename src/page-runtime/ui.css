@@ -379,12 +379,12 @@
 .obox-btn--primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: var(--fg-bright);
+  color: var(--fg-on-accent);
 }
 
 .obox-btn--primary:hover {
   background: var(--accent);
-  color: var(--fg-bright);
+  color: var(--fg-on-accent);
   filter: brightness(1.1);
 }
 
@@ -395,8 +395,9 @@
 }
 
 .obox-btn--danger:hover {
-  background: var(--fg-error);
-  color: var(--bg);
+  /* 不用实心红：深色主题的 --fg-error 是偏浅的红，白字对比度只有 2.1:1（见 change on-accent-color-token） */
+  background: color-mix(in srgb, var(--fg-error) 18%, transparent);
+  color: var(--fg-error);
 }
 
 .obox-btn--ghost {
@@ -481,7 +482,7 @@
 
 .obox-btn--primary[aria-disabled='true']:hover {
   background: var(--accent);
-  color: var(--fg-bright);
+  color: var(--fg-on-accent);
 }
 
 .obox-btn[data-loading='true'] {
@@ -1009,7 +1010,7 @@
   padding: 0 4px;
   border-radius: var(--obox-radius-pill);
   background: var(--fg-error);
-  color: var(--fg-bright);
+  color: var(--fg-on-accent);
   font-size: 10px;
   line-height: 1;
 }
@@ -1772,7 +1773,7 @@
 .obox-pagination__item[aria-current='page'] {
   border-color: var(--accent);
   background: var(--accent);
-  color: var(--fg-bright);
+  color: var(--fg-on-accent);
 }
 
 .obox-pagination__item[aria-disabled='true'] {
@@ -1826,7 +1827,7 @@
 .obox-steps__step[aria-current='step']::before {
   border-color: var(--accent);
   background: var(--accent);
-  color: var(--fg-bright);
+  color: var(--fg-on-accent);
 }
 
 .obox-tree {

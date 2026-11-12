@@ -3,7 +3,7 @@
  *
  * ## 为什么需要它
  *
- * 宿主把 25 个主题 token 注入在**主窗口**的 `document.documentElement` 上。可 overlay（浮层）是
+ * 宿主把 全部主题 token 注入在**主窗口**的 `document.documentElement` 上。可 overlay（浮层）是
  * 主进程 `new BrowserWindow()` 加载的**独立文档**（`app://extensions/<id>/dist/index.html`）：
  * CSS 自定义属性**不跨文档继承**，App 子窗口/iframe 那条 `obox-theme` postMessage 也送不到它。
  * 于是浮层页里所有 `var(--bg-panel)` 都解析为空 ⇒ 面板背景/边框/文字全透明。

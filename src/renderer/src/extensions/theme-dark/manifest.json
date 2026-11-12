@@ -38,6 +38,7 @@
           "--fg-warning": "#cca700",
           "--fg-success": "#4ec9b0",
           "--accent": "#007acc",
+          "--fg-on-accent": "#ffffff",
           "--hover-bg": "rgba(255, 255, 255, 0.1)",
           "--selection-bg": "#094771",
           "--nav-icon": "#858585",

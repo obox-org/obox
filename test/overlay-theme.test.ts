@@ -10,7 +10,7 @@ import {
  * overlay 浮层的主题 token 下发（2.0.1）。
  *
  * 背景：宠物面板在 2.0.0 上"透明"——浮层是主进程 new BrowserWindow 加载的独立文档，
- * CSS 自定义属性不跨文档继承，而宿主只把 25 个 token 注入在主窗口的 documentElement 上。
+ * CSS 自定义属性不跨文档继承，而宿主只把 全部主题 token（当前 26 个） 注入在主窗口的 documentElement 上。
  * 修法是：渲染侧上报"当前生效 token" → 主进程缓存并广播 → preload 写到 documentElement。
  *
  * 本文件只测**纯逻辑**（载荷校验 + 应用），进程链路由 `overlay-theme-wiring` 的源码门禁覆盖。

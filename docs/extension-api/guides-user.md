@@ -163,7 +163,7 @@ export default function myHello(api) {
 - **内容一律用 `url`，不要用 `html` 内联 `<script>`**：`html` 走 iframe `srcdoc`，而 srcdoc 继承主文档 CSP `script-src 'self' app:`（`src/renderer/index.html:9-10`），内联脚本**必被拦**（按钮点了没反应）。静态页里写**外部脚本** `<script src="./page.js"></script>`：`app://` 文档由协议直出、没有 CSP 头（`main/protocol.ts:33-82`），脚本正常执行。
 - `iconUrl`（可选）：**只接受 `app://extensions/…`**，主进程据此转磁盘路径设任务栏图标（`main/appWindow.ts:34-44,83-86`）；其它协议/主机名（含调试态的 `app://debug/…`）会被忽略，回退应用默认图标。
 - iframe sandbox 为 `allow-scripts allow-same-origin allow-forms allow-popups`（`AppWindow.vue:291-300`）：**没有 `allow-modals` → 页内 `alert` / `confirm` / `prompt` 全部无效**，交互一律自绘 UI。
-- 主题与语言：`srcdoc` 由宿主**自动注入**主题；**`url` 静态页用页面运行时一行接入**（`import { startPageContext } from 'app://obox/page.js'`），实时收 `obox:context`（25 个生效 token + `colorScheme` + `locale` + 本扩展词条），协议见 [themes-settings.md](themes-settings.md)。仍**建议保留一份兜底**（老宿主 / 推送未达时不空白），但兜底值应集中在**一处**常量而不是散在 CSS 里。另：`url` 型卡片切主题**不重渲染**（变量更新，页内表单内容不丢），`html`/`srcdoc` 型**仍重渲染**。
+- 主题与语言：`srcdoc` 由宿主**自动注入**主题；**`url` 静态页用页面运行时一行接入**（`import { startPageContext } from 'app://obox/page.js'`），实时收 `obox:context`（全部主题 token 的生效值 + `colorScheme` + `locale` + 本扩展词条），协议见 [themes-settings.md](themes-settings.md)。仍**建议保留一份兜底**（老宿主 / 推送未达时不空白），但兜底值应集中在**一处**常量而不是散在 CSS 里。另：`url` 型卡片切主题**不重渲染**（变量更新，页内表单内容不丢），`html`/`srcdoc` 型**仍重渲染**。
 - 数据持久化用该页面自己的 `localStorage`（按 `app://` 源隔离，跨窗口/重启保留）。
 - **页面外观直接用宿主组件库**：`app://obox/ui.css` 提供按钮/输入/卡片/表格/标签/弹窗外观等（纯 CSS，无 JS），
   页面只写 class 即可与 obox 一致，且切主题自动跟随。清单、class 与状态约定见
