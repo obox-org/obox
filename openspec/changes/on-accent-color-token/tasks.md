@@ -32,8 +32,8 @@
 - [x] 4.1 门槛全绿：`npm run typecheck` + `npm run lint`（0 error）+ `npm test`
 - [x] 4.2 真机回归：深色与浅色主题分别截 `扩展管理`（主按钮「安装扩展…」）、`应用`、`设置-通用`；
       浅色下主按钮为白字，深色下不出现红底黑字；截图贴进 PR
-- [ ] 4.3 从 master 拉 `fix/on-accent-color-token` 分支，中文 commit message，推送并开 PR，CI `check` 绿后 squash 合并并删分支
-- [ ] 4.4 合并后复核 `npm run security:audit --registry=https://registry.npmjs.org` = 0 与 Dependabot = 0
+- [x] 4.3 从 master 拉 `fix/on-accent-color-token` 分支，中文 commit message，推送并开 PR，CI `check` 绿后 squash 合并并删分支
+- [x] 4.4 合并后复核 `npm run security:audit --registry=https://registry.npmjs.org` = 0 与 Dependabot = 0
 
 ## Workflow follow-up
 
