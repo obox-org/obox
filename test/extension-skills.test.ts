@@ -35,9 +35,21 @@ const STAGES_NEEDING_API = ['proposal', 'design', 'validation', 'dev']
 /** 必须出现三档结论的阶段（ADR-0023 决策 8） */
 const STAGES_WITH_GRADES = ['validation', 'check']
 
-const skillDir = (stage: string): string => join(repoRoot, 'skills', `obox-ext-${stage}`)
+const skillDir = (stage: string): string =>
+  join(repoRoot, 'skills', 'obox-ext', `obox-ext-${stage}`)
 const skillFile = (stage: string): string => join(skillDir(stage), 'SKILL.md')
 const readSkill = (stage: string): string => readFileSync(skillFile(stage), 'utf8')
+
+/** 技能集合的唯一入口（change `restructure-obox-ext-skill-collection`）：`skills/obox-ext/SKILL.md` */
+const ENTRY_FILE = join(repoRoot, 'skills', 'obox-ext', 'SKILL.md')
+const readEntry = (): string => readFileSync(ENTRY_FILE, 'utf8')
+const SKILL_NAMES = CHAIN.map((stage) => `obox-ext-${stage}`)
+
+/** 需要一起校验的文档：入口 + 九个阶段（"旧流程不得复活"与"路径必须存在"两条门禁共用） */
+const skillDocs = (): Array<{ label: string; text: string }> => [
+  { label: 'obox-ext（入口）', text: readEntry() },
+  ...CHAIN.map((stage) => ({ label: `obox-ext-${stage}`, text: readSkill(stage) }))
+]
 
 /** 拆出 frontmatter 的 name/description 与正文 */
 function parseFrontmatter(text: string): { name: string; description: string; body: string } {
@@ -80,6 +92,41 @@ describe('九步链：文件与顺序', () => {
       chars: [...readSkill(stage)].length
     })).filter((entry) => entry.chars > 8000)
     expect(tooLong).toEqual([])
+  })
+
+  it('入口 SKILL.md 同样受 8000 字符预算约束（入口只写索引与调度，不搬阶段正文）', () => {
+    expect([...readEntry()].length).toBeLessThanOrEqual(8000)
+  })
+})
+
+describe('技能集合：唯一入口', () => {
+  it('入口存在，frontmatter 的 name 为 obox-ext', () => {
+    expect(existsSync(ENTRY_FILE)).toBe(true)
+    const { name, description } = parseFrontmatter(readEntry())
+    expect(name).toBe('obox-ext')
+    expect(description.length).toBeGreaterThan(20)
+    expect(description.length).toBeLessThan(400)
+  })
+
+  it('入口按 CHAIN 顺序列出九个阶段（索引表与链一致，不能漏、不能乱序）', () => {
+    const entry = readEntry()
+    const firstIndex = SKILL_NAMES.map((name) => ({ name, at: entry.indexOf(name) }))
+    expect(
+      firstIndex.filter((item) => item.at < 0).map((item) => item.name),
+      '入口里缺少这些阶段'
+    ).toEqual([])
+    const ordered = [...firstIndex].sort((a, b) => a.at - b.at).map((item) => item.name)
+    expect(ordered).toEqual(SKILL_NAMES)
+  })
+
+  it('入口给每个阶段都写了可读的路径（调度靠读文件，不靠 Skill 工具）', () => {
+    const entry = readEntry()
+    const missing = CHAIN.filter(
+      (stage) => !entry.includes(`skills/obox-ext/obox-ext-${stage}/SKILL.md`)
+    )
+    expect(missing.map((stage) => `obox-ext-${stage}`)).toEqual([])
+    // 入口自身不复制门禁四选项：措辞只在各阶段文件里维护一份
+    expect(entry).not.toContain('部分修改后重跑本步')
   })
 })
 
@@ -195,17 +242,18 @@ describe('九步链：被取代的旧流程不得复活', () => {
       'tmp/adr'
     ]
     const problems: string[] = []
-    for (const stage of CHAIN) {
-      const text = readSkill(stage)
+    for (const { label, text } of skillDocs()) {
       for (const phrase of forbidden) {
-        if (text.includes(phrase)) problems.push(`obox-ext-${stage}：出现被取代的「${phrase}」`)
+        if (text.includes(phrase)) problems.push(`${label}：出现被取代的「${phrase}」`)
       }
-      if (/\bM[1-8]\b/.test(text)) problems.push(`obox-ext-${stage}：出现旧的 M1–M8 流程字样`)
+      if (/\bM[1-8]\b/.test(text)) problems.push(`${label}：出现旧的 M1–M8 流程字样`)
     }
     expect(problems).toEqual([])
   })
 
-  it('流程不设入口：AGENTS.md 与 README.md 都不得出现九步链总览的指针（ADR-0023 决策 11）', () => {
+  it('流程不设"总览指针"：AGENTS.md 与 README.md 都不得出现 docs/extension-workflow.md（ADR-0023 决策 11）', () => {
+    // 修订（2026-11-12，change `restructure-obox-ext-skill-collection`）：入口技能本身是合法的一行指针
+    // （`skills/obox-ext/SKILL.md`），但"不把流程正文塞进 AGENTS/README"这条原意不变 —— 断言只留否定式。
     const agents = readFileSync(join(repoRoot, 'AGENTS.md'), 'utf8')
     const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8')
     expect(agents).not.toContain('docs/extension-workflow.md')
@@ -221,8 +269,7 @@ describe('九步链：引用的仓库内路径必须真实存在', () => {
     const prefixes = ['skills/', 'docs/']
     const repoLevelScripts = ['scripts/validate-manifest.mjs']
     const problems: string[] = []
-    for (const stage of CHAIN) {
-      const text = readSkill(stage)
+    for (const { label, text } of skillDocs()) {
       const matches = text.matchAll(/`([A-Za-z0-9_./-]+)`/g)
       for (const [, raw] of matches) {
         if (!prefixes.some((prefix) => raw.startsWith(prefix)) && !repoLevelScripts.includes(raw)) {
@@ -230,9 +277,9 @@ describe('九步链：引用的仓库内路径必须真实存在', () => {
         }
         if (raw.includes('obox-ext-*')) continue // 通配写法，不是具体路径
         const abs = join(repoRoot, raw)
-        if (!existsSync(abs)) problems.push(`obox-ext-${stage}: \`${raw}\` 不存在`)
+        if (!existsSync(abs)) problems.push(`${label}: \`${raw}\` 不存在`)
         else if (raw.endsWith('/') && !statSync(abs).isDirectory()) {
-          problems.push(`obox-ext-${stage}: \`${raw}\` 不是目录`)
+          problems.push(`${label}: \`${raw}\` 不是目录`)
         }
       }
     }

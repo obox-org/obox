@@ -1,8 +1,8 @@
 # obox 扩展开发：九步链总览
 
-> **本文是九个技能的公共总览与唯一共用约定来源**，被 `skills/obox-ext-{init,grill,proposal,design,validation,task,dev,check,ship}/SKILL.md` 共同引用。设计依据见 [ADR-0023](../adr/0023-extension-dev-openspec-workflow.md)（与 [ADR-0020 修订段](../adr/0020-extension-dev-skill-workflow.md)）。
+> **本文是九个阶段技能的公共总览与唯一共用约定来源**，被 `skills/obox-ext/SKILL.md`（入口）与 `skills/obox-ext/obox-ext-{init,grill,proposal,design,validation,task,dev,check,ship}/SKILL.md` 共同引用。设计依据见 [ADR-0023](../adr/0023-extension-dev-openspec-workflow.md)（与 [ADR-0020 修订段](../adr/0020-extension-dev-skill-workflow.md)）。
 >
-> **入口**：本流程**不在 `AGENTS.md` 或 `README.md` 设指针**，由使用者点名触发（例如"按 `obox-ext-init` 走扩展开发流程"）。九个技能不注册为 DSH skill。
+> **入口**：整个流程只有**一个入口** `skills/obox-ext/SKILL.md`（技能集合 `skills/obox-ext/`）。本仓库 `skills/` 不在 DSH 扫描路径内，因此按**路径手动触发**："读 `skills/obox-ext/SKILL.md`，从第 N 步开始"。入口负责判断当前阶段并调度九个阶段文件；九个阶段**不再**各自注册为 DSH 技能。
 
 ## 一、九步链
 
@@ -147,18 +147,22 @@ extensions/<扩展英文名>/
 - 事实自己查（读代码、跑命令、派子代理），**不要把可查的事实当问题问用户**。
 - 文档只写代码的实际行为；未实机验证的必须显式标注"未实机验证"。
 
-## 十一、把九个技能装进 DSH（可选；本机已装）
+## 十一、DSH 注册（可选；本机当前**未**注册）
 
-九个技能**不在** `AGENTS.md` / `README.md` 留指针（§一入口决策），但可以装成 DSH 技能以便直接点名触发。推荐用 **junction**（Windows 目录联接，**不需要管理员权限**）指向仓库 —— **单一真源、不产生第二份副本**：
+技能集合在 `skills/obox-ext/`，**嵌套布局**：入口是 `skills/obox-ext/SKILL.md`，九个阶段是它的子目录。
+DSH 的技能发现只有**一层**（`<根>/<名字>/SKILL.md`），因此：
+
+- `skills/obox-ext/obox-ext-<stage>/SKILL.md`（三段）**不会**被发现 —— 这是有意的：九个阶段由入口读文件调度，不需要各自成为技能；
+- 想把**入口**注册成 DSH 技能（这样能 `/obox-ext` 直接点名），用 **junction**（Windows 目录联接，**不需要管理员权限**，单一真源）：
 
 ```powershell
-# 在仓库根执行
-foreach ($d in Get-ChildItem skills -Directory) {
-  cmd /c mklink /J "$env:USERPROFILE\.dsh\skills\$($d.Name)" "$($d.FullName)"
-}
+# 在仓库根执行（只链接入口这一个目录）
+cmd /c mklink /J "$env:USERPROFILE\.dsh\skills\obox-ext" "$(Resolve-Path skills\obox-ext)"
 ```
 
 - DSH 扫描 `~/.dsh/skills`、`~/.agents/skills`、`<repo>/.dsh/skills`、`<repo>/.agents/skills`；装到 `~/.dsh/skills` 即与 `rb-*` 家族同层。
 - 装了 junction 后，**仓库里改技能内容立即生效**（无需重装）。
+- **不想注册时**：按路径手动触发即可（`读 skills/obox-ext/SKILL.md …`），与本文 §一入口说明一致。
 - **禁用某个技能**：把它的目录**移出**扫描路径（例：移到 `~/.dsh/skills-disabled/`），比加后缀改名更可靠。
 - 与本仓库扩展模型不符的 `obox-extension-dev`（WASM/wasip1 模型）已移到 `~/.dsh/skills-disabled/`，避免模型在两套扩展模型间选错。
+- 历史：2026-11-12 之前九个阶段各自是 `skills/obox-ext-<stage>/` 并被逐个 junction 注册；改为集合 + 入口后那九个链接已删除（恢复方式见 change `restructure-obox-ext-skill-collection` 的 tasks）。

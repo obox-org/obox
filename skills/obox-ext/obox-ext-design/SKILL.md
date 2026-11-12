@@ -62,7 +62,7 @@ description: obox 扩展开发九步链的**第 4 步**：把 spec delta 落成 
 
 `ask_user_question` 问「本步产出是否符合要求？」，选项恒为：
 
-1. **通过，自动进入 `obox-ext-validation`（推荐）** —— 下一步对 spec delta + `design.md` 做质量检查并出三档结论（`notes/validation.md`）；选它时**读 `skills/obox-ext-validation/SKILL.md` 并照做**。
+1. **通过，自动进入 `obox-ext-validation`（推荐）** —— 下一步对 spec delta + `design.md` 做质量检查并出三档结论（`notes/validation.md`）；选它时**读 `skills/obox-ext/obox-ext-validation/SKILL.md` 并照做**。
 2. **部分修改后重跑本步** —— 用户说明要改哪节（风格、交互逻辑、错误处理）。
 3. **回到上一步 `obox-ext-proposal`** —— 设计中发现 requirement 本身要改时回退。
 4. **暂停** —— 用户先人工检查。

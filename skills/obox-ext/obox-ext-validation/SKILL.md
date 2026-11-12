@@ -89,12 +89,12 @@ design 引用的每个 API 方法、贡献点字段、主题 token，到 `docs/e
 
 用 `ask_user_question` 问「本步产出是否符合要求？」：
 
-1. **通过，自动进入 `obox-ext-task`（推荐）** —— 下一步读 `skills/obox-ext-task/SKILL.md` 并照做，把 spec delta + `design.md` 拆成 `notes/tasks/<nn>-<slug>.md` 任务卡与 `tasks.md`。
+1. **通过，自动进入 `obox-ext-task`（推荐）** —— 下一步读 `skills/obox-ext/obox-ext-task/SKILL.md` 并照做，把 spec delta + `design.md` 拆成 `notes/tasks/<nn>-<slug>.md` 任务卡与 `tasks.md`。
 2. **部分修改后重跑本步** —— 用户说明要改什么。
 3. **回到上一步 `obox-ext-design`** —— 回退并重做设计文档。
 4. **暂停** —— 用户先人工检查。
 
-被选 1 时**读取 `skills/obox-ext-task/SKILL.md` 并照做**，不依赖 Skill 工具。
+被选 1 时**读取 `skills/obox-ext/obox-ext-task/SKILL.md` 并照做**，不依赖 Skill 工具。
 
 ## 完成判据
 

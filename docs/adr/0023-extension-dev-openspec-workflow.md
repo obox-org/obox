@@ -64,3 +64,22 @@
 决策 11 的"不注册为 DSH skill"（以及 ADR-0020 决策 2 的同一句）**已被用户后续决定取代**：九个技能以 **junction**（`cmd /c mklink /J`）从 `~/.dsh/skills/obox-ext-*` 指向仓库 `skills/obox-ext-*` —— 单一真源、不产生第二份副本；同时把与当前扩展模型不符的 `obox-extension-dev`（WASM/wasip1 模型）移出扫描路径到 `~/.dsh/skills-disabled/`（可逆），避免模型选错。ADR-0020 决策 2 记录的两条顾虑在此不成立：**8192 字符工具结果裁剪**（九份 `SKILL.md` 实测 2736–7769 字符）与**符号链接权限**（目录 junction 不需要管理员权限）。
 
 **"不设入口"仍然成立**：`AGENTS.md` 与 `README.md` 都不放指针，安装只是让它们可被点名触发。安装命令与恢复方式写在 `docs/extension-workflow.md` 第十一节。
+
+### 修订（2026-11-12）：收敛为「技能集合 + 唯一入口」
+
+决策 1 的"九个平级技能"与上文两段修订（尤其是"不设入口仍然成立"）**已被本次用户决定取代**：
+
+- **布局**：九个阶段由 `skills/obox-ext-<stage>/` 收进 `skills/obox-ext/obox-ext-<stage>/`（`git mv`，历史连续），
+  含 `obox-ext-init/scripts/` 三个脚手架文件。
+- **入口**：新增 `skills/obox-ext/SKILL.md`（`name: obox-ext`）——只写"九步索引 + 阶段判断 + 调度与交接规则"，
+  不复制门禁四选项措辞、不复制公共总览；每个阶段仍是可独立照做的操作手册。
+- **触发方式**：仓库 `skills/` 不在 DSH 扫描路径内，**按路径手动触发**（"读 `skills/obox-ext/SKILL.md`，从第 N 步开始"）。
+  用户明确**不要求** DSH 能识别这些技能。
+- **九个 junction 已删除**：`~/.dsh/skills/obox-ext-*` 在移动后指向不存在的路径，一并移除；
+  若将来希望 `/obox-ext` 直接点名，只需把**入口**一个目录 junction 到 `~/.dsh/skills`（命令见 `docs/extension-workflow.md` §十一）。
+- **门禁同步**：`test/extension-skills.test.ts` 的基准路径改为新布局，并新增三条入口一致性断言
+  （入口存在且 `name: obox-ext`、按链序列出九步、每个阶段都有可读路径）；"不设总览指针"的断言保留否定式
+  （`AGENTS.md` / `README.md` 仍不得出现 `docs/extension-workflow.md` 总览指针，但入口路径 `skills/obox-ext/SKILL.md` 是合法的一行指针）。
+- **正文中的旧路径属历史快照**：本 ADR 上文的 `skills/obox-ext-<stage>/` 记录的是当时的决策，不再逐一改写。
+
+依据：OpenSpec change `restructure-obox-ext-skill-collection`（`skip_specs: true`）。

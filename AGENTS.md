@@ -19,7 +19,7 @@
 
 ## Agent skills
 
-**扩展文档同步（强制）**：修改/新增扩展 API（`src/api/`）、贡献点 schema 或 manifest 校验规则（`core/manifest.ts`）、主进程能力/IPC（`src/main/*`）、宿主生命周期（`core/host.ts`），或改动 `scripts/validate-manifest.mjs` 的校验规则时，**必须同步** `docs/extension-api/`（`api-reference.md` / `manifest-reference.md` / `themes-settings.md` / `troubleshooting.md`）与受影响的 `skills/obox-ext-*`；改 `scripts/validate-manifest.mjs` 规则时须同步 `test/manifest-script-parity.test.ts` 的差分门禁。
+**扩展文档同步（强制）**：修改/新增扩展 API（`src/api/`）、贡献点 schema 或 manifest 校验规则（`core/manifest.ts`）、主进程能力/IPC（`src/main/*`）、宿主生命周期（`core/host.ts`），或改动 `scripts/validate-manifest.mjs` 的校验规则时，**必须同步** `docs/extension-api/`（`api-reference.md` / `manifest-reference.md` / `themes-settings.md` / `troubleshooting.md`）与受影响的 `skills/obox-ext/**`；改 `scripts/validate-manifest.mjs` 规则时须同步 `test/manifest-script-parity.test.ts` 的差分门禁。
 
 ## README 更新要求（强制）
 

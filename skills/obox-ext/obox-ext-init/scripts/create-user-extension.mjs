@@ -3,7 +3,7 @@
  * create-user-extension — Obox **用户扩展**脚手架（纯 ESM JavaScript + `.oix` 打包）。
  *
  * 用法：
- *   node skills/obox-ext-init/scripts/create-user-extension.mjs <id> [选项]
+ *   node skills/obox-ext/obox-ext-init/scripts/create-user-extension.mjs <id> [选项]
  *
  * 选项：
  *   --title "显示名"   扩展显示名（默认 = id）
@@ -32,8 +32,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
-/** 仓库根：skills/obox-ext-init/scripts → 上三级 */
-const REPO_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
+/** 仓库根：skills/obox-ext/obox-ext-init/scripts → 上四级 */
+const REPO_ROOT = resolve(SCRIPT_DIR, '..', '..', '..', '..')
 
 /**
  * 脚手架自己的 id 校验：与宿主 `src/renderer/src/core/manifest.ts:11` 的 `NAME_RE`
@@ -47,7 +47,7 @@ const ID_RE = /^[a-z0-9][a-z0-9._-]*$/
 
 const HELP = [
   '用法:',
-  '  node skills/obox-ext-init/scripts/create-user-extension.mjs <id> [--title "显示名"]',
+  '  node skills/obox-ext/obox-ext-init/scripts/create-user-extension.mjs <id> [--title "显示名"]',
   '       [--author "作者"] [--desc "简介"] [--dir <父目录>] [--vue]',
   '',
   '说明: 生成 <父目录>/<id>/（默认 <仓库根>/extensions/<id>/）—— 纯 ESM 用户扩展 + .oix 打包脚本。',

@@ -1,6 +1,6 @@
 # Scripts（obox-ext-init）
 
-`skills/obox-ext-init/scripts/` 下的**扩展工程脚手架**脚本，由 `obox-ext-init`（九步链第 1 步）在新建模式下调用。两个脚本分工固定：
+`skills/obox-ext/obox-ext-init/scripts/` 下的**扩展工程脚手架**脚本，由 `obox-ext-init`（九步链第 1 步）在新建模式下调用。两个脚本分工固定：
 
 | 脚本                        | 路线                                    | 生成位置                                          | 生成物                                            |
 | --------------------------- | --------------------------------------- | ------------------------------------------------- | ------------------------------------------------- |
@@ -13,12 +13,12 @@
 - **不 import `src/` 下的任何模块**（Node 原生跑 `.mjs` 解析不了 `src/` 内部的无扩展名 import —— 同 `scripts/make-tray-icon.mts` 头部记录的坑）；
 - `skills/**` 被 `eslint.config.mjs:8` 忽略，所以脚本没有 lint/typecheck 门禁 → **校验规则靠差分门禁防漂移**；
 - 两个脚本的 `ID_RE` 必须与宿主 `NAME_RE`（`src/renderer/src/core/manifest.ts:11`）及 `scripts/validate-manifest.mjs:39` **逐字一致**：`^[a-z0-9][a-z0-9._-]*$`，**不带 `i`**。否则脚本会 exit 0 地生成宿主判「清单无效」的 manifest，门禁形同虚设（issue #77；两个脚本此前带 `i`，现已同步为快速失败）；
-- 仓库根 = `skills/obox-ext-init/scripts` 的**上三级**（`..\..\..`）；脚本移动位置时必须同步这个常量。
+- 仓库根 = `skills/obox-ext/obox-ext-init/scripts` 的**上四级**（`..\..\..\..`）；脚本移动位置时必须同步这个常量。
 
 ## create-extension.mjs — 内置扩展脚手架
 
 ```bash
-node skills/obox-ext-init/scripts/create-extension.mjs my-hello \
+node skills/obox-ext/obox-ext-init/scripts/create-extension.mjs my-hello \
   --title "你好" \
   --desc "示例扩展"
 ```
@@ -37,7 +37,7 @@ node skills/obox-ext-init/scripts/create-extension.mjs my-hello \
 ## create-user-extension.mjs — 用户扩展脚手架
 
 ```bash
-node skills/obox-ext-init/scripts/create-user-extension.mjs my-ext \
+node skills/obox-ext/obox-ext-init/scripts/create-user-extension.mjs my-ext \
   --title "我的扩展" --author "me" --desc "示例" \
   [--dir <父目录>] [--vue]
 ```
@@ -55,7 +55,7 @@ node skills/obox-ext-init/scripts/create-user-extension.mjs my-ext \
 
 `--dir` 由脚本里的 `resolve(dirArg)` 解析 ⇒ **相对进程的当前工作目录（CWD）**，与 `npm` / `git` 的路径参数语义一致；绝对路径原样使用。两种情形要分清：
 
-- **省略 `--dir`**：默认父目录是 `<仓库根>/extensions/`，其中仓库根由**脚本自身位置**推导（`skills/obox-ext-init/scripts` 上三级）——**与 CWD 无关**，任何目录下执行都落在同一个 `<仓库根>/extensions/`。
+- **省略 `--dir`**：默认父目录是 `<仓库根>/extensions/`，其中仓库根由**脚本自身位置**推导（`skills/obox-ext/obox-ext-init/scripts` 上四级）——**与 CWD 无关**，任何目录下执行都落在同一个 `<仓库根>/extensions/`。
 - **给了 `--dir`**：`--dir foo` = `<CWD>/foo`；从仓库根执行 `--dir extensions/ext-demo/_probe` 就是 `<仓库根>/extensions/ext-demo/_probe`。用户扩展通常是独立仓库/目录，需要落到别处时给绝对路径最稳。
 
 保留 CWD 基准（而不是改成相对仓库根）的理由：① 与 Node `path.resolve` 及所有主流 CLI 的既有语义一致，最不意外；② `--dir ..\my-ext-repo` 这类"指向 obox 仓库之外"的用法在 CWD 基准下才成立，改成仓库根基准反而会把路径困在仓库内；③ 默认值本来就不走 CWD（由脚本位置推导），两条语义已在上面分别写明，无需再改实现。
@@ -96,15 +96,15 @@ node skills/obox-ext-init/scripts/create-user-extension.mjs my-ext \
 
 ```bash
 # 形态 1–3（都不带 --vue；App 卡片走脚手架自带的 page.html + page.js 静态页）
-node skills/obox-ext-init/scripts/create-user-extension.mjs <id> \
+node skills/obox-ext/obox-ext-init/scripts/create-user-extension.mjs <id> \
   --title "<中文名>" --author "<作者>" --desc "<简要功能>"
 
 # 形态 4：要 Vue 子应用（构建期依赖，需 npm install；产物进 dist/）
-node skills/obox-ext-init/scripts/create-user-extension.mjs <id> \
+node skills/obox-ext/obox-ext-init/scripts/create-user-extension.mjs <id> \
   --title "<中文名>" --author "<作者>" --desc "<简要功能>" --vue
 
 # 形态 5：内置扩展（仅当用户明确要随应用打包）
-node skills/obox-ext-init/scripts/create-extension.mjs <id> --title "<中文名>" --desc "<简要功能>"
+node skills/obox-ext/obox-ext-init/scripts/create-extension.mjs <id> --title "<中文名>" --desc "<简要功能>"
 ```
 
 4. 生成后在 `<扩展目录>` 里 `git init`（**不建远端**）、建 `openspec/`（`config.yaml` + `specs/` + `changes/archive/`）与 `docs/spec/UID-{YYYYMMDDHHmmss}-{≤10字中文描述}/index.md`。
