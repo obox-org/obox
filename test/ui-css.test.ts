@@ -13,6 +13,29 @@ const cssPath = fileURLToPath(new URL('../src/page-runtime/ui.css', import.meta.
 const css = readFileSync(cssPath, 'utf8')
 const cssNoComments = css.replace(/\/\*[\s\S]*?\*\//g, '')
 
+/** `src/renderer/src/assets/main.css` 的 `:root` 块（主题 token 的默认值来源） */
+function cssOfMainRoot(): string {
+  const main = readFileSync(
+    fileURLToPath(new URL('../src/renderer/src/assets/main.css', import.meta.url)),
+    'utf8'
+  )
+  const start = main.indexOf(':root')
+  return main.slice(start, main.indexOf('}', start))
+}
+
+/** 主题扩展声明的 token 表 */
+function themeTokens(theme: string): Record<string, string> {
+  const manifest = JSON.parse(
+    readFileSync(
+      fileURLToPath(
+        new URL(`../src/renderer/src/extensions/${theme}/manifest.json`, import.meta.url)
+      ),
+      'utf8'
+    )
+  ) as { contributes: { themes: Array<{ tokens: Record<string, string> }> } }
+  return manifest.contributes.themes[0].tokens
+}
+
 /** 取出所有选择器（`{` 之前那段），跳过 at-rule（`@media` 等）内部的嵌套 */
 function selectors(source: string): string[] {
   const out: string[] = []
@@ -250,6 +273,44 @@ describe('ui.css · 卡片尺寸与内部节奏（change enlarge-card-components
     expect(cssNoComments).toMatch(
       /\.obox-card > \.obox-text \+ \.obox-card__footer \{[^}]*margin-top:\s*var\(--obox-space-4\)/
     )
+  })
+})
+
+describe('ui.css · 实心底色上的前景（change on-accent-color-token）', () => {
+  it('实心填充规则里的 color 必须是 --fg-on-accent', () => {
+    // 为什么：--fg-bright / --bg 会随主题翻转（浅色主题下 --fg-bright 是近黑），
+    // 拿来当"实心底上的白字"就会出现黑字蓝底（用户报的那个 bug）。
+    const solid = /background:\s*var\(--(?:accent|fg-error|fg-success|fg-warning)\)\s*;/
+    const colorDecl = /(?:^|[;\s])color:\s*([^;]+);/
+    const offenders: string[] = []
+    for (const block of cssNoComments.split('}')) {
+      if (!solid.test(block)) continue
+      const brace = block.lastIndexOf('{')
+      if (brace < 0) continue
+      const selector = block
+        .slice(0, brace)
+        .split('\n')
+        .filter((line) => line.trim())
+        .pop()
+        ?.trim()
+      const hit = colorDecl.exec(block.slice(brace + 1))
+      if (!hit) continue // 纯色块（进度条填充、圆点）没有文字，不在此断言范围
+      const value = hit[1].trim()
+      if (value !== 'var(--fg-on-accent)') offenders.push(`${selector} → color: ${value}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('新 token 同时存在于 main.css 的 :root 与两套主题（键集合逐个相等）', () => {
+    const root = cssOfMainRoot()
+    expect(root).toContain('--fg-on-accent')
+    for (const theme of ['theme-dark', 'theme-light']) {
+      const tokens = themeTokens(theme)
+      expect(Object.keys(tokens).sort(), `${theme} 与 main.css 的键集合不一致`).toEqual(
+        [...root.matchAll(/^\s*(--[a-z0-9-]+):/gm)].map((m) => m[1]).sort()
+      )
+      expect(tokens['--fg-on-accent'], `${theme} 缺 --fg-on-accent`).toBeTruthy()
+    }
   })
 })
 

@@ -14,6 +14,9 @@
   --fg-warning: #cca700;
   --fg-success: #4ec9b0;
   --accent: #007acc;
+  /* 填充色（--accent / 实心标签 / 进度条…）之上的前景色：**不随明暗翻转**，
+     两套主题同值。`--fg-bright` 在浅色主题下是近黑色，不能拿来当"实心底上的白字"（change on-accent-color-token）。 */
+  --fg-on-accent: #ffffff;
   --hover-bg: rgba(255, 255, 255, 0.1);
   --selection-bg: #094771;
   --nav-icon: #858585;

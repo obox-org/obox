@@ -36,8 +36,8 @@ function readMainCssTokenNames(): string[] {
 
 describe('appTheme · token 白名单与快照', () => {
   it('HOST_THEME_TOKEN_NAMES 与 main.css 的 :root 逐条一致（集合与顺序）', () => {
+    // 不钉具体数字：数量以 main.css 的 :root 为准（加 token 时不必改断言）
     expect(HOST_THEME_TOKEN_NAMES).toEqual(readMainCssTokenNames())
-    expect(HOST_THEME_TOKEN_NAMES).toHaveLength(25)
   })
 
   it('collectThemeTokens 按白名单逐个取值并跳过空值', () => {

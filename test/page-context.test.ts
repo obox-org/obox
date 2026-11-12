@@ -88,7 +88,7 @@ describe('pageContext · buildPageContext', () => {
     expect(ctx.colorScheme).toBe('dark')
   })
 
-  it('没有主题时 tokens 仍可为空表（组装侧负责给 25 个生效值）', () => {
+  it('没有主题时 tokens 仍可为空表（组装侧负责给 全部主题 token 的生效值）', () => {
     expect(buildPageContext({ tokens: {}, messages: {} }).tokens).toEqual({})
   })
 })

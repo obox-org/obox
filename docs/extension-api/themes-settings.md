@@ -14,7 +14,7 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 | 宿主 → 页面 | `{ type:'obox:context', version:1, themeId, colorScheme, tokens, locale, messages }` | iframe `load` / 主题变化 / 语言变化 / 收到页面请求      |
 | 页面 → 宿主 | `{ type:'obox:context-request' }`                                                    | 页面启动时（建议 0/300/1000 ms 各一次，收到上下文即停） |
 
-- `tokens` 是 **25 个 token 的生效值**（`main.css` 默认值 + 当前主题覆盖，键形如 `--bg`），与宿主主窗口所见一致；
+- `tokens` 是 **全部主题 token（当前 26 个）的生效值**（`main.css` 默认值 + 当前主题覆盖，键形如 `--bg`），与宿主主窗口所见一致；
 - `colorScheme` 是 `'dark' | 'light'`：主题可用 `contributes.themes[].colorScheme` 显式声明，未声明时宿主按主题 id 是否含 `light` 推断；
 - `locale` 是当前界面语言（`zh` / `en`）；`messages` 是**该页面所属扩展自己**的 `contributes.i18n` 词条（当前语言整包，缺 key 回退 zh）；
 - 消息里带 `version: 1`：宿主以后只增字段时页面按 `>=` 判断能否使用某字段。
@@ -50,7 +50,7 @@ Obox 的主题与设置系统：主题由**主题扩展**提供（CSS 变量 tok
 
 宿主在**一个 minor 版本**内继续发旧的 `obox-theme` 消息：
 
-- App `url` 卡片 / overlay：`{ source:'obox-app', action:'obox-theme', themeId, tokens }`（25 个生效值）；
+- App `url` 卡片 / overlay：`{ source:'obox-app', action:'obox-theme', themeId, tokens }`（全部主题 token，当前 26 个）；
 - 系统 nav 页：`{ type:'obox-theme', tokens }`。
 
 它们与新上下文**同时发送，旧消息在前、`obox:context` 在后**。新页面只需处理新协议；老页面零改动继续工作。
@@ -92,6 +92,7 @@ overlay 的 iframe 与 App `url` 卡片**同一条上下文链路**（overlay �
 | `--fg-warning`    | `#cca700`                      | 警告文字                                      |
 | `--fg-success`    | `#4ec9b0`                      | 成功文字                                      |
 | `--accent`        | `#007acc`                      | 强调色（激活项背景/徽标/选中）                |
+| `--fg-on-accent`  | `#ffffff`（**两主题同值**）    | 填充色之上的前景（实心按钮/tag/进度条），**不随明暗翻转** |
 | `--hover-bg`      | `rgba(255, 255, 255, 0.1)`     | 悬停背景                                      |
 | `--selection-bg`  | `#094771`                      | 选中背景（命令面板/提示/App 列表条目）        |
 | `--nav-icon`      | `#858585`                      | 导航栏图标默认色                              |
@@ -104,12 +105,12 @@ overlay 的 iframe 与 App `url` 卡片**同一条上下文链路**（overlay �
 | `--nav-icon-size` | `24px`                         | 导航栏图标尺寸（宿主已用）                    |
 | `--icon-size`     | `24px`                         | 通用图标尺寸——宿主**只声明、无 `var()` 使用** |
 
-**核对结论（当前一致）**：上表 25 个 token 与 `src/renderer/src/assets/main.css:2-29` 的 `:root` 默认值、`src/renderer/src/extensions/theme-dark/manifest.json:13-39` 的 token 取值逐项相同；`theme-light/manifest.json:13-39` 键集合相同、取值不同。三处任一处增删或改名 token，本表必须同步。`--font-size-lg` / `--icon-size` 仅 `:root` 与两个主题声明（`main.css:26,28`），宿主 CSS 中没有任何 `var()` 消费——扩展仍可用 `var(--icon-size)` 取到 24px，但不要当成宿主既有约定。
+**核对结论（当前一致）**：上表 26 个 token 与 `src/renderer/src/assets/main.css:2-29` 的 `:root` 默认值、`src/renderer/src/extensions/theme-dark/manifest.json:13-39` 的 token 取值逐项相同；`theme-light/manifest.json:13-39` 键集合相同、取值不同。三处任一处增删或改名 token，本表必须同步。`--font-size-lg` / `--icon-size` 仅 `:root` 与两个主题声明（`main.css:26,28`），宿主 CSS 中没有任何 `var()` 消费——扩展仍可用 `var(--icon-size)` 取到 24px，但不要当成宿主既有约定。
 
 ### 组件样式库（`app://obox/ui.css`）
 
 宿主还提供一套**预编译组件样式**（按钮/输入/卡片/表格/标签/弹窗外观等），扩展页面直接写 `obox-*` class 即可
-与 obox 一致。它只消费上面这 25 个 token，因此**切主题自动生效**、无需重载样式表；页面运行时
+与 obox 一致。它只消费上面这 26 个 token，因此**切主题自动生效**、无需重载样式表；页面运行时
 `startPageContext()` 默认注入该样式表。组件清单、状态约定与可复制片段见
 [ui-components.md](ui-components.md)。
 
@@ -142,6 +143,7 @@ overlay 的 iframe 与 App `url` 卡片**同一条上下文链路**（overlay �
 }
 ```
 
+- **若你的主题把 `--accent` 调成了很浅的颜色**（例如浅黄、浅蓝），请**一并声明 `--fg-on-accent`**（改成深色），否则主按钮/实心标签上的白字会看不清 —— 该 token 的语义就是"填充色之上的前景"，不随明暗翻转。
 - 只需声明想覆盖的 token；未声明的由 `main.css` 的 `:root` 兜底。**切换主题时会清掉上一主题写入、本次不再声明的键（issue #81）**：`apply()` 记录上一次写入的键集合，对"上次有、这次没有"的键调 `removeProperty`（`src/renderer/src/core/theme.ts:58-77`），因此从"全量主题"切到"部分 token 主题"时，未声明的键会**回落到 `main.css` 的默认值**，不会保留上一个主题的值。（修复前是"只写不清"，旧文档记的残留行为已作废。）
   - 因此下发给 App 子窗口的 token 快照也更干净：快照取自 `getComputedStyle(document.documentElement)` 的**生效值**（`src/renderer/src/core/appTheme.ts` 的 `collectThemeTokens`），现在等于"`main.css` 默认值 + **当前主题**覆盖"，子窗口与主窗口**所见一致**且无上一主题残留
   - 时序边界：首启（没有上一主题）不清任何键；同一主题重复 `apply()` 集合相同、不误删；新主题声明更多键时只写不删
@@ -203,7 +205,7 @@ overlay 的 iframe 与 App `url` 卡片**同一条上下文链路**（overlay �
 - **非数字值**：`'abc'` / `null` / `undefined` / `NaN` / `±Infinity` / 布尔 / 对象一律**按 0 渲染**，并打**一条** `console.warn`（按 `fieldSlot` = `页 id::字段 key` 去重，不随重渲染刷屏，`SettingsView.vue:518-541`）；**绝不抛错**——设置页是宿主内置页面，扩展写坏一个值不能整页白屏。注意"声明了数字 `default` 但设置里还没值"**不算坏值**：那是合法回退，不 warn。
 - **样式只用既有 token（无新增 token、无写死色值）**：槽 = `--bg-input`、填充 = `--accent`、边框 = `--border`、文本字号 = `--font-size-sm`（`SettingsView.vue:1189-1208`，`var()` 的 fallback 就是上文 token 表记录的文档默认值）；文本另沿用 `.config-value`（`--fg-bright` + 等宽字体），标签列沿用 `.config-row label`——不新造布局。
 - **老宿主行为（与 `status` 的"中间版本宿主"问题同款）**：`progress` 是**新增类型**，不认识它的宿主会走**未知类型兜底 ⇒ 渲染成可编辑文本框**（`SettingsView.vue:994-999` + `unknownTypeValue` `:552-561`，值仍取自同一设置存储 ⇒ 首屏显示正常，但用户误编辑会覆盖扩展写的数值），并刷一条 `[settings] 未知设置字段类型 …` 的 warn；**≤ v1.0.8** 的宿主渲染链没有兜底分支 ⇒ 该字段**不渲染任何控件**（label 仍在）。扩展要在老宿主上有正确表现，只有两条路：**自行降级**（改用 `status` / `text`，或自绘视图；写入侧仍是同一把 key，不需要改）或**依赖 `apiVersion` 门槛**——manifest 声明 `apiVersion: 2` 后，老宿主直接**拒绝加载**该扩展（`core/manifest.ts:28-38`），而不是把它降级显示。
-- **overlay / 无主题窗体不消费 token**：`progress` 只由**宿主设置页**渲染，因此天然跟随宿主主题，扩展不需要为自己的窗体做任何主题工作。反过来说，扩展用 `api.overlay.create` 开的 overlay 窗体（见 `api-reference.md` 的 `### overlay`）**不接本协议的主题下发**（原因见上文「App 子窗口（`url` 型）主题下发协议」末条），它可以完全用自己的固定配色——宠物扩展就是这么做的：窗体是桌面上的 artwork 覆盖层，宿主 25 个 token 在其页面内**零引用**（`extensions/pet/openspec/changes/pet-desktop-companion/design.md` D-6/D-12，该扩展已把"零自造色值"硬约束**显式豁免**并登记了退场条件）。也就是说：**用 `progress` 展示进度与"窗体是否消费 token"是两件无关的事**。
+- **overlay / 无主题窗体不消费 token**：`progress` 只由**宿主设置页**渲染，因此天然跟随宿主主题，扩展不需要为自己的窗体做任何主题工作。反过来说，扩展用 `api.overlay.create` 开的 overlay 窗体（见 `api-reference.md` 的 `### overlay`）**不接本协议的主题下发**（原因见上文「App 子窗口（`url` 型）主题下发协议」末条），它可以完全用自己的固定配色——宠物扩展就是这么做的：窗体是桌面上的 artwork 覆盖层，宿主全部主题 token 在其页面内**零引用**（`extensions/pet/openspec/changes/pet-desktop-companion/design.md` D-6/D-12，该扩展已把"零自造色值"硬约束**显式豁免**并登记了退场条件）。也就是说：**用 `progress` 展示进度与"窗体是否消费 token"是两件无关的事**。
 
 #### `modal` 属性（等待模态框）
 

@@ -1,7 +1,7 @@
 /**
  * 渲染进程侧的**页面上下文组装器**（change `unified-page-context` 任务 1.2）。
  *
- * 职责：把"当前主题（25 个生效 token + colorScheme）"与"当前语言 + 该扩展的词条"装成一条
+ * 职责：把"当前主题（全部主题 token 的生效值 + colorScheme）"与"当前语言 + 该扩展的词条"装成一条
  * `obox:context`（形状与校验在 `src/shared/pageContext.ts`），并负责投递。
  *
  * 为什么单独成文件：组装需要读三个单例（themeStore / i18n / extensionI18n），而**纯逻辑**
@@ -24,7 +24,7 @@ export interface PageContextDeps {
   themeId: () => string
   /** 主题声明值（undefined = 未声明，按 id 推断） */
   declaredColorScheme: () => 'dark' | 'light' | undefined
-  /** 25 个 token 的**生效值**（main.css 默认值 + 当前主题覆盖） */
+  /** 全部主题 token（当前 26 个）的**生效值**（main.css 默认值 + 当前主题覆盖） */
   tokens: () => Record<string, string>
   locale: () => string
   /** 该扩展在当前语言下的整包词条（只给接收页面自己的） */
@@ -104,7 +104,7 @@ export function pushPageContext(
 /**
  * 旧协议：系统扩展页面曾用 `{ type: 'obox-theme', tokens }` 收主题。
  *
- * 新宿主在**一个 minor 版本**内继续发它，让已发布的页面零改动；`tokens` 仍给 25 个生效值
+ * 新宿主在**一个 minor 版本**内继续发它，让已发布的页面零改动；`tokens` 仍给 全部主题 token 的生效值
  * （旧页面自己会拼 `--`，历史 bug 保持原样，反正新页面不会再走这条）。
  */
 export function buildLegacySystemThemeMessage(): {
