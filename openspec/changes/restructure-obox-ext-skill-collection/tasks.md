@@ -45,7 +45,7 @@
 - [x] 4.2 集成验证：`npm run typecheck` + `npm run lint`（0 error）+ `npm test` 全绿；
       按入口正文走一遍"最小可用路径"（入口 → `obox-ext-init` 新建模式 → 用 `create-user-extension.mjs` 生成一个临时扩展工程 → 删除），
       确认入口的调度描述与阶段文件一致
-- [ ] 4.3 提交与合并：从 master 拉 `refactor/obox-ext-skill-collection` 分支，中文 commit message，
+- [x] 4.3 提交与合并：从 master 拉 `refactor/obox-ext-skill-collection` 分支，中文 commit message，
       推送后开 PR（正文附：目录前后对照、门禁输出、脚手架实跑结论），CI `check` 绿后 squash 合并并删除分支
 
 ## Workflow follow-up
