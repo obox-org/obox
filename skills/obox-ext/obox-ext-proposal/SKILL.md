@@ -108,7 +108,7 @@ description: obox 扩展开发九步链的**第 3 步**：把 grill 结论写成
 
 `ask_user_question` 问「本步产出是否符合要求？」，选项恒为：
 
-1. **通过，自动进入 `obox-ext-design`（推荐）** —— 下一步出 `design.md`（交互逻辑 + UI 视觉规范，含 UI 风格提问）；选它时**读 `skills/obox-ext-design/SKILL.md` 并照做**。
+1. **通过，自动进入 `obox-ext-design`（推荐）** —— 下一步出 `design.md`（交互逻辑 + UI 视觉规范，含 UI 风格提问）；选它时**读 `skills/obox-ext/obox-ext-design/SKILL.md` 并照做**。
 2. **部分修改后重跑本步** —— 用户说明要改哪条 requirement / 哪个 capability 划分。
 3. **回到上一步 `obox-ext-grill`** —— 发现结论本身缺漏时回退重问。
 4. **暂停** —— 用户先人工检查。

@@ -88,7 +88,7 @@ description: obox 扩展开发九步链的**第 2 步**：对简要功能穷尽�
 
 `ask_user_question` 问「本步产出是否符合要求？」，选项恒为：
 
-1. **通过，自动进入 `obox-ext-proposal`（推荐）** —— 下一步把 grill 结论汇总成 `proposal.md` 与 spec delta；选它时**读 `skills/obox-ext-proposal/SKILL.md` 并照做**。
+1. **通过，自动进入 `obox-ext-proposal`（推荐）** —— 下一步把 grill 结论汇总成 `proposal.md` 与 spec delta；选它时**读 `skills/obox-ext/obox-ext-proposal/SKILL.md` 并照做**。
 2. **部分修改后重跑本步** —— 用户说明哪个维度还要追问。
 3. **回到上一步 `obox-ext-init`** —— 从源头改工程身份 / 形态 / change，再重跑本步。
 4. **暂停** —— 用户先人工检查。

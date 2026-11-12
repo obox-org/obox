@@ -3,7 +3,7 @@
  * create-extension — Obox **内置扩展**脚手架。
  *
  * 用法：
- *   node skills/obox-ext-init/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]
+ *   node skills/obox-ext/obox-ext-init/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]
  *
  * 在**当前 obox 仓库**的 src/renderer/src/extensions/<id>/ 生成：
  *   manifest.json + index.ts（default 插件函数 + 具名导出视图）+ <Pascal>View.vue（scoped + 主题 token）
@@ -22,8 +22,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url))
-/** 仓库根：skills/obox-ext-init/scripts → 上三级 */
-const PROJECT_ROOT = resolve(SCRIPT_DIR, '..', '..', '..')
+/** 仓库根：skills/obox-ext/obox-ext-init/scripts → 上四级 */
+const PROJECT_ROOT = resolve(SCRIPT_DIR, '..', '..', '..', '..')
 
 /**
  * 脚手架自己的 id 校验：与宿主 `src/renderer/src/core/manifest.ts:11` 的 `NAME_RE`
@@ -37,7 +37,7 @@ const ID_RE = /^[a-z0-9][a-z0-9._-]*$/
 
 const HELP = [
   '用法:',
-  '  node skills/obox-ext-init/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]',
+  '  node skills/obox-ext/obox-ext-init/scripts/create-extension.mjs <id> [--title "显示名"] [--desc "简介"]',
   '',
   '说明: 在 <obox 仓库>/src/renderer/src/extensions/<id>/ 生成内置扩展骨架。',
   '      <id> 须匹配 ^[a-z0-9][a-z0-9._-]*$（只小写；与宿主 NAME_RE 逐字一致，含大写即清单无效）。',

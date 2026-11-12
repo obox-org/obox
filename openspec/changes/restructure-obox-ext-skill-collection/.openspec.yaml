@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-11-12
+# 纯工程结构 / 工具链改动：只动 skills/ 目录布局、门禁测试与文档引用，不改变任何产品行为
+# （扩展 API、IPC、manifest 规则、组件库外观均不变），因此不产生 spec delta。
+skip_specs: true

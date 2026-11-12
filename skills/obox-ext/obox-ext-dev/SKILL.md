@@ -87,12 +87,12 @@ description: 按任务卡实现 obox 扩展代码并跑通质量门槛（不提�
 
 用 `ask_user_question` 问「本步产出是否符合要求？」：
 
-1. **通过，自动进入 `obox-ext-check`（推荐）** —— 下一步读 `skills/obox-ext-check/SKILL.md` 并照做，对 spec delta / design / 任务卡逐条纯检查并复跑门槛。
+1. **通过，自动进入 `obox-ext-check`（推荐）** —— 下一步读 `skills/obox-ext/obox-ext-check/SKILL.md` 并照做，对 spec delta / design / 任务卡逐条纯检查并复跑门槛。
 2. **部分修改后重跑本步** —— 用户说明要改哪张卡的哪部分。
 3. **回到上一步 `obox-ext-task`** —— 回退并重做任务卡拆分。
 4. **暂停** —— 用户先人工检查。
 
-被选 1 时**读取 `skills/obox-ext-check/SKILL.md` 并照做**，不依赖 Skill 工具。
+被选 1 时**读取 `skills/obox-ext/obox-ext-check/SKILL.md` 并照做**，不依赖 Skill 工具。
 
 ## 完成判据
 

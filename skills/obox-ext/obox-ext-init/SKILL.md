@@ -63,7 +63,7 @@ Test-Path extensions\<英文名>; Test-Path src\renderer\src\extensions\<英文�
 
 ### 第 3 步（新建）：问扩展形态，并据此生成工程
 
-事实（脚本实测，见 `skills/obox-ext-init/scripts/README.md`，**那本 README 与本表是同一张表**）：不带 `--vue` 时脚本生成 App 卡片**静态页** `page.html` / `page.js` / `theme.js`；`--vue` 把静态页换成 **Vue 子应用**（`app/` + `vite.config.ts` + `build` / `dev` 脚本，产物进 `dist/`，需 `npm install`）。用户扩展的公共参数一律 `--title "<中文名>" --author "<作者>" --desc "<简要功能>"`：
+事实（脚本实测，见 `skills/obox-ext/obox-ext-init/scripts/README.md`，**那本 README 与本表是同一张表**）：不带 `--vue` 时脚本生成 App 卡片**静态页** `page.html` / `page.js` / `theme.js`；`--vue` 把静态页换成 **Vue 子应用**（`app/` + `vite.config.ts` + `build` / `dev` 脚本，产物进 `dist/`，需 `npm install`）。用户扩展的公共参数一律 `--title "<中文名>" --author "<作者>" --desc "<简要功能>"`：
 
 | 形态                                                  | 脚本参数                                                   | 优点 / 缺点                                                                                |
 | ----------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -75,7 +75,7 @@ Test-Path extensions\<英文名>; Test-Path src\renderer\src\extensions\<英文�
 
 **形态 1–3 都不带 `--vue`**；`--vue` 只在用户明确要 Vue 子应用时加（形态 4）。用 `ask_user_question` 问形态：选项沿用上表（具体形态候选 + 「其他（我来说明）」逃生项），各带优缺点、恰好一个「推荐」置首。
 
-调用后**原样读脚本的自检输出**（用法与参数见 `skills/obox-ext-init/scripts/README.md`），不要改写。
+调用后**原样读脚本的自检输出**（用法与参数见 `skills/obox-ext/obox-ext-init/scripts/README.md`），不要改写。
 
 **完成判据**：脚本 exit 0；`<扩展目录>` 下 `manifest.json`、`index.js`、`test/`、`scripts/pack.mjs` 均存在；形态 1–3 另需 `page.html` + `page.js` + `theme.js`；形态 4 另需 `app/` 与 `vite.config.ts`；形态 5 另需 `index.ts` 与 `<Pascal>View.vue`。
 
@@ -118,7 +118,7 @@ extensions/<英文名>/                        # 新建；自身是独立 git �
 
 用 `ask_user_question` 问「本步产出是否符合要求？」。门禁固定四选项（见 `docs/extension-workflow.md` §五）；本步是链条第 1 步、**没有上一步**，故第 3 项写成「**回到第 0 步重选模式**」：
 
-1. **通过，自动进入 `obox-ext-grill`（推荐）** —— 下一步穷尽提问并产出 `openspec/changes/<change-id>/notes/grill.md`；选它时**读 `skills/obox-ext-grill/SKILL.md` 并照做**。
+1. **通过，自动进入 `obox-ext-grill`（推荐）** —— 下一步穷尽提问并产出 `openspec/changes/<change-id>/notes/grill.md`；选它时**读 `skills/obox-ext/obox-ext-grill/SKILL.md` 并照做**。
 2. **部分修改后重跑本步** —— 用户说明要改什么（改名、换形态、补字段）。
 3. **回到第 0 步重选模式** —— 回到第 0 步重选新建 / 修复，再重跑本步；若用户本就不该走这条链，此选项即退出。
 4. **暂停** —— 用户先人工检查。

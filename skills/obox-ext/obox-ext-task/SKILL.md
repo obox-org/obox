@@ -88,12 +88,12 @@ description: 把扩展需求的 spec delta 与设计文档拆成带文件所有�
 
 用 `ask_user_question` 问「本步产出是否符合要求？」：
 
-1. **通过，自动进入 `obox-ext-dev`（推荐）** —— 下一步读 `skills/obox-ext-dev/SKILL.md` 并照做，按卡派子代理实现（同组并行、跨组串行），只写代码不提交。
+1. **通过，自动进入 `obox-ext-dev`（推荐）** —— 下一步读 `skills/obox-ext/obox-ext-dev/SKILL.md` 并照做，按卡派子代理实现（同组并行、跨组串行），只写代码不提交。
 2. **部分修改后重跑本步** —— 用户说明要改什么（例如合并某两卡）。
 3. **回到上一步 `obox-ext-validation`** —— 回退并重做规格校验。
 4. **暂停** —— 用户先人工检查。
 
-被选 1 时**读取 `skills/obox-ext-dev/SKILL.md` 并照做**，不依赖 Skill 工具。
+被选 1 时**读取 `skills/obox-ext/obox-ext-dev/SKILL.md` 并照做**，不依赖 Skill 工具。
 
 ## 完成判据
 
