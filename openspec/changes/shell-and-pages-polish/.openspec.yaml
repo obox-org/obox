@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-11-12
+# 纯界面/壳子行为调整（任务栏可见、扩展页搜索与过滤、设置页间距与树交互）：
+# 不改变扩展 API、manifest 约定、IPC 能力面与任何 capability 的规格语义，
+# 因此不产生 spec delta。任务栏可见这条推翻的是 ADR-0019 决策 2，用 ADR 修订段记录，不属规格。
+skip_specs: true
